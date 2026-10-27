@@ -1,7 +1,8 @@
-# 上游源码锁定（P0 填写并在 CI 中校验）
-# 产品只跟 stable 分支；当前主线为 1.31.x，stable 为 1.30.x。
-UPSTREAM_VERSION=1.30.x
-UPSTREAM_URL=https://nginx.org/download/nginx-${UPSTREAM_VERSION}.tar.gz
-UPSTREAM_SHA256=TODO
-TONGSUO_VERSION=TODO     # 国密构建（二期）
-OPENSSL_VERSION=TODO
+# 上游源码锁定。产品只跟 stable 分支。
+# 源码取自官方 GitHub 镜像的发布标签；tag 指向的提交哈希在构建时校验。
+UPSTREAM_VERSION=1.30.6
+UPSTREAM_GIT=https://github.com/nginx/nginx.git
+UPSTREAM_TAG=release-1.30.6
+UPSTREAM_COMMIT=fb0e979c6dd63c018958b41eeb844947c5c21264
+# 二期：国密构建
+TONGSUO_VERSION=TODO
