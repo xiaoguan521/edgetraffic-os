@@ -1,0 +1,357 @@
+diff --git a/src/core/nginx.c b/src/core/nginx.c
+index 0deb27b..23c9c32 100644
+--- a/src/core/nginx.c
++++ b/src/core/nginx.c
+@@ -391,11 +391,11 @@ main(int argc, char *const *argv)
+ static void
+ ngx_show_version_info(void)
+ {
+-    ngx_write_stderr("nginx version: " NGINX_VER_BUILD NGX_LINEFEED);
++    ngx_write_stderr("syapp version: " NGINX_VER_BUILD NGX_LINEFEED);
+ 
+     if (ngx_show_help) {
+         ngx_write_stderr(
+-            "Usage: nginx [-?hvVtTq] [-s signal] [-p prefix]" NGX_LINEFEED
++            "Usage: syapp [-?hvVtTq] [-s signal] [-p prefix]" NGX_LINEFEED
+             "             [-e filename] [-c filename] [-g directives]"
+                           NGX_LINEFEED NGX_LINEFEED
+             "Options:" NGX_LINEFEED
+diff --git a/src/core/nginx.h b/src/core/nginx.h
+index 757808f..919f2ea 100644
+--- a/src/core/nginx.h
++++ b/src/core/nginx.h
+@@ -11,7 +11,7 @@
+ 
+ #define nginx_version      1030006
+ #define NGINX_VERSION      "1.30.6"
+-#define NGINX_VER          "nginx/" NGINX_VERSION
++#define NGINX_VER          "syapp/" NGINX_VERSION
+ 
+ #ifdef NGX_BUILD
+ #define NGINX_VER_BUILD    NGINX_VER " (" NGX_BUILD ")"
+@@ -19,7 +19,7 @@
+ #define NGINX_VER_BUILD    NGINX_VER
+ #endif
+ 
+-#define NGINX_VAR          "NGINX"
++#define NGINX_VAR          "SYAPP"
+ #define NGX_OLDPID_EXT     ".oldbin"
+ 
+ 
+diff --git a/src/core/ngx_log.c b/src/core/ngx_log.c
+index 0c09426..0bde06b 100644
+--- a/src/core/ngx_log.c
++++ b/src/core/ngx_log.c
+@@ -204,7 +204,7 @@ ngx_log_error_core(ngx_uint_t level, ngx_log_t *log, ngx_err_t err,
+ 
+     msg -= (7 + err_levels[level].len + 3);
+ 
+-    (void) ngx_sprintf(msg, "nginx: [%V] ", &err_levels[level]);
++    (void) ngx_sprintf(msg, "syapp: [%V] ", &err_levels[level]);
+ 
+     (void) ngx_write_console(ngx_stderr, msg, p - msg);
+ }
+@@ -264,7 +264,7 @@ ngx_log_stderr(ngx_err_t err, const char *fmt, ...)
+ 
+     last = errstr + NGX_MAX_ERROR_STR;
+ 
+-    p = ngx_cpymem(errstr, "nginx: ", 7);
++    p = ngx_cpymem(errstr, "syapp: ", 7);
+ 
+     va_start(args, fmt);
+     p = ngx_vslprintf(p, last, fmt, args);
+@@ -637,7 +637,7 @@ ngx_log_set_log(ngx_conf_t *cf, ngx_log_t **head)
+ 
+ #else
+         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "nginx was built without debug support");
++                           "syapp was built without debug support");
+         return NGX_CONF_ERROR;
+ #endif
+ 
+diff --git a/src/core/ngx_regex.c b/src/core/ngx_regex.c
+index 5b13c5d..da8bcea 100644
+--- a/src/core/ngx_regex.c
++++ b/src/core/ngx_regex.c
+@@ -796,7 +796,7 @@ ngx_regex_pcre_jit(ngx_conf_t *cf, void *post, void *data)
+     }
+ #else
+     ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+-                       "nginx was built without PCRE JIT support");
++                       "syapp was built without PCRE JIT support");
+     *fp = 0;
+ #endif
+ 
+diff --git a/src/core/ngx_syslog.c b/src/core/ngx_syslog.c
+index bad45bd..f2a6081 100644
+--- a/src/core/ngx_syslog.c
++++ b/src/core/ngx_syslog.c
+@@ -64,7 +64,7 @@ ngx_syslog_process_conf(ngx_conf_t *cf, ngx_syslog_peer_t *peer)
+     }
+ 
+     if (peer->tag.data == NULL) {
+-        ngx_str_set(&peer->tag, "nginx");
++        ngx_str_set(&peer->tag, "syapp");
+     }
+ 
+     peer->hostname = &cf->cycle->hostname;
+diff --git a/src/event/ngx_event.c b/src/event/ngx_event.c
+index ef525d9..61a1ba3 100644
+--- a/src/event/ngx_event.c
++++ b/src/event/ngx_event.c
+@@ -568,7 +568,7 @@ ngx_event_module_init(ngx_cycle_t *cycle)
+ #endif
+ 
+     shm.size = size;
+-    ngx_str_set(&shm.name, "nginx_shared_zone");
++    ngx_str_set(&shm.name, "syapp_shared_zone");
+     shm.log = cycle->log;
+ 
+     if (ngx_shm_alloc(&shm) != NGX_OK) {
+@@ -1246,7 +1246,7 @@ ngx_event_debug_connection(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ 
+     ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+                        "\"debug_connection\" is ignored, you need to rebuild "
+-                       "nginx using --with-debug option to enable it");
++                       "syapp using --with-debug option to enable it");
+ 
+ #endif
+ 
+diff --git a/src/event/ngx_event_openssl.c b/src/event/ngx_event_openssl.c
+index bb6e043..1bd4e34 100644
+--- a/src/event/ngx_event_openssl.c
++++ b/src/event/ngx_event_openssl.c
+@@ -171,7 +171,7 @@ ngx_ssl_init(ngx_log_t *log)
+     }
+ 
+ #ifndef OPENSSL_NO_STDIO
+-    if (OPENSSL_INIT_set_config_appname(init, "nginx") == 0) {
++    if (OPENSSL_INIT_set_config_appname(init, "syapp") == 0) {
+         ngx_ssl_error(NGX_LOG_ALERT, log, 0,
+                       "OPENSSL_INIT_set_config_appname() failed");
+         return NGX_ERROR;
+@@ -202,7 +202,7 @@ ngx_ssl_init(ngx_log_t *log)
+ 
+ #endif
+ 
+-    OPENSSL_config("nginx");
++    OPENSSL_config("syapp");
+ 
+     SSL_library_init();
+     SSL_load_error_strings();
+@@ -4820,7 +4820,7 @@ ngx_ssl_session_ticket_keys(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_array_t *paths)
+         == 0)
+     {
+         ngx_log_error(NGX_LOG_WARN, cf->log, 0,
+-                      "nginx was built with Session Tickets support, however, "
++                      "syapp was built with Session Tickets support, however, "
+                       "now it is linked dynamically to an OpenSSL library "
+                       "which has no tlsext support, therefore Session Tickets "
+                       "are not available");
+diff --git a/src/event/quic/ngx_event_quic_bpf.c b/src/event/quic/ngx_event_quic_bpf.c
+index ab024ad..45e840e 100644
+--- a/src/event/quic/ngx_event_quic_bpf.c
++++ b/src/event/quic/ngx_event_quic_bpf.c
+@@ -8,7 +8,7 @@
+ #include <ngx_core.h>
+ 
+ 
+-#define NGX_QUIC_BPF_VARNAME  "NGINX_BPF_MAPS"
++#define NGX_QUIC_BPF_VARNAME  "SYAPP_BPF_MAPS"
+ #define NGX_QUIC_BPF_VARSEP    ';'
+ #define NGX_QUIC_BPF_ADDRSEP   '#'
+ 
+@@ -196,7 +196,7 @@ failed:
+ 
+     ngx_log_error(NGX_LOG_EMERG, cycle->log, 0,
+                   "ngx_quic_bpf_module failed to initialize properly, ignored."
+-                  "please check limits and note that nginx state now "
++                  "please check limits and note that syapp state now "
+                   "can be inconsistent and restart may be required");
+ 
+     return NGX_OK;
+diff --git a/src/http/modules/ngx_http_image_filter_module.c b/src/http/modules/ngx_http_image_filter_module.c
+index 283471e..b3eec4c 100644
+--- a/src/http/modules/ngx_http_image_filter_module.c
++++ b/src/http/modules/ngx_http_image_filter_module.c
+@@ -1119,7 +1119,7 @@ ngx_http_image_source(ngx_http_request_t *r, ngx_http_image_filter_ctx_t *ctx)
+         img = gdImageCreateFromWebpPtr(ctx->length, ctx->image);
+         failed = "gdImageCreateFromWebpPtr() failed";
+ #else
+-        failed = "nginx was built without GD WebP support";
++        failed = "syapp was built without GD WebP support";
+ #endif
+         break;
+ 
+@@ -1211,7 +1211,7 @@ ngx_http_image_out(ngx_http_request_t *r, ngx_uint_t type, gdImagePtr img,
+         out = gdImageWebpPtrEx(img, size, q);
+         failed = "gdImageWebpPtrEx() failed";
+ #else
+-        failed = "nginx was built without GD WebP support";
++        failed = "syapp was built without GD WebP support";
+ #endif
+         break;
+ 
+diff --git a/src/http/modules/ngx_http_log_module.c b/src/http/modules/ngx_http_log_module.c
+index 9158974..02440de 100644
+--- a/src/http/modules/ngx_http_log_module.c
++++ b/src/http/modules/ngx_http_log_module.c
+@@ -1540,7 +1540,7 @@ process_formats:
+ 
+ #else
+             ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                               "nginx was built without zlib support");
++                               "syapp was built without zlib support");
+             return NGX_CONF_ERROR;
+ #endif
+         }
+diff --git a/src/http/modules/ngx_http_ssl_module.c b/src/http/modules/ngx_http_ssl_module.c
+index 871586f..676c5b3 100644
+--- a/src/http/modules/ngx_http_ssl_module.c
++++ b/src/http/modules/ngx_http_ssl_module.c
+@@ -784,7 +784,7 @@ ngx_http_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
+         == 0)
+     {
+         ngx_log_error(NGX_LOG_WARN, cf->log, 0,
+-            "nginx was built with SNI support, however, now it is linked "
++            "syapp was built with SNI support, however, now it is linked "
+             "dynamically to an OpenSSL library which has no tlsext support, "
+             "therefore SNI is not available");
+     }
+diff --git a/src/http/ngx_http.c b/src/http/ngx_http.c
+index a97cc35..9c81443 100644
+--- a/src/http/ngx_http.c
++++ b/src/http/ngx_http.c
+@@ -1414,7 +1414,7 @@ ngx_http_add_address(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
+ 
+     if (lsopt->http2 && lsopt->ssl) {
+         ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+-                           "nginx was built with OpenSSL that lacks ALPN "
++                           "syapp was built with OpenSSL that lacks ALPN "
+                            "support, HTTP/2 is not enabled for %V",
+                            &lsopt->addr_text);
+     }
+diff --git a/src/http/ngx_http_header_filter_module.c b/src/http/ngx_http_header_filter_module.c
+index 15215c5..6c01668 100644
+--- a/src/http/ngx_http_header_filter_module.c
++++ b/src/http/ngx_http_header_filter_module.c
+@@ -47,7 +47,7 @@ ngx_module_t  ngx_http_header_filter_module = {
+ };
+ 
+ 
+-static u_char ngx_http_server_string[] = "Server: nginx" CRLF;
++static u_char ngx_http_server_string[] = "Server: syapp" CRLF;
+ static u_char ngx_http_server_full_string[] = "Server: " NGINX_VER CRLF;
+ static u_char ngx_http_server_build_string[] = "Server: " NGINX_VER_BUILD CRLF;
+ 
+diff --git a/src/http/ngx_http_special_response.c b/src/http/ngx_http_special_response.c
+index 2984ffe..e3161c2 100644
+--- a/src/http/ngx_http_special_response.c
++++ b/src/http/ngx_http_special_response.c
+@@ -33,7 +33,7 @@ static u_char ngx_http_error_build_tail[] =
+ 
+ 
+ static u_char ngx_http_error_tail[] =
+-"<hr><center>nginx</center>" CRLF
++"<hr><center>syapp</center>" CRLF
+ "</body>" CRLF
+ "</html>" CRLF
+ ;
+diff --git a/src/http/ngx_http_variables.c b/src/http/ngx_http_variables.c
+index ab234b9..3a00da5 100644
+--- a/src/http/ngx_http_variables.c
++++ b/src/http/ngx_http_variables.c
+@@ -361,7 +361,7 @@ static ngx_http_variable_t  ngx_http_core_variables[] = {
+     { ngx_string("connection_time"), NULL, ngx_http_variable_connection_time,
+       0, NGX_HTTP_VAR_NOCACHEABLE, 0 },
+ 
+-    { ngx_string("nginx_version"), NULL, ngx_http_variable_nginx_version,
++    { ngx_string("syapp_version"), NULL, ngx_http_variable_nginx_version,
+       0, 0, 0 },
+ 
+     { ngx_string("hostname"), NULL, ngx_http_variable_hostname,
+diff --git a/src/http/v2/ngx_http_v2_filter_module.c b/src/http/v2/ngx_http_v2_filter_module.c
+index 6b73b1e..74091e1 100644
+--- a/src/http/v2/ngx_http_v2_filter_module.c
++++ b/src/http/v2/ngx_http_v2_filter_module.c
+@@ -120,7 +120,7 @@ ngx_http_v2_header_filter(ngx_http_request_t *r)
+     ngx_http_core_srv_conf_t  *cscf;
+     u_char                     addr[NGX_SOCKADDR_STRLEN];
+ 
+-    static const u_char nginx[5] = { 0x84, 0xaa, 0x63, 0x55, 0xe7 };
++    static const u_char nginx[5] = { 0x84, 0x47, 0xa1, 0xd7, 0x5f };
+ #if (NGX_HTTP_GZIP)
+     static const u_char accept_encoding[12] = {
+         0x8b, 0x84, 0x84, 0x2d, 0x69, 0x5b, 0x05, 0x44, 0x3c, 0x86, 0xaa, 0x6f
+@@ -441,7 +441,7 @@ ngx_http_v2_header_filter(ngx_http_request_t *r)
+ 
+         } else {
+             ngx_log_debug0(NGX_LOG_DEBUG_HTTP, fc->log, 0,
+-                           "http2 output header: \"server: nginx\"");
++                           "http2 output header: \"server: syapp\"");
+         }
+ 
+         *pos++ = ngx_http_v2_inc_indexed(NGX_HTTP_V2_SERVER_INDEX);
+diff --git a/src/http/v3/ngx_http_v3_filter_module.c b/src/http/v3/ngx_http_v3_filter_module.c
+index e3f1536..2200dbd 100644
+--- a/src/http/v3/ngx_http_v3_filter_module.c
++++ b/src/http/v3/ngx_http_v3_filter_module.c
+@@ -169,7 +169,7 @@ ngx_http_v3_header_filter(ngx_http_request_t *r)
+             n = sizeof(NGINX_VER_BUILD) - 1;
+ 
+         } else {
+-            n = sizeof("nginx") - 1;
++            n = sizeof("syapp") - 1;
+         }
+ 
+         len += ngx_http_v3_encode_field_lri(NULL, 0,
+@@ -352,8 +352,8 @@ ngx_http_v3_header_filter(ngx_http_request_t *r)
+             n = sizeof(NGINX_VER_BUILD) - 1;
+ 
+         } else {
+-            p = (u_char *) "nginx";
+-            n = sizeof("nginx") - 1;
++            p = (u_char *) "syapp";
++            n = sizeof("syapp") - 1;
+         }
+ 
+         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
+diff --git a/src/os/unix/ngx_setproctitle.c b/src/os/unix/ngx_setproctitle.c
+index 91afa51..720f26e 100644
+--- a/src/os/unix/ngx_setproctitle.c
++++ b/src/os/unix/ngx_setproctitle.c
+@@ -89,7 +89,7 @@ ngx_setproctitle(char *title)
+ 
+     ngx_os_argv[1] = NULL;
+ 
+-    p = ngx_cpystrn((u_char *) ngx_os_argv[0], (u_char *) "nginx: ",
++    p = ngx_cpystrn((u_char *) ngx_os_argv[0], (u_char *) "syapp: ",
+                     ngx_os_argv_last - ngx_os_argv[0]);
+ 
+     p = ngx_cpystrn(p, (u_char *) title, ngx_os_argv_last - (char *) p);
+diff --git a/src/stream/ngx_stream_log_module.c b/src/stream/ngx_stream_log_module.c
+index 774bc7e..7294762 100644
+--- a/src/stream/ngx_stream_log_module.c
++++ b/src/stream/ngx_stream_log_module.c
+@@ -1223,7 +1223,7 @@ process_formats:
+ 
+ #else
+             ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                               "nginx was built without zlib support");
++                               "syapp was built without zlib support");
+             return NGX_CONF_ERROR;
+ #endif
+         }
+diff --git a/src/stream/ngx_stream_variables.c b/src/stream/ngx_stream_variables.c
+index 4658104..9419651 100644
+--- a/src/stream/ngx_stream_variables.c
++++ b/src/stream/ngx_stream_variables.c
+@@ -111,7 +111,7 @@ static ngx_stream_variable_t  ngx_stream_core_variables[] = {
+     { ngx_string("connection"), NULL,
+       ngx_stream_variable_connection, 0, 0, 0 },
+ 
+-    { ngx_string("nginx_version"), NULL, ngx_stream_variable_nginx_version,
++    { ngx_string("syapp_version"), NULL, ngx_stream_variable_nginx_version,
+       0, 0, 0 },
+ 
+     { ngx_string("hostname"), NULL, ngx_stream_variable_hostname,
