@@ -1,0 +1,7 @@
+# 上游源码锁定（P0 填写并在 CI 中校验）
+# 产品只跟 stable 分支；当前主线为 1.31.x，stable 为 1.30.x。
+UPSTREAM_VERSION=1.30.x
+UPSTREAM_URL=https://nginx.org/download/nginx-${UPSTREAM_VERSION}.tar.gz
+UPSTREAM_SHA256=TODO
+TONGSUO_VERSION=TODO     # 国密构建（二期）
+OPENSSL_VERSION=TODO

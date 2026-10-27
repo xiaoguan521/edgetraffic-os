@@ -1,0 +1,16 @@
+[Unit]
+Description=EdgeTraffic OS console (syapp-console)
+After=network-online.target postgresql.service
+
+[Service]
+User=syapp-console
+EnvironmentFile=/etc/syapp-console/console.env
+ExecStart=/usr/bin/syapp-console
+Restart=always
+StateDirectory=syapp-console
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

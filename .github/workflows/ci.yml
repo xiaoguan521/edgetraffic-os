@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: vet and test
+        run: make test
+      - name: build
+        run: make build
+      - name: wrapper is static
+        run: file bin/syapp-wrapper | grep -q "statically linked"
+
+  brand:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/brand-check.sh
+
+  web:
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('web/pnpm-lock.yaml') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: cd web && pnpm install --frozen-lockfile && pnpm build

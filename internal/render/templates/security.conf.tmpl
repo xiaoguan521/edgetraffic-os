@@ -1,0 +1,16 @@
+# 每个业务 server 强制 include，业务不可覆盖
+limit_req   zone=edge_per_ip  burst=40  nodelay;
+limit_conn  edge_conn  50;
+
+add_header  X-Frame-Options         SAMEORIGIN                      always;
+add_header  X-Content-Type-Options  nosniff                         always;
+add_header  Referrer-Policy         strict-origin-when-cross-origin always;
+
+location ~ /\.(?!well-known/) {
+    deny           all;
+    access_log     off;
+    log_not_found  off;
+}
+location ~* \.(bak|swp|swo|orig|old|sql|tar|gz|zip)$ {
+    deny  all;
+}

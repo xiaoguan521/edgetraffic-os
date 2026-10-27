@@ -1,0 +1,6 @@
+# /etc/sudoers.d/syapp-agent —— 只有这 4 行（规格书 5.5）
+# 参数安全由 syapp-wrapper 保证：test 只接受 ^r[0-9]{6,12}$。
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper test *
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper reload
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper reopen
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper quit
