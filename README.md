@@ -42,8 +42,11 @@ make web         # 前端构建（需 pnpm）
 
 ## 当前进度
 
-骨架阶段。已实现并有测试：`internal/wrapper`（提权入口参数白名单）、`internal/license`（验签与授权状态机）、
-`internal/render` 校验器（域名 / 路径 / 回源地址）。其余包为占位，按规格书第 12 节 P0–P5 推进。
+MVP（演示版）已完成，见 [`docs/spec/README.md`](docs/spec/README.md)。一键演示环境与演示手册见 [`demo/README.md`](demo/README.md)：
+
+```bash
+cd demo && ./demo.sh up
+```
 
 ## 许可
 
