@@ -19,3 +19,7 @@ license-portal/dist/
 # 前端构建产物：保留占位文件以便 go:embed
 web/dist/*
 !web/dist/.gitkeep
+
+# 演示环境：签名私钥与签发产物，绝不提交
+demo/keys/
+demo/out/
