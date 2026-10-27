@@ -53,8 +53,8 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/cache && cd /tmp/cache
-          tar -C "$GITHUB_WORKSPACE/web" -cf - node_modules | zstd -19 -T0 -q | split -b 45m - web-node_modules.tar.zst.part-
-          sha256sum web-node_modules.tar.zst.part-* > SHA256SUMS
+          tar -C "$GITHUB_WORKSPACE/web" -cf - node_modules | xz -6 -T0 | split -b 45m - web-node_modules.tar.xz.part-
+          sha256sum web-node_modules.tar.xz.part-* > SHA256SUMS
           (cd "$GITHUB_WORKSPACE/web" && sha256sum pnpm-lock.yaml) > LOCKFILE
           git init -q -b deps-cache/web
           git config user.name "deps-bot"
