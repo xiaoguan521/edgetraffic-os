@@ -11,7 +11,7 @@ export NO_PROXY='*' no_proxy='*'   # 只访问本机，绕过任何代理
 C=(curl -s --max-time 5)
 fail=0; skip=0
 # 子 shell 关闭 pipefail：grep -q 提前退出会让上游命令收到 SIGPIPE
-check() { if (set +o pipefail; eval "$2") >/dev/null 2>&1; then echo "ok   $1"; else echo "FAIL $1"; fail=$((fail+1)); fi; }
+check() { if (set +o pipefail; eval "$2") >/dev/null 2>&1; then echo "ok   $1"; else echo "FAIL $1"; [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=golden-rename::FAIL $1"; fail=$((fail+1)); fi; }
 skipif() { echo "skip $1 ($2)"; skip=$((skip+1)); }
 
 check "-v 输出 syapp"                "\"$BIN\" -v 2>&1 | grep -q '^syapp version: syapp/'"
