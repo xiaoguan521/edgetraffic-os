@@ -20,6 +20,7 @@ while getopts "s:o:t:" opt; do
     *) exit 2 ;;
   esac
 done
+mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"   # 转成绝对路径：后面会 cd 进临时目录
 [[ "$TLS_LIB" == "openssl" ]] || { echo "TLS_LIB=$TLS_LIB not supported yet (国密构建在二期实现)" >&2; exit 2; }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
@@ -86,7 +87,6 @@ if find "$ROOT" | grep -qi 'ngi''nx'; then
   echo "upstream name leaked into file names:" >&2; find "$ROOT" | grep -i 'ngi''nx' >&2; exit 4
 fi
 
-mkdir -p "$OUT"
 PKG="$OUT/syapp-$UPSTREAM_VERSION-$(uname -m).tar.gz"
 tar -C "$ROOT" -czf "$PKG" opt
 echo "BUILD OK: $PKG"
