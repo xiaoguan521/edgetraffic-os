@@ -60,9 +60,11 @@ jobs:
           sudo systemctl start syapp || { sudo journalctl -u syapp --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
           sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
       - uses: actions/upload-artifact@v4
+        continue-on-error: true   # 账号存储配额满时不阻塞流水线
         with:
           name: syapp-linux-x86_64
           path: dist/*.tar.gz
+          retention-days: 3
 
   web:
     runs-on: ubuntu-latest
