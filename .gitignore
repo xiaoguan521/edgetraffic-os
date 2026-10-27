@@ -1,18 +1,21 @@
 /bin/
 /dist/
-*.test
-*.out
-coverage.*
+/*.test
+/*.out
+/coverage.*
 
 web/node_modules/
-web/dist/
 license-portal/node_modules/
 license-portal/dist/
 .env
-*.lic
-*.key
-*.pem
-!internal/**/testdata/**/*.pem
+/*.lic
+/*.key
+/*.pem
+/keys/
 .DS_Store
 .idea/
 .vscode/
+
+# 前端构建产物：保留占位文件以便 go:embed
+web/dist/*
+!web/dist/.gitkeep
