@@ -1,0 +1,60 @@
+# site: {{ .Site.Name }}  （渲染器生成，禁止手改）
+{{- $s := .Site }}
+{{- if and $s.HTTPS $s.ForceHTTPS }}
+
+server {
+    listen       80;
+    server_name  {{ join $s.Domains " " }};
+    location / {
+        return  301  https://$host$request_uri;
+    }
+}
+{{- end }}
+
+server {
+{{- if not (and $s.HTTPS $s.ForceHTTPS) }}
+    listen       80;
+{{- end }}
+{{- if $s.HTTPS }}
+    listen       443  ssl;
+{{- if $s.HTTP2 }}
+    http2        on;
+{{- end }}
+{{- end }}
+    server_name  {{ join $s.Domains " " }};
+{{- if $s.HTTPS }}
+
+    ssl_certificate      certs/site-{{ $s.Name }}.crt;
+    ssl_certificate_key  certs/site-{{ $s.Name }}.key;
+    add_header  Strict-Transport-Security  "max-age=31536000"  always;
+{{- end }}
+
+    include  snippets/security.conf;
+{{- range $i, $r := .Routes }}
+
+    location {{ if eq $r.Match "exact" }}= {{ end }}{{ $r.Path }} {
+{{- if eq $r.Mode "static" }}
+{{- if eq $r.Match "exact" }}
+        alias         /opt/syapp/conf/current/sites/{{ $s.Name }}/{{ routeDir $r }}/index.html;
+        default_type  text/html;
+{{- else }}
+        alias  /opt/syapp/conf/current/sites/{{ $s.Name }}/{{ routeDir $r }}/;
+        index  index.html;
+{{- end }}
+{{- else if eq $r.Mode "proxy" }}
+        # location 内出现 proxy_set_header 时须重发基线的全部头（规格书 6.3）
+        proxy_set_header  Host               $host;
+        proxy_set_header  X-Real-IP          $remote_addr;
+        proxy_set_header  X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header  X-Forwarded-Proto  $scheme;
+        proxy_set_header  X-Request-ID       $request_id;
+        proxy_set_header  Connection         "";
+        proxy_pass        http://up_{{ $r.Proxy.Upstream }};
+{{- else if eq $r.Mode "redirect" }}
+        return  {{ $r.Redirect.Code }}  {{ $r.Redirect.To }};
+{{- else if eq $r.Mode "deny" }}
+        return  403;
+{{- end }}
+    }
+{{- end }}
+}

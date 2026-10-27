@@ -25,7 +25,7 @@
 - 所有外部命令用 exec.Command 切片调用，禁止 sh -c。
 - wrapper 只接受子命令 test|reload|reopen|quit，test 只接受 ^r[0-9]{6,12}$。
 - 私钥、凭据、License 签名私钥不得出现在代码、日志、前端响应中。
-- 数据库访问只用 gorm/gen 生成的方法；每个写接口写审计。
+- 数据库访问只用参数化查询；MVP 阶段集中在 internal/console/store 封装，正式版迁移到 gorm/gen。每个写接口写审计。
 
 ## 授权
 - 业务代码只通过 license.Evaluate 产出的 Snapshot 读取授权，不得自行解析 .lic。
@@ -35,6 +35,10 @@
 ## 品牌
 - 产品代码、界面文案、日志、打包脚本中不得出现 "nginx"（范围见 scripts/brand-check.sh）。
 - 关于页与 docs/NOTICE 必须保留 "Based on NGINX Open Source (BSD-2-Clause)"。
+
+## 依赖
+- 依赖全部 vendor 在仓库中：新增依赖时在 internal/deps/tools.go 引用并推送到 deps/** 分支，由 deps 工作流 tidy + vendor 后提交。
+- 前端 node_modules 缓存在 deps-cache/web 分支（xz 分片），离线构建时解压到 web/。
 
 ## 交付要求
 - 先写失败用例再写实现；每个 PR 附可运行的测试命令。

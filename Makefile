@@ -1,4 +1,5 @@
 GO       ?= go
+export GOFLAGS ?= -mod=vendor
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE     ?= $(shell date -u +%Y-%m-%d)
@@ -28,7 +29,7 @@ brand:
 	./scripts/brand-check.sh
 
 web:
-	cd web && pnpm install && pnpm build
+	cd web && pnpm install && pnpm build && touch dist/.gitkeep
 
 proto:
 	cd api/proto && buf generate

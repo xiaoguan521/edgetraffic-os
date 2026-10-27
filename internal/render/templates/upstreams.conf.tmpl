@@ -1,0 +1,15 @@
+# upstreams  （渲染器生成，禁止手改）
+{{- range .Upstreams }}
+
+upstream up_{{ .Name }} {
+{{- if eq .Algorithm "least_conn" }}
+    least_conn;
+{{- else if eq .Algorithm "ip_hash" }}
+    ip_hash;
+{{- end }}
+{{- range .Servers }}
+    server {{ .Addr }}{{ if gt .Weight 0 }}  weight={{ .Weight }}{{ end }}  max_fails=3  fail_timeout=10s;
+{{- end }}
+    keepalive 32;
+}
+{{- end }}
