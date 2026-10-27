@@ -3,7 +3,7 @@
 *.test
 *.out
 coverage.*
-api/gen/
+
 web/node_modules/
 web/dist/
 license-portal/node_modules/

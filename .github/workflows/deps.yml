@@ -1,0 +1,63 @@
+# 依赖通道：在有网络的 CI 中解析并固化依赖，提交回分支，供离线环境构建。
+#  - Go：go mod tidy + go mod vendor，提交 go.mod / go.sum / vendor/
+#  - gRPC：buf generate，提交 api/gen/
+#  - 前端：pnpm install，提交 web/pnpm-lock.yaml；node_modules 打包分片推送到 deps-cache/web 分支
+name: deps
+
+on:
+  push:
+    branches: ["deps/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - name: proto codegen
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.57.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+          cd api/proto && buf generate
+      - name: go mod tidy + vendor
+        run: |
+          go mod tidy
+          go mod vendor
+          go build ./...
+          go vet ./...
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: pnpm install
+        run: cd web && pnpm install --config.node-linker=hoisted
+      - name: commit go and lockfile changes
+        run: |
+          git config user.name "deps-bot"
+          git config user.email "deps-bot@users.noreply.github.com"
+          git add go.mod go.sum vendor api/gen web/pnpm-lock.yaml
+          if git diff --cached --quiet; then echo "no changes"; else
+            git commit -m "chore(deps): vendor Go modules, generate gRPC code, lock web deps [deps-bot]"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+      - name: publish node_modules cache branch
+        run: |
+          set -e
+          mkdir -p /tmp/cache && cd /tmp/cache
+          tar -C "$GITHUB_WORKSPACE/web" -cf - node_modules | zstd -19 -T0 -q | split -b 45m - web-node_modules.tar.zst.part-
+          sha256sum web-node_modules.tar.zst.part-* > SHA256SUMS
+          (cd "$GITHUB_WORKSPACE/web" && sha256sum pnpm-lock.yaml) > LOCKFILE
+          git init -q -b deps-cache/web
+          git config user.name "deps-bot"
+          git config user.email "deps-bot@users.noreply.github.com"
+          git add -A && git commit -q -m "web node_modules cache for $(cat LOCKFILE | cut -c1-12) [deps-bot]"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deps-cache/web
