@@ -75,6 +75,7 @@ func issue(args []string) {
 	keyPath := fs.String("key", "", "签名私钥（PEM）")
 	kid := fs.String("kid", "", "密钥编号（须内置于控制台）")
 	reqPath := fs.String("request", "", "控制台导出的激活申请 activation-request.json")
+	instID := fs.String("installation-id", "", "直接指定安装 ID（替代 -request，仅配合 -binding installation_only 使用）")
 	customer := fs.String("customer", "", "客户名称")
 	customerID := fs.String("customer-id", "", "客户编号")
 	edition := fs.String("edition", "professional", "trial | standard | professional | enterprise")
@@ -87,8 +88,11 @@ func issue(args []string) {
 	licID := fs.String("id", "", "License 编号（默认自动生成）")
 	out := fs.String("out", "", "输出文件（默认打印到标准输出）")
 	_ = fs.Parse(args)
-	if *keyPath == "" || *kid == "" || *reqPath == "" || *customer == "" {
-		die("-key, -kid, -request and -customer are required")
+	if *keyPath == "" || *kid == "" || *customer == "" || (*reqPath == "" && *instID == "") {
+		die("-key, -kid, -customer and one of -request / -installation-id are required")
+	}
+	if *reqPath == "" && *binding != "installation_only" {
+		die("-installation-id requires -binding installation_only (host fingerprint comes from the activation request)")
 	}
 	feats, ok := editionFeatures[license.Edition(*edition)]
 	if !ok {
@@ -99,9 +103,13 @@ func issue(args []string) {
 		InstallationID string   `json:"installation_id"`
 		FPHashes       []string `json:"fp_hashes"`
 	}
-	b, err := os.ReadFile(*reqPath)
-	check(err)
-	check(json.Unmarshal(b, &req))
+	if *reqPath != "" {
+		b, err := os.ReadFile(*reqPath)
+		check(err)
+		check(json.Unmarshal(b, &req))
+	} else {
+		req.InstallationID = *instID
+	}
 	if !strings.HasPrefix(req.InstallationID, "inst_") {
 		die("activation request has no installation_id")
 	}

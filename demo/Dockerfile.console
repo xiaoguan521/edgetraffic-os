@@ -1,0 +1,25 @@
+# 演示用控制台镜像：前端构建 + syapp-console + syapp-license-server（演示签发授权用）
+FROM node:22-slim AS web
+WORKDIR /web
+RUN corepack enable && corepack prepare pnpm@9 --activate
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
+FROM golang:1.27 AS go
+# 仅 CI 端到端测试注入临时授权公钥；正式与演示构建留空
+ARG EXTRA_LICENSE_KEY=""
+WORKDIR /src
+COPY . .
+COPY --from=web /web/dist ./web/dist
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/version.Version=0.1.0-demo -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY}" \
+      -o /out/ ./cmd/syapp-console ./cmd/syapp-license-server
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY --from=go /out/ /usr/bin/
+VOLUME /var/lib/syapp-console
+EXPOSE 8443 9443
+ENTRYPOINT ["/usr/bin/syapp-console"]
+CMD ["-listen", "0.0.0.0:8443", "-grpc-listen", "0.0.0.0:9443"]

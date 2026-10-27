@@ -1,0 +1,44 @@
+# 在真实 Docker 环境中构建演示镜像，启动控制台 + 2 个节点 + 2 个后端，按演示脚本做端到端验证。
+name: demo-e2e
+
+on:
+  push:
+    branches: [main, mvp]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: ephemeral license key (CI only)
+        run: |
+          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys | tee /tmp/keygen.txt
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
+          echo "EXTRA_LICENSE_KEY=$pub" >> "$GITHUB_ENV"
+      - name: build and start demo
+        working-directory: demo
+        run: ./demo.sh up
+      - name: end-to-end
+        working-directory: demo
+        env:
+          LIC_TOOL: /tmp/lic
+          LIC_KEY: /tmp/keys/etos-ci-ephemeral.key
+          LIC_KID: etos-ci-ephemeral
+        run: ./e2e.sh
+      - name: logs on failure
+        if: failure()
+        working-directory: demo
+        run: |
+          for s in console node1 node2; do
+            docker compose logs --tail 40 $s | sed "s/^/::warning title=$s::/" | head -40
+          done

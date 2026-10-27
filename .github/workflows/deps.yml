@@ -39,7 +39,7 @@ jobs:
         with:
           node-version: 22
       - name: pnpm install
-        run: cd web && pnpm install --config.node-linker=hoisted
+        run: cd web && pnpm install --no-frozen-lockfile --config.node-linker=hoisted
       - name: commit go and lockfile changes
         run: |
           git config user.name "deps-bot"

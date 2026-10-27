@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# 演示容器内没有 systemd：用这个小脚本承接控制台注册命令末尾的
+# “systemctl enable --now syapp-agent”。入口脚本检测到注册完成后会自动启动 agent。
+case "$*" in
+  *syapp-agent*) echo "syapp-agent will start automatically (demo container)"; exit 0 ;;
+  *syapp*) echo "syapp is managed by the container entrypoint"; exit 0 ;;
+  *) echo "systemctl is not available in this demo container" >&2; exit 1 ;;
+esac

@@ -14,9 +14,19 @@ var builtinKeys = map[string]string{
 	"etos-demo-2026": "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU=",
 }
 
+// ciKey 只在 CI 端到端测试的构建中通过 -ldflags 注入（每次运行临时生成，用完即弃），
+// 正式与演示构建中为空。对应的 kid 固定为 CIKeyID。
+var ciKey string
+
+// CIKeyID 是 CI 临时密钥的编号。
+const CIKeyID = "etos-ci-ephemeral"
+
 // BuiltinKeyRing 返回内置公钥环。
 func BuiltinKeyRing() KeyRing {
 	kr := KeyRing{}
+	if b, err := base64.StdEncoding.DecodeString(ciKey); err == nil && len(b) == ed25519.PublicKeySize {
+		kr[CIKeyID] = ed25519.PublicKey(b)
+	}
 	for kid, b64 := range builtinKeys {
 		b, err := base64.StdEncoding.DecodeString(b64)
 		if err == nil && len(b) == ed25519.PublicKeySize {
