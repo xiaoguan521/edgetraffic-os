@@ -12,8 +12,8 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
       - name: vet and test
@@ -26,14 +26,14 @@ jobs:
   brand:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: ./scripts/brand-check.sh
 
   dataplane:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
       - name: build deps
@@ -54,8 +54,10 @@ jobs:
             -keyout $R/certs/site-example.key -out $R/certs/site-example.crt
           echo ok | sudo tee /srv/syapp/sites/example/current/index.html
           sudo ln -sfn releases/r000001 /opt/syapp/conf/current
-          sudo /opt/syapp/sbin/syapp
-          sudo scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
+          sudo cp dataplane/packaging/systemd/syapp.service /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl start syapp || { sudo journalctl -u syapp --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
+          sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
       - uses: actions/upload-artifact@v4
         with:
           name: syapp-linux-x86_64
@@ -64,7 +66,7 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: check lockfile
         id: lock
         run: if [ -f web/pnpm-lock.yaml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "web/pnpm-lock.yaml not committed yet, skipping"; fi
@@ -73,7 +75,7 @@ jobs:
         with:
           version: 9
       - if: steps.lock.outputs.present == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
       - if: steps.lock.outputs.present == 'true'
