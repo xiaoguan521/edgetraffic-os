@@ -44,6 +44,7 @@ jobs:
         run: dataplane/build-syapp.sh -o dist
       - name: install and run golden acceptance
         run: |
+          trap 'echo "::error title=dataplane step::exit $? at: $BASH_COMMAND"' ERR
           sudo tar -C / -xzf dist/syapp-*.tar.gz
           sudo useradd -r -s /usr/sbin/nologin syapp || true
           R=/opt/syapp/conf/releases/r000001
