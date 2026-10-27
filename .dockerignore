@@ -1,0 +1,8 @@
+.git
+bin
+dist
+web/node_modules
+web/dist
+license-portal/node_modules
+demo/keys
+demo/out

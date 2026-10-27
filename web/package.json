@@ -10,6 +10,7 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@antdv-next/icons": "^1.1.2",
     "@vueuse/core": "^15.0.0",
     "ace-builds": "^1.36.0",
     "antdv-next": "~1.6.0",

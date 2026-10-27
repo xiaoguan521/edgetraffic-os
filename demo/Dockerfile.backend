@@ -1,0 +1,9 @@
+FROM golang:1.27 AS go
+WORKDIR /src
+COPY demo/backend/main.go .
+RUN CGO_ENABLED=0 go mod init demo-backend 2>/dev/null; CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/demo-backend .
+
+FROM ubuntu:24.04
+COPY --from=go /out/demo-backend /usr/bin/demo-backend
+EXPOSE 9001
+ENTRYPOINT ["/usr/bin/demo-backend"]

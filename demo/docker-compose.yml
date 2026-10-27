@@ -1,0 +1,70 @@
+# EdgeTraffic OS 演示环境：一台 Linux 服务器上运行
+#   console   控制台（Web 8443，节点连接 9443）
+#   node1/2   两台边缘节点（syapp + syapp-agent），HTTP 分别映射到宿主机 8001 / 8002
+#   backend1/2 演示用上游业务服务
+# 用法见 demo/README.md：./demo.sh up
+name: edgetraffic-demo
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  console-data: {}
+
+services:
+  console:
+    build: { context: .., dockerfile: demo/Dockerfile.console, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    image: edgetraffic-os/console:demo
+    environment:
+      ETOS_GRPC_HOSTS: "console,172.30.0.10"
+      ETOS_GRPC_ADVERTISE: "console:9443"
+      ETOS_DATA: /var/lib/syapp-console
+    volumes:
+      - console-data:/var/lib/syapp-console
+      - ./keys:/keys:ro
+    ports:
+      - "${CONSOLE_PORT:-8443}:8443"
+    networks:
+      edge: { ipv4_address: 172.30.0.10 }
+    restart: unless-stopped
+
+  node1:
+    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    image: edgetraffic-os/node:demo
+    hostname: edge-sg-01
+    ulimits: { nofile: { soft: 65535, hard: 65535 } }
+    ports:
+      - "${NODE1_PORT:-8001}:80"
+    networks:
+      edge: { ipv4_address: 172.30.0.21 }
+    restart: unless-stopped
+
+  node2:
+    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    image: edgetraffic-os/node:demo
+    hostname: edge-sg-02
+    ulimits: { nofile: { soft: 65535, hard: 65535 } }
+    ports:
+      - "${NODE2_PORT:-8002}:80"
+    networks:
+      edge: { ipv4_address: 172.30.0.22 }
+    restart: unless-stopped
+
+  backend1:
+    build: { context: .., dockerfile: demo/Dockerfile.backend }
+    image: edgetraffic-os/demo-backend:demo
+    environment: { INSTANCE: order-api-1 }
+    networks:
+      edge: { ipv4_address: 172.30.0.31 }
+    restart: unless-stopped
+
+  backend2:
+    build: { context: .., dockerfile: demo/Dockerfile.backend }
+    image: edgetraffic-os/demo-backend:demo
+    environment: { INSTANCE: order-api-2 }
+    networks:
+      edge: { ipv4_address: 172.30.0.32 }
+    restart: unless-stopped

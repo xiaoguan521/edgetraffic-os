@@ -1,9 +1,9 @@
-# 生成：cd api/proto && buf generate（需要联网安装 buf 与插件）
+# 生成：cd api/proto && buf generate（插件由 deps 工作流 go install 到 PATH）
 version: v2
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  - local: protoc-gen-go
     out: ../gen
     opt: paths=source_relative
-  - remote: buf.build/grpc/go
+  - local: protoc-gen-go-grpc
     out: ../gen
     opt: paths=source_relative
