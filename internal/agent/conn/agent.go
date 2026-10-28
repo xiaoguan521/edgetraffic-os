@@ -400,13 +400,26 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 			reply(agentv1.CommandResult_REJECTED, "fetch bundle: "+err.Error(), "")
 			return
 		}
+		restore := b.Apply.RevisionId == b.Apply.ParentRevisionId
 		if ok, why := a.licenseWritable(); !ok {
-			// 授权只读时只放行证书续期：由 agent 自己比较新版本与线上版本，不信任控制台的任何标记（规格书 8.6）
-			if !a.certOnly(bundle) {
+			// 授权只读时只放行两类操作，均由 agent 自己核对，不信任控制台的任何标记（规格书 8.6）：
+			// 证书续期（只有证书文件变化），以及漂移恢复（内容与线上版本已批准的清单完全一致）。
+			switch {
+			case restore && a.sameAsApproved(bundle):
+				a.log.Info("license is read-only; allowing drift restore", "revision", b.Apply.RevisionId)
+			case !restore && a.certOnly(bundle):
+				a.log.Info("license is read-only; allowing certificate-only release", "revision", b.Apply.RevisionId)
+			default:
 				reply(agentv1.CommandResult_REJECTED, "license does not allow new releases: "+why, "")
 				return
 			}
-			a.log.Info("license is read-only; allowing certificate-only release", "revision", b.Apply.RevisionId)
+		}
+		if restore {
+			a.log.Info("restoring drifted release", "revision", b.Apply.RevisionId)
+			r := a.applier.Restore(ctx, b.Apply.RevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
+			a.log.Info("restore result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
+			reply(status(r.Status), r.Message, r.Stderr)
+			return
 		}
 		a.log.Info("applying", "revision", b.Apply.RevisionId, "parent", b.Apply.ParentRevisionId)
 		r := a.applier.Apply(ctx, b.Apply.RevisionId, b.Apply.ParentRevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
@@ -454,6 +467,25 @@ func (a *Agent) certOnly(bundle []byte) bool {
 		return false
 	}
 	return render.CertOnlyChange(cur, next)
+}
+
+// sameAsApproved 判断包的清单摘要是否与当前版本目录中记录的清单摘要一致（即恢复为已批准的内容）。
+func (a *Agent) sameAsApproved(bundle []byte) bool {
+	next, err := render.ReadTarGz(bundle)
+	if err != nil {
+		return false
+	}
+	cur, err := a.applier.CurrentFiles()
+	if err != nil {
+		return false
+	}
+	var nm, cm struct {
+		Digest string `json:"digest"`
+	}
+	if json.Unmarshal(next[render.ManifestName], &nm) != nil || json.Unmarshal(cur[render.ManifestName], &cm) != nil {
+		return false
+	}
+	return nm.Digest != "" && nm.Digest == cm.Digest && render.Repack("", next).Manifest.Digest == nm.Digest
 }
 
 // licenseWritable：尚未收到 License 时由控制台负责拦截；收到后按 agent 侧独立校验结果执行。

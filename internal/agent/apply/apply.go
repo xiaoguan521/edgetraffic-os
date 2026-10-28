@@ -127,6 +127,60 @@ func (a *Applier) Apply(ctx context.Context, rev, parent string, bundle []byte, 
 	return a.switchTo(ctx, rev, true, checks)
 }
 
+// Restore 把被手工改动（漂移）的当前版本恢复为控制台下发的原样（规格书 5.6、12.7）：
+// 用同一版本的干净副本原子替换版本目录，校验通过后 reload；失败时换回原目录。
+func (a *Applier) Restore(ctx context.Context, rev string, bundle []byte, digest string, checks []PostCheck) Result {
+	if !revRe.MatchString(rev) {
+		return Result{Status: Rejected, Message: "invalid revision id"}
+	}
+	unlock, err := a.lock()
+	if err != nil {
+		return Result{Status: Conflict, Message: "another apply is running: " + err.Error()}
+	}
+	defer unlock()
+	if cur := a.Current(); cur != rev {
+		return Result{Status: Conflict, Message: fmt.Sprintf("node is at %q, restore target is %q", cur, rev)}
+	}
+	backup, err := a.replaceDir(rev, bundle, digest)
+	if err != nil {
+		return Result{Status: Rejected, Message: "bundle rejected: " + err.Error()}
+	}
+	final := filepath.Join(a.releases(), rev)
+	if out, err := a.wrapper(ctx, "test", rev); err != nil {
+		_ = os.RemoveAll(final)
+		_ = os.Rename(backup, final)
+		return Result{Status: Invalid, Message: "configuration test failed", Stderr: out}
+	}
+	r := a.switchTo(ctx, rev, false, checks)
+	if r.Status == Applied {
+		r.Message = "restored to " + rev + "; manual changes kept in " + filepath.Base(backup)
+	}
+	return r
+}
+
+// replaceDir 用包中的干净副本替换版本目录，返回保留下来的旧目录（.drift-<版本>-<时间>）。
+func (a *Applier) replaceDir(rev string, bundle []byte, digest string) (string, error) {
+	if len(bundle) > maxBundle {
+		return "", errors.New("bundle too large")
+	}
+	final := filepath.Join(a.releases(), rev)
+	tmp := final + ".restore"
+	if err := a.extractTo(tmp, rev, bundle, digest); err != nil {
+		return "", err
+	}
+	backup := filepath.Join(a.releases(), fmt.Sprintf(".drift-%s-%d", rev, time.Now().UnixNano()))
+	if err := os.Rename(final, backup); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Rename(backup, final)
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	return backup, nil
+}
+
 // Rollback 把 current 切回本机已有的某个版本。
 func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck) Result {
 	if !revRe.MatchString(rev) {
@@ -248,6 +302,18 @@ func (a *Applier) unpack(rev string, bundle []byte, digest string) error {
 		}
 	}
 	tmp := final + ".tmp"
+	if err := a.extractTo(tmp, rev, bundle, digest); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.RemoveAll(tmp)
+		return err
+	}
+	return nil
+}
+
+// extractTo 把包解到 tmp 并按清单逐文件校验；失败时清理 tmp。
+func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error {
 	_ = os.RemoveAll(tmp)
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return err
@@ -312,9 +378,6 @@ func (a *Applier) unpack(rev string, bundle []byte, digest string) error {
 		return errors.New("manifest digest mismatch")
 	}
 	if err := verifyDir(tmp, m); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, final); err != nil {
 		return err
 	}
 	ok = true
@@ -629,6 +692,24 @@ func (a *Applier) cleanup() {
 			_ = os.RemoveAll(filepath.Join(a.releases(), r))
 		}
 	}
+	// 漂移恢复留下的备份目录只保留最近 5 个
+	var drifts []string
+	for _, e := range ents {
+		if e.IsDir() && strings.HasPrefix(e.Name(), ".drift-") {
+			drifts = append(drifts, e.Name())
+		}
+	}
+	sort.Slice(drifts, func(i, j int) bool { return driftTime(drifts[i]) < driftTime(drifts[j]) })
+	for len(drifts) > 5 {
+		_ = os.RemoveAll(filepath.Join(a.releases(), drifts[0]))
+		drifts = drifts[1:]
+	}
+}
+
+func driftTime(name string) int64 {
+	i := strings.LastIndexByte(name, '-')
+	n, _ := strconv.ParseInt(name[i+1:], 10, 64)
+	return n
 }
 
 // Bootstrap 在全新节点上写入初始版本并建立 current 软链（由安装脚本以 root 调用）。

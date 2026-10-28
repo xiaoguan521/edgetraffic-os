@@ -58,6 +58,16 @@ async function saveGroup() {
   }
 }
 
+async function restore(n: any) {
+  try {
+    const d = await api.post(`/nodes/${n.id}/restore`)
+    message.success(`正在把 ${n.name} 恢复为 ${d.revision_id}，可在“发布”页查看进度`, 5)
+    load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
 async function revoke(n: any) {
   await api.post(`/nodes/${n.id}/revoke`)
   message.success(`已吊销 ${n.name}，其证书立即失效。如需重新接入：点“添加节点”，在该机器上执行新生成的命令`, 6)
@@ -115,7 +125,12 @@ function mb(b: number) {
           </template>
           <template v-else-if="column.key === 'status'">
             <a-badge :status="record.status === 'online' ? 'success' : 'default'" :text="record.status === 'online' ? '在线' : '离线'" />
-            <div v-if="record.drifted" class="warn">配置被手动改动</div>
+            <div v-if="record.drifted" class="warn">
+              配置被手动改动
+              <a-popconfirm v-if="session.can('releaser')" :title="`把 ${record.name} 恢复为控制台下发的 ${record.applied_revision}？节点上的改动会备份在版本目录旁，不会丢失。`" ok-text="恢复" @confirm="restore(record)">
+                <a class="restore">恢复</a>
+              </a-popconfirm>
+            </div>
           </template>
           <template v-else-if="column.key === 'rev'">
             <span class="num">{{ record.applied_revision || '—' }}</span>
@@ -194,6 +209,9 @@ function mb(b: number) {
 .warn {
   font-size: 12px;
   color: #a3332d;
+}
+.restore {
+  margin-left: 6px;
 }
 .cmd {
   white-space: pre-wrap;

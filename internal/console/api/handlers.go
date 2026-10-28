@@ -334,6 +334,24 @@ func (s *Server) listNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, ns)
 }
 
+func (s *Server) restoreNode(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	dep, err := s.Deploy.Restore(id, c.GetString("user"), c.ClientIP())
+	switch {
+	case errors.Is(err, deploy.ErrNotDrifted):
+		fail(c, http.StatusConflict, "NOT_DRIFTED", "该节点没有手工改动，无需恢复")
+	case errors.Is(err, deploy.ErrBusy):
+		fail(c, http.StatusConflict, "BUSY", "节点组正在发布，请稍后再试")
+	case err != nil:
+		failErr(c, err)
+	default:
+		c.JSON(http.StatusOK, dep)
+	}
+}
+
 func (s *Server) revokeNode(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
