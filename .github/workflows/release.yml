@@ -135,17 +135,26 @@ jobs:
           go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
-          # 仅本测试使用的控制台：注入临时公钥，不进入发布物
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/smoke-console \
-            -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console
+          # 仅本测试使用：控制台与 agent 注入临时公钥（agent 也会校验授权），不进入任何发布物。
+          # 节点包其余内容（syapp、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
+          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syapp-console
+          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/edgetraffic-os-node-*.tar.gz
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syapp-agent ./cmd/syapp-agent
+          tar -C /tmp/smoke-pkg -czf /tmp/smoke-node.tar.gz .
           LIC_TOOL=/tmp/lic LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral \
-            scripts/release/smoke-node.sh "$OUT"/edgetraffic-os-node-*.tar.gz /tmp/smoke-console
-      - name: release console binary has no CI key and runs
+            scripts/release/smoke-node.sh /tmp/smoke-node.tar.gz /tmp/smoke-console
+      - name: release binaries have no CI key and run
         run: |
-          d=$(mktemp -d); tar -C "$d" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          bin=$(echo "$d"/*/syapp-console)
-          "$bin" -version | tee /dev/stderr | grep -q "$VERSION"
-          if strings "$bin" | grep -q etos-ci-ephemeral; then echo "::error::release console contains CI key id"; exit 1; fi
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
+          d=$(mktemp -d)
+          tar -C "$d" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          tar -C "$d" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          for b in "$d"/*/rootfs/usr/bin/syapp-agent "$d"/*/syapp-console; do
+            if strings "$b" | grep -qF "$pub"; then echo "::error::$(basename "$b") contains the CI license key"; exit 1; fi
+          done
+          "$d"/edgetraffic-os-console-*/syapp-console -version | tee /dev/stderr | grep -q "$VERSION"
+          "$d"/edgetraffic-os-node-*/rootfs/usr/bin/syapp-agent version | grep -q "$VERSION"
 
       - name: upload release assets
         run: gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$OUT"/*.tar.gz $(ls "$OUT"/*.zip 2>/dev/null)
