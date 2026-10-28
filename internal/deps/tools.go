@@ -11,6 +11,7 @@ import (
 	_ "github.com/golang-jwt/jwt/v5"
 	_ "github.com/gorilla/websocket"
 	_ "github.com/pquerna/otp/totp"
+	_ "golang.org/x/crypto/acme"
 	_ "golang.org/x/crypto/argon2"
 	_ "google.golang.org/grpc"
 	_ "google.golang.org/protobuf/proto"
