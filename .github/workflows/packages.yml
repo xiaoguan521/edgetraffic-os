@@ -45,7 +45,7 @@ jobs:
       - name: rpm / deb
         run: |
           trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
-          GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           export PATH="$(go env GOPATH)/bin:$PATH"
           scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
       - name: install on 9 distributions

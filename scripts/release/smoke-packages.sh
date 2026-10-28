@@ -20,7 +20,7 @@ run() { # 发行版名 镜像 安装命令
     /opt/syapp/sbin/syapp -t -q
     /opt/syapp/sbin/syapp
     sleep 1
-    grep -l 'syapp: master process' /proc/[0-9]*/cmdline >/dev/null
+    grep -qs 'syapp: master process' /proc/[0-9]*/cmdline
     test -f /etc/syapp-console/console.env
     syapp-console -version
     test ! -e /usr/bin/syapp-license-server
