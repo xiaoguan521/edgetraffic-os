@@ -13,7 +13,7 @@ ARG EXTRA_LICENSE_KEY=""
 WORKDIR /src
 COPY . .
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/version.Version=0.1.0-demo -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY}" \
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/version.Version=0.1.0-demo -X github.com/xiaoguan521/edgetraffic-os/internal/version.BuildDate=$(date -u +%F) -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY}" \
       -o /out/ ./cmd/syapp-console ./cmd/syapp-license-server
 
 FROM ubuntu:24.04

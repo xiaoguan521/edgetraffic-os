@@ -133,7 +133,7 @@ func (d *Service) Preview(groupID uint) ([]FileDiff, string, error) {
 			old, _ = render.ReadTarGz(rev.Bundle)
 		}
 	}
-	var out []FileDiff
+	out := []FileDiff{} // 无变更时序列化为 []，不是 null
 	names := map[string]bool{}
 	for n := range b.Files {
 		names[n] = true

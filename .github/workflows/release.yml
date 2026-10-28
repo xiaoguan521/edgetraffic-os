@@ -1,0 +1,235 @@
+# 多架构 / 多系统构建与发布。
+#
+#   推送 main / mvp：滚动预发布 dev-<分支>（二进制）+ 镜像 :<分支>、:sha-<提交>
+#   推送标签 v*    ：正式 Release v<版本>（二进制 + SHA256SUMS）+ 镜像 :<版本>、:latest
+#   手动触发       ：同推送分支
+#
+# 产物
+#   控制台包  edgetraffic-os-console-<ver>-{linux,darwin}-{amd64,arm64}.tar.gz、-windows-{amd64,arm64}.zip
+#   节点包    edgetraffic-os-node-<ver>-linux-{amd64,arm64}.tar.gz（syapp + agent + wrapper + install.sh）
+#   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}，linux/amd64 + linux/arm64
+#
+# syapp 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（Ubuntu 22.04，glibc 2.35），不用 QEMU；
+# Go 程序 CGO_ENABLED=0 交叉编译。产物直接上传到 Release（不占用 Actions artifact 存储）。
+# 发布构建绝不注入 CI 临时授权公钥；冒烟测试用的控制台单独构建，不进入任何发布物。
+name: release
+
+on:
+  push:
+    branches: [main, mvp]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  REGISTRY: ghcr.io/xiaoguan521/edgetraffic-os
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      image_tag: ${{ steps.v.outputs.image_tag }}
+      release: ${{ steps.v.outputs.release }}
+      stable: ${{ steps.v.outputs.stable }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: v
+        name: compute version
+        run: |
+          short=$(git rev-parse --short=7 HEAD)
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version=${GITHUB_REF_NAME#v}
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "image_tag=$version" >> "$GITHUB_OUTPUT"
+            echo "release=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            [[ "$version" == *-* ]] && echo "stable=false" >> "$GITHUB_OUTPUT" || echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            branch=${GITHUB_REF_NAME//\//-}
+            if d=$(git describe --tags --match 'v[0-9]*' --abbrev=7 2>/dev/null); then version=${d#v}; else version=0.0.0-$branch.$short; fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "image_tag=$branch" >> "$GITHUB_OUTPUT"
+            echo "release=dev-$branch" >> "$GITHUB_OUTPUT"
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - name: prepare release
+        env:
+          RELEASE: ${{ steps.v.outputs.release }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            # 正式版先建草稿，资产与校验和全部上传后再发布
+            gh release view "$RELEASE" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create "$RELEASE" -R "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes --title "EdgeTraffic OS $VERSION"
+          else
+            # 滚动预发布：每次推送重建，始终指向分支最新提交
+            gh release delete "$RELEASE" -R "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || true
+            gh release create "$RELEASE" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "开发版 $GITHUB_REF_NAME（$VERSION）" \
+              --notes "分支 $GITHUB_REF_NAME 的自动构建，提交 $GITHUB_SHA。仅用于演示与测试，每次推送都会被覆盖。"
+          fi
+
+  build:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+            cross: "darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            cross: ""
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.image_tag }}
+      RELEASE: ${{ needs.meta.outputs.release }}
+      OUT: ${{ github.workspace }}/dist/release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: build deps
+        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev zip
+
+      - name: build syapp (native)
+        run: |
+          dataplane/build-syapp.sh -o dist/syapp
+          ls -l dist/syapp
+      - name: build web
+        run: cd web && pnpm install --frozen-lockfile && pnpm build
+      - name: package
+        run: |
+          trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
+          export BUILD_DATE=$(date -u +%F) COMMIT=$(git rev-parse --short HEAD)
+          scripts/release/package.sh node ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          scripts/release/package.sh console linux ${{ matrix.arch }}
+          for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
+          scripts/release/package.sh backend ${{ matrix.arch }}
+          ls -l "$OUT"
+
+      - name: smoke test node package (systemd install + enroll + publish)
+        run: |
+          trap 'echo "::error title=smoke::exit $? at: $BASH_COMMAND"' ERR
+          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
+          # 仅本测试使用：控制台与 agent 注入临时公钥（agent 也会校验授权），不进入任何发布物。
+          # 节点包其余内容（syapp、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
+          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syapp-console
+          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/edgetraffic-os-node-*.tar.gz
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syapp-agent ./cmd/syapp-agent
+          tar -C /tmp/smoke-pkg -czf /tmp/smoke-node.tar.gz .
+          LIC_TOOL=/tmp/lic LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral \
+            scripts/release/smoke-node.sh /tmp/smoke-node.tar.gz /tmp/smoke-console
+      - name: release binaries have no CI key and run
+        run: |
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
+          d=$(mktemp -d)
+          tar -C "$d" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          tar -C "$d" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          for b in "$d"/*/rootfs/usr/bin/syapp-agent "$d"/*/syapp-console; do
+            if strings "$b" | grep -qF "$pub"; then echo "::error::$(basename "$b") contains the CI license key"; exit 1; fi
+          done
+          "$d"/edgetraffic-os-console-*/syapp-console -version | tee /dev/stderr | grep -q "$VERSION"
+          "$d"/edgetraffic-os-node-*/rootfs/usr/bin/syapp-agent version | grep -q "$VERSION"
+
+      - name: upload release assets
+        run: |
+          for f in "$OUT"/*.tar.gz "$OUT"/*.zip; do
+            [[ -f "$f" ]] || continue
+            for try in 1 2 3; do
+              if err=$(gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$f" 2>&1); then echo "uploaded $(basename "$f")"; break; fi
+              echo "::warning title=upload $(basename "$f") try $try::${err//$'\n'/ }"
+              [[ $try == 3 ]] && { echo "::error title=upload::$(basename "$f"): ${err//$'\n'/ }"; exit 1; }
+              sleep $((try * 10))
+            done
+          done
+
+      - name: build and push images (${{ matrix.arch }})
+        run: |
+          trap 'echo "::error title=images::exit $? at: $BASH_COMMAND"' ERR
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          S=$(mktemp -d)
+          mkdir -p "$S/console" "$S/node" "$S/backend"
+          tar -C "$S" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          mv "$S"/edgetraffic-os-console-*/syapp-console "$S"/edgetraffic-os-console-*/syapp-license-server "$S/console/"
+          tar -C "$S" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          mv "$S"/edgetraffic-os-node-*/rootfs "$S/node/rootfs"
+          cp demo/node/entrypoint.sh demo/node/systemctl "$S/node/"
+          cp "$OUT"/backend-linux-${{ matrix.arch }}/demo-backend "$S/backend/"
+          cp docs/NOTICE "$S/NOTICE"
+          labels=(--label org.opencontainers.image.source=https://github.com/${{ github.repository }}
+                  --label org.opencontainers.image.version=$VERSION
+                  --label org.opencontainers.image.revision=$GITHUB_SHA
+                  --label org.opencontainers.image.licenses=Proprietary)
+          for img in console node backend; do
+            name=$img; [[ $img == backend ]] && name=demo-backend
+            ref="$REGISTRY/$name:$TAG-${{ matrix.arch }}"
+            docker build -q -f deploy/docker/$img.Dockerfile "${labels[@]}" -t "$ref" "$S"
+            docker push -q "$ref"
+          done
+          docker run --rm --entrypoint syapp "$REGISTRY/node:$TAG-${{ matrix.arch }}" -v
+
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.image_tag }}
+      RELEASE: ${{ needs.meta.outputs.release }}
+    steps:
+      - name: multi-arch image manifests
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          short=${GITHUB_SHA::7}
+          for name in console node demo-backend; do
+            tags=(-t "$REGISTRY/$name:$TAG" -t "$REGISTRY/$name:sha-$short")
+            [[ "${{ needs.meta.outputs.stable }}" == true ]] && tags+=(-t "$REGISTRY/$name:latest")
+            docker buildx imagetools create "${tags[@]}" "$REGISTRY/$name:$TAG-amd64" "$REGISTRY/$name:$TAG-arm64"
+            docker buildx imagetools inspect "$REGISTRY/$name:$TAG" | grep -E 'Platform:' | sort -u
+          done
+      - name: checksums and publish release
+        run: |
+          d=$(mktemp -d); cd "$d"
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'edgetraffic-os-*'
+          sha256sum edgetraffic-os-* | tee SHA256SUMS
+          gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber SHA256SUMS
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            gh release edit "$RELEASE" -R "$GITHUB_REPOSITORY" --draft=false --latest=${{ needs.meta.outputs.stable }} \
+              --prerelease=$([[ "${{ needs.meta.outputs.stable }}" == true ]] && echo false || echo true)
+          fi
+          {
+            echo "### EdgeTraffic OS $VERSION"
+            echo
+            echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE"
+            echo
+            echo '```'
+            echo "docker pull $REGISTRY/console:$TAG"
+            echo "docker pull $REGISTRY/node:$TAG"
+            echo "docker pull $REGISTRY/demo-backend:$TAG"
+            echo '```'
+            echo '```'; cat SHA256SUMS; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

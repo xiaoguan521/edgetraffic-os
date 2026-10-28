@@ -1,4 +1,4 @@
-# 边缘节点防火墙模板（规格书 9.4），由 install-agent.sh 渲染变量后加载。
+# 边缘节点防火墙模板（规格书 9.4），由节点安装流程渲染变量后加载（二期）。
 table inet syapp_edge {
   chain input {
     type filter hook input priority 0; policy drop;

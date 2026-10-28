@@ -82,7 +82,20 @@ expect "节点 1 返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演�
 expect "节点 2 返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v1"
 expect "反向代理到后端" "$("${H[@]}" "http://127.0.0.1:$P1/api/orders")" '"service":"order-api"'
 expect "拒绝访问路由" "$("${H[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$P2/admin/")" "403"
+expect "发布后无待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" '"changed":false'
+expect "无变更时文件列表为空数组" "$("${C[@]}" "$B/node-groups/1/preview")" '"files":[]'
 expect "响应头 Server 为 syapp" "$("${H[@]}" -I "http://127.0.0.1:$P1/")" "Server: syapp"
+
+echo "== 漂移检测：有人登录节点手工改了配置"
+$DC exec -T node1 sh -c 'echo "# manual edit" >> /opt/syapp/conf/current/syapp.conf'
+drift=""
+for _ in $(seq 1 40); do
+  drift=$("${C[@]}" "$B/nodes" | j "','.join(n['name']+'='+str(n['drifted']) for n in sorted(d, key=lambda n: n['name']))")
+  [[ "$drift" == *"=True,"* ]] && break
+  sleep 2
+done
+expect "控制台标记 node1 配置被改动" "$drift" "edge-sg-01=True"
+expect "node2 未被误报" "$drift" "edge-sg-02=False"
 
 echo "== 内容更新 v2"
 ver=$("${C[@]}" "$B/sites/1" | j "d['version']")
@@ -90,6 +103,12 @@ ver=$("${C[@]}" "$B/sites/1" | j "d['version']")
 d=$(publish "首页改版 v2")
 expect "v2 发布生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点返回 v2 页面" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v2"
+for _ in $(seq 1 25); do
+  drift=$("${C[@]}" "$B/nodes" | j "','.join(str(n['drifted']) for n in d)")
+  [[ "$drift" != *True* ]] && break
+  sleep 2
+done
+expect "重新发布后漂移标记消除" "$drift" "False,False"
 
 echo "== 根路径改到宕机后端：探活失败自动回滚"
 "${C[@]}" -X POST "$B/upstreams" -d '{"group_id":1,"spec":{"name":"new-api","servers":[{"addr":"172.30.0.99:9001"}]}}' >/dev/null
@@ -106,7 +125,7 @@ expect "回滚生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演示商城 v1"
 
 echo "== 授权过期：只读但回滚与流量不受影响"
-issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 > /tmp/demo-expired.lic
+issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 -maintenance "$(date -u -d '+365 days' +%F)" > /tmp/demo-expired.lic
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-expired.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权状态为已过期" "$("${C[@]}" "$B/license" | j "d['state']")" "EXPIRED"
 expect "过期后发布被拒绝" "$("${C[@]}" -X POST "$B/node-groups/1/publish" -d '{}')" "LICENSE_READ_ONLY"
@@ -115,6 +134,24 @@ d=$(wait_deploy "$id")
 expect "过期后回滚仍可用" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "过期后流量正常" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v2"
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-valid.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
+
+echo "== 吊销节点后重新添加"
+n2=$("${C[@]}" "$B/nodes" | j "[n['id'] for n in d if n['name']=='edge-sg-02' and n['status']!='revoked'][0]")
+"${C[@]}" -X POST "$B/nodes/$n2/revoke" >/dev/null
+sleep 3
+expect "吊销后节点状态" "$("${C[@]}" "$B/nodes" | j "[n['status'] for n in d if n['id']==$n2][0]")" "revoked"
+cmd=$("${C[@]}" -X POST "$B/node-groups/1/enroll" | j "d['command']")
+out=$(./demo.sh enroll node2 $cmd 2>&1)
+expect "重新注册命令执行成功" "$out" "已注册"
+st=""
+for _ in $(seq 1 45); do
+  st=$("${C[@]}" "$B/nodes" | j "','.join(n['status'] for n in d if n['name']=='edge-sg-02' and n['id']!=$n2)")
+  [[ "$st" == "online" ]] && break
+  sleep 2
+done
+expect "重新添加的节点上线（无需重启 agent）" "$st" "online"
+expect "旧身份仍为吊销" "$("${C[@]}" "$B/nodes" | j "[n['status'] for n in d if n['id']==$n2][0]")" "revoked"
+expect "重新添加后流量正常" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城"
 
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
