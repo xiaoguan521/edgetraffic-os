@@ -17,16 +17,23 @@ B=http://127.0.0.1:18443/api/v1
 C=(curl -s -b "$JAR" -c "$JAR" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
 fail=0
 ok()  { echo "ok   $1"; }
-bad() { echo "FAIL $1"; [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-node::$1"; fail=$((fail+1)); }
+bad() { echo "FAIL $1"; [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-node::${1//$'\n'/%0A}"; fail=$((fail+1)); }
 j()   { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 expect() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1（期望包含 '$3'，实际 '${2:0:300}'）"; fi; }
 cleanup() { [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null; }
 trap cleanup EXIT
+diag() {
+  [[ -n "${GITHUB_ACTIONS:-}" ]] || return 0
+  for u in syapp syapp-agent; do
+    m=$( (sudo systemctl status $u --no-pager -l; sudo journalctl -u $u --no-pager -n 20) 2>&1 | tail -30)
+    echo "::warning title=$u status::${m//$'\n'/%0A}"
+  done
+}
 
 echo "== 安装节点包"
 tar -C "$W" -xzf "$PKG"
 D=$(echo "$W"/edgetraffic-os-node-*)
-if out=$(sudo "$D/install.sh" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -5)"; fi
+if out=$(sudo "$D/install.sh" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
 expect "systemd 单元 syapp.service 运行中" "$(systemctl is-active syapp.service)" "active"
 expect "syapp -v" "$(syapp -v 2>&1)" "syapp version: syapp/"
 expect "master 进程标题" "$(ps -eo args)" "syapp: master process"
@@ -45,14 +52,14 @@ for _ in $(seq 1 60); do curl -sf "$B/setup/status" >/dev/null && break; sleep 1
 "${C[@]}" -X POST "$B/auth/login" -d '{"username":"admin","password":"Smoke@2026!"}' >/dev/null
 INST=$(sed -E 's/.*"installation_id":"([^"]+)".*/\1/' "$W/console/installation.json")
 "$LIC_TOOL" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only \
-  -customer smoke -days 30 > "$W/smoke.lic"
+  -customer smoke -days 365 > "$W/smoke.lic"
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/smoke.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权有效" "$("${C[@]}" "$B/license" | j "d['state']")" "VALID"
 
 echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
-if out=$(sudo "$D/install.sh" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -5)"; fi
+if out=$(sudo "$D/install.sh" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
 online=0
 for _ in $(seq 1 30); do
   online=$("${C[@]}" "$B/nodes" | j "sum(1 for n in d if n['status']=='online')")
@@ -78,7 +85,7 @@ expect "Server 头为 syapp" "$(curl -sI --max-time 3 -H 'Host: smoke.local' htt
 expect "发布与升级全程未重启 syapp（master PID 不变）" "$(cat /run/syapp/syapp.pid)" "$MASTER"
 
 if [[ $fail -ne 0 ]]; then
-  for u in syapp syapp-agent; do sudo journalctl -u $u --no-pager | tail -15 | sed "s/^/::warning title=$u::/"; done
+  diag
   tail -15 "$W/console.log" | sed 's/^/::warning title=console::/'
   sudo tail -5 /var/log/syapp/error.log | sed 's/^/::warning title=error.log::/'
 fi
