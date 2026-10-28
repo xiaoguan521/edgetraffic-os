@@ -4,7 +4,7 @@
 #
 # 用法：scripts/release/smoke-packages.sh <软件包目录> <goarch>
 # 发行版覆盖：CentOS 7（glibc 2.17）、Rocky 8（2.28，与麒麟 V10、统信 UOS 20 相同）、Rocky 9、openEuler 22.03、
-#             Debian 11 / 12、Ubuntu 20.04 / 22.04 / 24.04。
+#             Debian 12 / 13、Ubuntu 20.04 / 22.04 / 24.04。
 set -uo pipefail
 DIR=$(realpath "${1:?package dir}"); ARCH=${2:?goarch}
 fail=0
@@ -43,7 +43,7 @@ run "CentOS 7"         centos:7                   "$el7"
 run "Rocky Linux 8"    rockylinux:8               "$dnf"
 run "Rocky Linux 9"    rockylinux:9               "$dnf"
 run "openEuler 22.03"  openeuler/openeuler:22.03-lts "$dnf"
-run "Debian 11"        debian:11                  "$deb"
+run "Debian 13"        debian:13                  "$deb"
 run "Debian 12"        debian:12                  "$deb"
 run "Ubuntu 20.04"     ubuntu:20.04               "$deb"
 run "Ubuntu 22.04"     ubuntu:22.04               "$deb"
