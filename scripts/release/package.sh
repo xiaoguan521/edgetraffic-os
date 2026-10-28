@@ -96,9 +96,17 @@ case "${1:-}" in
       { echo '#!/bin/sh'; cat deploy/nfpm/scripts/common.sh; cat "$f"; } > "$st/scripts/$(basename "$f")"
       chmod 0755 "$st/scripts/$(basename "$f")"
     done
+    # 先把 ${VERSION} / ${ARCH} / ${STAGE} 代入配置，不依赖 nfpm 对各字段的环境变量展开
+    for p in syapp syapp-agent syapp-console; do
+      sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "deploy/nfpm/$p.yaml" > "$st/$p.yaml"
+    done
     for fmt in deb rpm; do
       for p in syapp syapp-agent syapp-console; do
-        VERSION="$VERSION" ARCH="$arch" STAGE="$st" nfpm package -f "deploy/nfpm/$p.yaml" -p "$fmt" -t "$OUT/" >/dev/null
+        if ! log=$(nfpm package -f "$st/$p.yaml" -p "$fmt" -t "$OUT/" 2>&1); then
+          echo "nfpm $p $fmt failed:" >&2; echo "$log" >&2
+          [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=nfpm $p $fmt::$(echo "$log" | tail -5 | tr '\n' ' ')"
+          exit 1
+        fi
       done
     done
     ls "$OUT"/*.deb "$OUT"/*.rpm
