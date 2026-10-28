@@ -9,6 +9,7 @@
 #   ./demo.sh enroll <node> <控制台“添加节点”给出的命令>
 #                                在节点容器里执行注册命令，例如：
 #                                ./demo.sh enroll node1 sudo syapp-agent enroll -server ... -token ... -ca-fingerprint ...
+#   ./demo.sh cert <域名> [天数]  生成演示用自签证书 out/<域名>.crt 与 .key（默认 30 天），在“证书”页上传
 #   ./demo.sh traffic [秒数]     向两台节点持续发请求，让总览页出现流量曲线（默认 300 秒）
 #   ./demo.sh ps <node>          查看节点上的进程（展示进程名为 syapp）
 #   ./demo.sh status             查看容器状态与访问地址
@@ -90,6 +91,15 @@ case "${1:-}" in
     $DC exec -T "$node" $cmd
     echo "$node 已注册，agent 将在几秒内连上控制台。"
     ;;
+  cert)
+    domain="${2:?usage: ./demo.sh cert <域名> [天数]}"
+    days="${3:-30}"
+    mkdir -p out
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days "$days" \
+      -subj "/CN=$domain" -addext "subjectAltName=DNS:$domain" \
+      -keyout "out/$domain.key" -out "out/$domain.crt" 2>/dev/null
+    echo "已生成：demo/out/$domain.crt 与 demo/out/$domain.key（$days 天）"
+    ;;
   traffic)
     secs="${2:-300}"
     host="${SITE_HOST:-shop.demo.local}"
@@ -120,7 +130,7 @@ case "${1:-}" in
     echo "演示数据已清空。"
     ;;
   *)
-    sed -n '2,19p' "$0"
+    sed -n '2,20p' "$0"
     exit 2
     ;;
 esac

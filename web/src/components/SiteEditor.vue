@@ -19,8 +19,7 @@ const blank = () => ({
   name: '',
   domains: [] as string[],
   https: false,
-  cert_pem: '',
-  key_pem: '',
+  cert_id: undefined as number | undefined,
   force_https: false,
   http2: false,
   enabled: true,
@@ -31,12 +30,33 @@ const f = reactive(blank())
 const saving = ref(false)
 const error = ref('')
 const isNew = computed(() => !props.site)
+const certs = ref<any[]>([])
+
+// 证书是否覆盖全部域名（只做提示，最终以服务端校验为准）
+function covers(pattern: string, host: string) {
+  if (pattern === host) return true
+  if (pattern.startsWith('*.')) {
+    const rest = host.split('.').slice(1).join('.')
+    return rest === pattern.slice(2) && host.split('.').length > 2
+  }
+  return false
+}
+const certWarn = computed(() => {
+  const c = certs.value.find((x) => x.id === f.cert_id)
+  if (!c) return ''
+  const miss = f.domains.map((d) => d.trim().toLowerCase()).filter((d) => d && !c.domains.some((p: string) => covers(p, d)))
+  if (miss.length) return `该证书不包含域名 ${miss.join('、')}`
+  if (c.status === 'expired') return '该证书已过期，请先在证书页续期'
+  if (c.status === 'expiring') return `该证书 ${c.days_left} 天后到期`
+  return ''
+})
 
 watch(
   () => props.open,
   (o) => {
     if (!o) return
     error.value = ''
+    api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
     Object.assign(f, blank())
     if (props.site) {
       const s = props.site.spec
@@ -44,8 +64,7 @@ watch(
         name: props.site.name,
         domains: [...s.domains],
         https: !!s.https,
-        cert_pem: s.https?.cert_pem || '',
-        key_pem: '',
+        cert_id: s.https?.cert_id || undefined,
         force_https: s.force_https,
         http2: s.http2,
         enabled: props.site.enabled,
@@ -82,7 +101,7 @@ async function save() {
       return o
     }),
   }
-  if (f.https) spec.https = { cert_pem: f.cert_pem, key_pem: f.key_pem }
+  if (f.https) spec.https = { cert_id: f.cert_id }
   try {
     if (isNew.value) await api.post('/sites', { group_id: props.groupId, enabled: f.enabled, spec })
     else await api.put(`/sites/${props.site.id}`, { version: f.version, enabled: f.enabled, spec })
@@ -122,14 +141,14 @@ const modes = [
         <a-checkbox v-model:checked="f.https">启用 HTTPS</a-checkbox>
       </a-form-item>
       <template v-if="f.https">
-        <div class="row2">
-          <a-form-item label="证书（PEM）">
-            <a-textarea v-model:value="f.cert_pem" :rows="4" class="code" placeholder="-----BEGIN CERTIFICATE-----" />
-          </a-form-item>
-          <a-form-item label="私钥（PEM）" :extra="isNew ? '' : '留空表示沿用已保存的私钥；私钥不会回显'">
-            <a-textarea v-model:value="f.key_pem" :rows="4" class="code" placeholder="-----BEGIN PRIVATE KEY-----" />
-          </a-form-item>
-        </div>
+        <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期'">
+          <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="certs.map((c) => ({ value: c.id, label: `${c.name}（${c.domains.join('、')}）` }))">
+            <template #notFoundContent>
+              <span>证书库为空，<router-link to="/certificates">先去上传证书</router-link></span>
+            </template>
+          </a-select>
+          <div v-if="certWarn" class="cert-warn" :class="{ soft: certWarn.includes('天后到期') }">{{ certWarn }}</div>
+        </a-form-item>
         <a-space :size="24" style="margin-bottom: 16px">
           <a-checkbox v-model:checked="f.force_https">HTTP 自动跳转 HTTPS</a-checkbox>
           <a-checkbox v-model:checked="f.http2">启用 HTTP/2</a-checkbox>
@@ -201,5 +220,13 @@ const modes = [
 .deny {
   font-size: 12px;
   color: #8a9a9d;
+}
+.cert-warn {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: #a3332d;
+}
+.cert-warn.soft {
+  color: #a86a12;
 }
 </style>

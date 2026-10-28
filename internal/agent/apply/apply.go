@@ -381,6 +381,31 @@ func verifyDir(dir string, m *manifest) error {
 	return nil
 }
 
+// CurrentFiles 读取当前版本目录中的全部文件（授权只读时用于核对“只有证书变化”）。
+func (a *Applier) CurrentFiles() (map[string][]byte, error) {
+	dir, err := filepath.EvalSymlinks(a.link("current"))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = b
+		return nil
+	})
+	return out, err
+}
+
 // TreeDigest 重新计算 current 目录的指纹，供漂移检测使用（规格书 5.6）。
 func (a *Applier) TreeDigest() (string, error) {
 	dir, err := filepath.EvalSymlinks(a.link("current"))

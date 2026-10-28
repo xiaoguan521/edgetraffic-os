@@ -124,11 +124,44 @@ d=$(wait_deploy "$id")
 expect "回滚生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演示商城 v1"
 
+echo "== 证书库：上传证书，站点启用 HTTPS"
+CT=$(mktemp -d)
+mkcert() { # $1 = 文件名前缀，$2 = 有效天数
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days "$2" -subj /CN=shop.demo.local \
+    -addext subjectAltName=DNS:shop.demo.local -keyout "$CT/$1.key" -out "$CT/$1.crt" 2>/dev/null
+}
+certjson() { python3 -c "import json,sys;print(json.dumps({'name':sys.argv[1],'cert_pem':open(sys.argv[2]).read(),'key_pem':open(sys.argv[3]).read()}))" "$@"; }
+enddate() { openssl x509 -enddate -noout -in "$1" | sed 's/notAfter=//'; }
+served() { $DC exec -T node1 sh -c "curl -skv --max-time 5 --resolve shop.demo.local:443:127.0.0.1 https://shop.demo.local/ 2>&1" | sed -n 's/.*expire date: //p' | head -1; }
+mkcert c30 30; mkcert c90 90; mkcert other 90
+r=$(certjson shop "$CT/c30.crt" "$CT/other.key" | "${C[@]}" -X POST "$B/certificates" -d @-)
+expect "证书与私钥不匹配被拒绝" "$r" "不匹配"
+cid=$(certjson shop "$CT/c30.crt" "$CT/c30.key" | "${C[@]}" -X POST "$B/certificates" -d @- | j "d['id']")
+expect "证书列表不含私钥" "$("${C[@]}" "$B/certificates")" '"status":"expiring"'
+if "${C[@]}" "$B/certificates" | grep -q "PRIVATE KEY"; then bad "证书接口泄露私钥"; else ok "证书接口不返回私钥"; fi
+expect "总览提示证书即将到期" "$("${C[@]}" "$B/dashboard")" '"certs_expiring":1'
+ver=$("${C[@]}" "$B/sites/1" | j "d['version']")
+r=$("${C[@]}" -X PUT "$B/sites/1" -d "{\"version\":$ver,\"spec\":{\"domains\":[\"shop.demo.local\",\"blog.demo.local\"],\"https\":{\"cert_id\":$cid},\"routes\":[{\"path\":\"/\",\"match\":\"prefix\",\"mode\":\"static\",\"static\":{\"index_html\":\"<h1>演示商城 v3</h1>\"}}]}}")
+expect "证书不覆盖的域名被拒绝" "$r" "blog.demo.local"
+"${C[@]}" -X PUT "$B/sites/1" -d "{\"version\":$ver,\"spec\":{\"domains\":[\"shop.demo.local\"],\"https\":{\"cert_id\":$cid},\"routes\":[{\"path\":\"/\",\"match\":\"prefix\",\"mode\":\"static\",\"static\":{\"index_html\":\"<h1>演示商城 v3</h1>\"}}]}}" >/dev/null
+if "${C[@]}" "$B/sites/1" | grep -q "BEGIN"; then bad "站点配置中出现证书原文"; else ok "站点只保存证书编号"; fi
+d=$(publish "启用 HTTPS")
+expect "HTTPS 站点发布生效" "$(echo "$d" | j "d['status']")" "APPLIED"
+expect "节点使用证书库中的证书" "$(served)" "$(enddate "$CT/c30.crt")"
+
 echo "== 授权过期：只读但回滚与流量不受影响"
 issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 -maintenance "$(date -u -d '+365 days' +%F)" > /tmp/demo-expired.lic
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-expired.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权状态为已过期" "$("${C[@]}" "$B/license" | j "d['state']")" "EXPIRED"
 expect "过期后发布被拒绝" "$("${C[@]}" -X POST "$B/node-groups/1/publish" -d '{}')" "LICENSE_READ_ONLY"
+expect "过期后上传新证书被拒绝" "$(certjson extra "$CT/c90.crt" "$CT/c90.key" | "${C[@]}" -X POST "$B/certificates" -d @-)" "LICENSE_READ_ONLY"
+r=$(certjson shop "$CT/c90.crt" "$CT/c90.key" | "${C[@]}" -X PUT "$B/certificates/$cid" -d @-)
+expect "过期后证书续期仍可用" "$r" '"status":"started"'
+id=$(echo "$r" | j "d['deployments'][0]['deployment_id']")
+d=$(wait_deploy "$id")
+expect "续期版本由节点放行并生效" "$(echo "$d" | j "d['kind']+' '+d['status']")" "cert_renew APPLIED"
+expect "节点换上续期后的证书" "$(served)" "$(enddate "$CT/c90.crt")"
+expect "续期后草稿与线上一致" "$("${C[@]}" "$B/node-groups/1/preview")" '"changed":false'
 id=$("${C[@]}" -X POST "$B/node-groups/1/rollback" -d '{"revision_id":"r000002"}' | j "d['id']")
 d=$(wait_deploy "$id")
 expect "过期后回滚仍可用" "$(echo "$d" | j "d['status']")" "APPLIED"

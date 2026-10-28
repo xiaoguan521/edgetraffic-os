@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '总览' } },
         { path: 'nodes', name: 'nodes', component: () => import('../views/Nodes.vue'), meta: { title: '节点' } },
         { path: 'sites', name: 'sites', component: () => import('../views/Sites.vue'), meta: { title: '站点与上游' } },
+        { path: 'certificates', name: 'certificates', component: () => import('../views/Certificates.vue'), meta: { title: '证书' } },
         { path: 'releases', name: 'releases', component: () => import('../views/Releases.vue'), meta: { title: '发布' } },
         { path: 'audit', name: 'audit', component: () => import('../views/Audit.vue'), meta: { title: '审计' } },
         { path: 'system', name: 'system', component: () => import('../views/System.vue'), meta: { title: '授权与系统' } },

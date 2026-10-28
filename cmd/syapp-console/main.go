@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/api"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
@@ -29,6 +30,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 	"github.com/xiaoguan521/edgetraffic-os/web"
@@ -83,8 +85,17 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 	lic.Tick(time.Now())
 	aud := &audit.Logger{DB: st.DB}
 
+	box, err := secretbox.LoadOrCreate(filepath.Join(dataDir, "secret.key"))
+	if err != nil {
+		return fmt.Errorf("secret key: %w", err)
+	}
+	crt := &certs.Service{Store: st, Box: box, Audit: aud}
+	if err := crt.MigrateInline(); err != nil {
+		return fmt.Errorf("migrate site certificates: %w", err)
+	}
+
 	gw := &gateway.Server{Store: st, CA: ca, CmdKey: cmdKey, Lic: lic, Audit: aud, Log: log}
-	dep := &deploy.Service{Store: st, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes()}
+	dep := &deploy.Service{Store: st, Certs: crt, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes()}
 	gw.OnOnline = dep.Align
 	// 启动时所有节点先视为离线，等待重新连接
 	st.DB.Model(&store.Node{}).Where("status = ?", "online").Update("status", "offline")
@@ -108,7 +119,7 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 		return err
 	}
 
-	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
+	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
 		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: tlsCert != ""}
 	h, err := apiSrv.Handler()
 	if err != nil {

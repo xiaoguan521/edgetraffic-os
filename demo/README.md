@@ -139,8 +139,9 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 **场景 A：新后端没起来。** 新建上游 `new-api`（`172.30.0.99:9001`，一个不存在的地址），把站点的 `/` 改成反向代理到 `new-api`，发布。
 看点：两台节点都在“探活”一格变红，并提示“发布后本机探活失败，已自动回滚到 r000001，流量未中断”。`curl` 仍然返回 v1。
 
-**场景 B：证书和私钥不匹配。** 编辑站点，启用 HTTPS，证书和私钥用不配对的两份（用 `openssl req -x509 ...` 生成两套），发布。
-看点：车道在“校验”一格变红，“查看节点输出”里是 syapp 的原始报错；线上配置没有被改动。
+**场景 B：证书出错进不了线上。** 先生成两套证书：`./demo.sh cert shop.demo.local` 和 `./demo.sh cert other.demo.local`。在“证书”页上传 `shop.demo.local.crt`，私钥却选 `other.demo.local.key`。
+看点：控制台当场拒绝“证书与私钥不匹配”。再上传正确的一对，在站点里启用 HTTPS 并选这张证书，同时多填一个域名 `blog.demo.local`，保存被拒绝“证书不包含域名 blog.demo.local”。错误在控制台就被拦下，线上配置没有被改动。
+去掉多余域名后保存并发布，在节点上验证：`docker compose exec node1 curl -skv --resolve shop.demo.local:443:127.0.0.1 https://shop.demo.local/ 2>&1 | grep 'expire date'`。
 
 **场景 C：一键回滚。** 先把站点改回正常内容并发布 v2，再到“版本历史”对 r000001 点“回滚到此版本”，几秒内全部节点回到 v1。
 
@@ -149,7 +150,8 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 1. `./demo.sh license-expired`，导入 `out/expired.lic`。
 2. 顶栏变红，显示“授权已过期，控制台只读”；新建站点、发布、添加节点都被拒绝。
 3. “版本历史”里回滚依然可用；`curl` 两台节点，流量完全正常。
-4. 演示结束重新导入 `out/demo.lic` 恢复。
+4. 证书续期依然可用：`./demo.sh cert shop.demo.local 365` 生成新证书，在“证书”页对 shop 点“续期”。控制台以线上版本为基础只替换证书文件下发，节点核对“只有证书变化”后放行，“发布”页出现一条“证书续期”记录。
+5. 演示结束重新导入 `out/demo.lic` 恢复。
 
 讲解：授权到期只限制控制台的新增变更，绝不停止边缘流量；回滚与证书续期这类应急操作在任何授权状态下都可用。
 
@@ -164,6 +166,7 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 | `./demo.sh status` | 容器状态与访问地址 |
 | `./demo.sh pull [版本]` | 拉取预构建镜像并启动 |
 | `./demo.sh ps node2` | 查看节点进程 |
+| `./demo.sh cert <域名> [天数]` | 生成演示用自签证书到 `out/`（默认 30 天） |
 | `docker compose logs -f node1` | 查看节点 agent 日志 |
 | `./demo.sh down` | 停止，保留数据 |
 | `./demo.sh reset` | 清空全部数据回到初始状态 |

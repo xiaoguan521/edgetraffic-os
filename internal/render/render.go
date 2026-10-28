@@ -117,7 +117,19 @@ func Render(in Input) (*Bundle, error) {
 		}
 	}
 
-	m := Manifest{Revision: in.Revision, Files: map[string]string{}}
+	return Repack(in.Revision, files), nil
+}
+
+// Repack 为一组文件重新生成清单（忽略其中旧的 MANIFEST.json）。
+// 证书续期用它在线上版本的基础上只替换证书文件，得到新版本。
+func Repack(rev string, src map[string][]byte) *Bundle {
+	files := make(map[string][]byte, len(src))
+	for n, b := range src {
+		if n != ManifestName {
+			files[n] = b
+		}
+	}
+	m := Manifest{Revision: rev, Files: map[string]string{}}
 	names := make([]string, 0, len(files))
 	for n := range files {
 		names = append(names, n)
@@ -132,7 +144,47 @@ func Render(in Input) (*Bundle, error) {
 	m.Digest = "sha256:" + hex.EncodeToString(all.Sum(nil))
 	mj, _ := json.MarshalIndent(m, "", "  ")
 	files[ManifestName] = append(mj, '\n')
-	return &Bundle{Revision: in.Revision, Files: files, Manifest: m}, nil
+	return &Bundle{Revision: rev, Files: files, Manifest: m}
+}
+
+// isCertFile 判断是否为渲染器生成的站点证书 / 私钥文件。
+func isCertFile(n string) bool {
+	if !strings.HasPrefix(n, "certs/site-") || strings.Contains(n[len("certs/"):], "/") {
+		return false
+	}
+	return strings.HasSuffix(n, ".crt") || strings.HasSuffix(n, ".key")
+}
+
+// CertOnlyChange 报告 next 相对 cur 是否只替换了已有的证书 / 私钥文件（文件集合不变，
+// 其他文件逐字节相同，且至少一个证书文件有变化）。agent 在授权只读时据此放行证书续期，
+// 不依赖控制台的任何标记。
+func CertOnlyChange(cur, next map[string][]byte) bool {
+	changed := false
+	count := 0
+	for n, nb := range next {
+		if n == ManifestName {
+			continue
+		}
+		count++
+		cb, ok := cur[n]
+		if !ok {
+			return false
+		}
+		if bytes.Equal(cb, nb) {
+			continue
+		}
+		if !isCertFile(n) {
+			return false
+		}
+		changed = true
+	}
+	curCount := 0
+	for n := range cur {
+		if n != ManifestName {
+			curCount++
+		}
+	}
+	return changed && count == curCount
 }
 
 // WriteDir 把版本写入目录 dir（不存在则创建）。私钥文件权限 0640，其余 0644。

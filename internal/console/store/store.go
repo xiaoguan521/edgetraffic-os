@@ -175,6 +175,25 @@ type LicenseStore struct {
 	ImportedAt time.Time
 }
 
+// Certificate 是证书库中的一张证书（规格书 7.3 证书管理）。私钥以 secretbox 加密保存，永不出现在 API 响应中。
+type Certificate struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `gorm:"uniqueIndex;size:64" json:"name"`
+	Domains     string    `json:"-"` // JSON 数组：证书覆盖的域名（SAN）
+	Subject     string    `json:"subject"`
+	Issuer      string    `json:"issuer"`
+	Serial      string    `json:"serial"`
+	NotBefore   time.Time `json:"not_before"`
+	NotAfter    time.Time `gorm:"index" json:"not_after"`
+	Fingerprint string    `gorm:"size:64" json:"fingerprint"`
+	CertPEM     string    `json:"-"`
+	KeyEnc      string    `json:"-"`
+	Source      string    `gorm:"size:16" json:"source"` // upload | migrated | acme
+	UpdatedBy   string    `json:"updated_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type SystemKV struct {
 	Key   string `gorm:"primaryKey;size:64"`
 	Value string
@@ -204,6 +223,11 @@ func Open(dsn string) (*Store, error) {
 		Migrate: func(tx *gorm.DB) error {
 			return tx.AutoMigrate(&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{},
 				&Revision{}, &Deployment{}, &DeploymentNode{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &SystemKV{})
+		},
+	}, {
+		ID: "202610280001_certificates",
+		Migrate: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&Certificate{})
 		},
 	}})
 	if err := m.Migrate(); err != nil {

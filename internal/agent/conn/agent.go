@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/collect"
 	"github.com/xiaoguan521/edgetraffic-os/internal/cmdsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
 
@@ -394,14 +395,18 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		a.log.Info("license updated", "writable", ok, "reason", why)
 		reply(agentv1.CommandResult_APPLIED, "license received", "")
 	case *agentv1.ServerMessage_Apply:
-		if ok, why := a.licenseWritable(); !ok {
-			reply(agentv1.CommandResult_REJECTED, "license does not allow new releases: "+why, "")
-			return
-		}
 		bundle, err := fetch(ctx, client, b.Apply.RevisionId)
 		if err != nil {
 			reply(agentv1.CommandResult_REJECTED, "fetch bundle: "+err.Error(), "")
 			return
+		}
+		if ok, why := a.licenseWritable(); !ok {
+			// 授权只读时只放行证书续期：由 agent 自己比较新版本与线上版本，不信任控制台的任何标记（规格书 8.6）
+			if !a.certOnly(bundle) {
+				reply(agentv1.CommandResult_REJECTED, "license does not allow new releases: "+why, "")
+				return
+			}
+			a.log.Info("license is read-only; allowing certificate-only release", "revision", b.Apply.RevisionId)
 		}
 		a.log.Info("applying", "revision", b.Apply.RevisionId, "parent", b.Apply.ParentRevisionId)
 		r := a.applier.Apply(ctx, b.Apply.RevisionId, b.Apply.ParentRevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
@@ -436,6 +441,19 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 	default:
 		reply(agentv1.CommandResult_REJECTED, "command not supported by this agent", "")
 	}
+}
+
+// certOnly 判断新版本相对线上版本是否只替换了证书文件。
+func (a *Agent) certOnly(bundle []byte) bool {
+	next, err := render.ReadTarGz(bundle)
+	if err != nil {
+		return false
+	}
+	cur, err := a.applier.CurrentFiles()
+	if err != nil {
+		return false
+	}
+	return render.CertOnlyChange(cur, next)
 }
 
 // licenseWritable：尚未收到 License 时由控制台负责拦截；收到后按 agent 侧独立校验结果执行。

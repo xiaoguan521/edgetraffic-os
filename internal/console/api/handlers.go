@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/crypto"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -350,6 +352,13 @@ type siteView struct {
 	Spec render.Site `json:"spec"`
 }
 
+// stripPEM：站点只保存证书库编号，证书与私钥原文不落在站点配置里（规格书 9.3）。
+func stripPEM(site *render.Site) {
+	if site.HTTPS != nil {
+		site.HTTPS = &render.TLS{CertID: site.HTTPS.CertID}
+	}
+}
+
 func toSiteView(st store.Site) siteView {
 	v := siteView{Site: st}
 	_ = json.Unmarshal([]byte(st.Spec), &v.Spec)
@@ -408,7 +417,15 @@ func (s *Server) validateWith(groupID uint, site *render.Site, upstream *render.
 			}
 		}
 		if site != nil {
-			keep = append(keep, *site)
+			sc := *site
+			if sc.HTTPS != nil {
+				t := *sc.HTTPS
+				sc.HTTPS = &t
+			}
+			if err := s.Certs.ResolveSite(&sc); err != nil {
+				return err
+			}
+			keep = append(keep, sc)
 		}
 		in.Sites = keep
 	}
@@ -447,6 +464,7 @@ func (s *Server) createSite(c *gin.Context) {
 			return
 		}
 	}
+	stripPEM(&req.Spec)
 	if err := s.validateWith(req.GroupID, &req.Spec, nil, "", ""); err != nil {
 		fail(c, http.StatusBadRequest, "INVALID_SITE", err.Error())
 		return
@@ -481,13 +499,7 @@ func (s *Server) updateSite(c *gin.Context) {
 		return
 	}
 	req.Spec.Name = st.Name
-	if req.Spec.HTTPS != nil && req.Spec.HTTPS.KeyPEM == "" { // 未重新上传私钥时沿用原私钥
-		var old render.Site
-		_ = json.Unmarshal([]byte(st.Spec), &old)
-		if old.HTTPS != nil {
-			req.Spec.HTTPS.KeyPEM = old.HTTPS.KeyPEM
-		}
-	}
+	stripPEM(&req.Spec)
 	enabled := st.Enabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -522,6 +534,115 @@ func (s *Server) deleteSite(c *gin.Context) {
 	}
 	s.Store.DB.Delete(st)
 	s.audit(c, "site.delete", "site", st.Name, nil)
+	c.Status(http.StatusNoContent)
+}
+
+// ---------- 证书 ----------
+
+type certReq struct {
+	Name    string `json:"name"`
+	CertPEM string `json:"cert_pem"`
+	KeyPEM  string `json:"key_pem"`
+}
+
+func (s *Server) listCerts(c *gin.Context) {
+	list, err := s.Certs.List()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+func (s *Server) createCert(c *gin.Context) {
+	var req certReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	cert, err := s.Certs.Create(strings.TrimSpace(req.Name), req.CertPEM, req.KeyPEM, c.GetString("user"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "INVALID_CERTIFICATE", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, cert)
+}
+
+type certDeployResult struct {
+	GroupID      uint   `json:"group_id"`
+	DeploymentID uint   `json:"deployment_id,omitempty"`
+	Status       string `json:"status"` // started | unchanged | busy | failed
+	Message      string `json:"message,omitempty"`
+}
+
+// refreshCert 向所有引用该证书的节点组下发新证书。
+func (s *Server) refreshCert(c *gin.Context, id uint) []certDeployResult {
+	out := []certDeployResult{}
+	for _, g := range s.Certs.Groups(id) {
+		r := certDeployResult{GroupID: g}
+		dep, err := s.Deploy.CertRefresh(g, id, c.GetString("user"), c.ClientIP())
+		switch {
+		case errors.Is(err, deploy.ErrBusy):
+			r.Status, r.Message = "busy", "该节点组正在发布，稍后在证书页点“重新下发”"
+		case err != nil:
+			r.Status, r.Message = "failed", err.Error()
+		case dep == nil:
+			r.Status = "unchanged"
+		default:
+			r.Status, r.DeploymentID = "started", dep.ID
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func (s *Server) renewCert(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req certReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	cert, err := s.Certs.Renew(id, req.CertPEM, req.KeyPEM, c.GetString("user"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			failErr(c, err)
+			return
+		}
+		fail(c, http.StatusBadRequest, "INVALID_CERTIFICATE", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"certificate": cert, "deployments": s.refreshCert(c, id)})
+}
+
+func (s *Server) deployCert(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if _, err := store.First[store.Certificate](s.Store, id); err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deployments": s.refreshCert(c, id)})
+}
+
+func (s *Server) deleteCert(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if err := s.Certs.Delete(id, c.GetString("user")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			failErr(c, err)
+			return
+		}
+		fail(c, http.StatusConflict, "CERTIFICATE_IN_USE", err.Error())
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -758,6 +879,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	s.Store.DB.Model(&store.Node{}).Where("status = ? AND drifted = ?", "online", true).Count(&drifted)
 	s.Store.DB.Model(&store.Site{}).Count(&sites)
 	s.Store.DB.Model(&store.NodeGroup{}).Count(&groups)
+	certExpiring, certExpired := s.Certs.Counts()
 	var deps []store.Deployment
 	s.Store.DB.Order("id desc").Limit(6).Find(&deps)
 	ser := s.series(0, 30)
@@ -774,6 +896,7 @@ func (s *Server) dashboard(c *gin.Context) {
 		"nodes": nodes, "online": online, "drifted": drifted, "sites": sites, "groups": groups,
 		"deployments": deps, "license": s.licView(), "series": ser,
 		"requests_15m": req, "error_rate_15m": rate,
+		"certs_expiring": certExpiring, "certs_expired": certExpired,
 	})
 }
 
