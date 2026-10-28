@@ -6,7 +6,7 @@ EdgeTraffic OS 边缘节点
 系统要求：
   - Linux（systemd），glibc 2.17 及以上，需要 sudo
     每次构建都在以下发行版上做安装测试：CentOS 7、Rocky 8（glibc 2.28，与麒麟 V10、统信 UOS 20 相同）、
-    Rocky 9、openEuler 22.03、Debian 11 / 12、Ubuntu 20.04 / 22.04 / 24.04
+    Rocky 9、openEuler 22.03、Debian 12 / 13、Ubuntu 20.04 / 22.04 / 24.04
   - syapp 已静态链接 OpenSSL 3.5、PCRE2、zlib，不依赖系统的这些库
 
 更推荐用软件包安装（同一 Release 中下载）：

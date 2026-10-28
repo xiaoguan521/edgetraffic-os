@@ -9,6 +9,9 @@ case "$(uname -m)" in
   aarch64) img=quay.io/pypa/manylinux2014_aarch64 ;;
   *) echo "unsupported arch $(uname -m)" >&2; exit 2 ;;
 esac
+# 输出目录先在宿主机上以当前用户创建：否则容器（root）会把上层的 dist/ 也建成 root 所有，
+# 后续以普通用户运行的打包步骤无法在 dist/ 下创建目录。
+mkdir -p "$ROOT/$OUT"
 docker run --rm -v "$ROOT:/src" -w /src -e OUT="$OUT" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" "$img" bash -c '
   set -euo pipefail
   yum install -y -q perl-core git patch >/dev/null

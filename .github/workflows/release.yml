@@ -126,7 +126,7 @@ jobs:
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
           scripts/release/package.sh backend ${{ matrix.arch }}
-          GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
           ls -l "$OUT"
       - name: smoke test rpm / deb on 9 distributions
