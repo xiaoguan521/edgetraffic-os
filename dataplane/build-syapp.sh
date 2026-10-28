@@ -2,21 +2,25 @@
 # 构建 syapp 数据面（规格书 4.3）。
 #
 # 用法：
-#   dataplane/build-syapp.sh [-s <上游源码目录>] [-o <输出目录>] [-t openssl|tongsuo]
+#   dataplane/build-syapp.sh [-s <上游源码目录>] [-o <输出目录>] [-t openssl|tongsuo] [-S]
 #
 # 不指定 -s 时按 dataplane/UPSTREAM 从官方 GitHub 镜像拉取发布标签，并校验提交哈希。
+# -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
+#     在 glibc 2.17 的构建环境（manylinux2014）中执行，即可覆盖 CentOS 7、麒麟 V10、统信 UOS、openEuler 与较新的发行版。
+#     DEPS_CACHE 指向已下载源码包的目录时优先使用缓存；MAX_GLIBC 设置后校验二进制不依赖更高版本的 glibc 符号。
 # 产物：<输出目录>/syapp-<版本>-<架构>.tar.gz，解压到 / 即得到 /opt/syapp 目录树。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/UPSTREAM"
 
-SRC=""; OUT="$PWD/dist"; TLS_LIB="openssl"
-while getopts "s:o:t:" opt; do
+SRC=""; OUT="$PWD/dist"; TLS_LIB="openssl"; STATIC=0
+while getopts "s:o:t:S" opt; do
   case "$opt" in
     s) SRC="$OPTARG" ;;
     o) OUT="$OPTARG" ;;
     t) TLS_LIB="$OPTARG" ;;
+    S) STATIC=1 ;;
     *) exit 2 ;;
   esac
 done
@@ -40,6 +44,31 @@ mapfile -t patches < <(ls "$HERE"/patches/*.patch)
 patch -p1 --forward --quiet < "${patches[0]}"
 "$HERE/../scripts/rename-scan.sh" "$WORK/src"
 
+# 静态依赖：下载（或取缓存）→ 校验 sha256 → 解压，交给 configure 一起编译
+DEP_OPTS=()
+if [[ $STATIC -eq 1 ]]; then
+  # shellcheck disable=SC1091
+  source "$HERE/DEPS"
+  mkdir -p "$WORK/deps"
+  fetch_dep() { # name url sha256 -> 解压后的目录
+    local name=$1 url=$2 sum=$3 file
+    file="${DEPS_CACHE:-$WORK/deps}/$(basename "$url")"
+    if [[ ! -f "$file" ]]; then
+      mkdir -p "$(dirname "$file")"
+      curl -fsSL --retry 3 -o "$file" "$url"
+    fi
+    echo "$sum  $file" | sha256sum -c --quiet - || { echo "$name: sha256 mismatch for $file" >&2; exit 3; }
+    tar -C "$WORK/deps" -xzf "$file"
+    echo "$WORK/deps/$(tar -tzf "$file" | head -1 | cut -d/ -f1)"
+  }
+  OPENSSL_DIR=$(fetch_dep openssl "$OPENSSL_URL" "$OPENSSL_SHA256")
+  PCRE2_DIR=$(fetch_dep pcre2 "$PCRE2_URL" "$PCRE2_SHA256")
+  ZLIB_DIR=$(fetch_dep zlib "$ZLIB_URL" "$ZLIB_SHA256")
+  DEP_OPTS=(--with-openssl="$OPENSSL_DIR" --with-openssl-opt="no-shared no-tests no-docs"
+            --with-pcre="$PCRE2_DIR" --with-pcre-jit --with-zlib="$ZLIB_DIR")
+fi
+
+# 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
 ./auto/configure \
   --prefix=/opt/syapp \
   --sbin-path=/opt/syapp/sbin/syapp \
@@ -59,9 +88,11 @@ patch -p1 --forward --quiet < "${patches[0]}"
   --with-http_realip_module --with-http_stub_status_module \
   --with-http_gzip_static_module --with-http_sub_module \
   --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module \
-  > "$WORK/configure.log"
+  --without-http_auth_basic_module \
+  "${DEP_OPTS[@]}" \
+  > "$WORK/configure.log" || { tail -30 "$WORK/configure.log" >&2; exit 5; }
 
-make -j"$(nproc)" > "$WORK/make.log"
+make -j"$(nproc)" > "$WORK/make.log" 2>&1 || { tail -40 "$WORK/make.log" >&2; exit 5; }
 ROOT="$WORK/rootfs"
 make install DESTDIR="$ROOT" > /dev/null
 
@@ -85,6 +116,16 @@ if strings "$O/sbin/syapp" | grep -qi 'ngi''nx'; then
 fi
 if find "$ROOT" | grep -qi 'ngi''nx'; then
   echo "upstream name leaked into file names:" >&2; find "$ROOT" | grep -i 'ngi''nx' >&2; exit 4
+fi
+if [[ $STATIC -eq 1 ]]; then
+  # 只允许依赖 glibc 自身的库
+  extra=$(ldd "$O/sbin/syapp" | awk '{print $1}' | grep -vE '^(linux-vdso\.so|/lib.*/ld-linux|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so)' || true)
+  [[ -z "$extra" ]] || { echo "static build still links: $extra" >&2; exit 4; }
+  if [[ -n "${MAX_GLIBC:-}" ]]; then
+    need=$(objdump -T "$O/sbin/syapp" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/GLIBC_//' | sort -uV | tail -1)
+    [[ "$(printf '%s\n%s\n' "$need" "$MAX_GLIBC" | sort -V | tail -1)" == "$MAX_GLIBC" ]] || { echo "binary needs glibc $need > $MAX_GLIBC" >&2; exit 4; }
+    echo "glibc requirement: $need (max allowed $MAX_GLIBC)"
+  fi
 fi
 
 PKG="$OUT/syapp-$UPSTREAM_VERSION-$(uname -m).tar.gz"

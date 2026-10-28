@@ -1,0 +1,33 @@
+# syapp-agent 软件包：agent、提权 wrapper、sudoers 与 systemd 单元。安装后写入初始配置并启动 syapp。
+name: syapp-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: EdgeTraffic OS <support@edgetraffic.invalid>
+vendor: EdgeTraffic OS
+homepage: https://github.com/xiaoguan521/edgetraffic-os
+license: Proprietary
+description: |
+  syapp-agent: EdgeTraffic OS edge agent. Connects outbound to the console only and never listens on any port.
+depends:
+  - syapp
+  - sudo
+contents:
+  - src: ${STAGE}/agent/syapp-agent
+    dst: /usr/bin/syapp-agent
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/agent/syapp-wrapper
+    dst: /usr/libexec/syapp/syapp-wrapper
+    file_info: { mode: 0755, owner: root, group: root }
+  - src: ${STAGE}/agent/sudoers
+    dst: /etc/sudoers.d/syapp-agent
+    type: config
+    file_info: { mode: 0440, owner: root, group: root }
+  - src: ${STAGE}/agent/syapp-agent.service
+    dst: /usr/lib/systemd/system/syapp-agent.service
+scripts:
+  preinstall: ${STAGE}/scripts/agent-preinstall.sh
+  postinstall: ${STAGE}/scripts/agent-postinstall.sh
+  preremove: ${STAGE}/scripts/agent-preremove.sh
