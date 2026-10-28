@@ -106,7 +106,7 @@ expect "回滚生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演示商城 v1"
 
 echo "== 授权过期：只读但回滚与流量不受影响"
-issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 > /tmp/demo-expired.lic
+issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 -maintenance "$(date -u -d '+365 days' +%F)" > /tmp/demo-expired.lic
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-expired.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权状态为已过期" "$("${C[@]}" "$B/license" | j "d['state']")" "EXPIRED"
 expect "过期后发布被拒绝" "$("${C[@]}" -X POST "$B/node-groups/1/publish" -d '{}')" "LICENSE_READ_ONLY"

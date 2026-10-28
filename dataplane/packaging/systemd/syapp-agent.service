@@ -7,13 +7,15 @@ Wants=network-online.target
 User=syapp-agent
 Group=syapp
 EnvironmentFile=-/etc/syapp-agent/agent.env
-ExecStart=/usr/bin/syapp-agent -server ${SYAPP_CONSOLE}
+# 控制台地址默认读取注册时保存的 /var/lib/syapp-agent/node.json，也可在 agent.env 中用 SYAPP_CONSOLE 覆盖
+ExecStart=/usr/bin/syapp-agent run
 Restart=always
 RestartSec=5
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent
+# 经 sudo 调用的 syapp-wrapper（syapp -t / -s reload）与本服务共享挂载命名空间，需要写日志与缓存目录
+ReadWritePaths=/opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent -/run/syapp /var/log/syapp /var/cache/syapp -/run/sudo
 RuntimeDirectory=syapp-agent
 StateDirectory=syapp-agent
 

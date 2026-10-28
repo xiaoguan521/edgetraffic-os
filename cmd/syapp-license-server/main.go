@@ -84,6 +84,7 @@ func issue(args []string) {
 	days := fs.Int("days", 365, "有效天数")
 	expires := fs.String("expires", "", "到期日 YYYY-MM-DD（覆盖 -days，可用于签发已过期的演示授权）")
 	grace := fs.Int("grace", 15, "宽限天数")
+	maint := fs.String("maintenance", "", "维护截止日 YYYY-MM-DD（默认同到期日）；构建日期晚于它的控制台视授权无效")
 	binding := fs.String("binding", "installation", "installation（安装 ID + 主机指纹）| installation_only（容器部署）")
 	licID := fs.String("id", "", "License 编号（默认自动生成）")
 	out := fs.String("out", "", "输出文件（默认打印到标准输出）")
@@ -120,6 +121,12 @@ func issue(args []string) {
 		check(err)
 		exp = t.UTC()
 	}
+	maintUntil := exp
+	if *maint != "" {
+		t, err := time.Parse("2006-01-02", *maint)
+		check(err)
+		maintUntil = t.UTC()
+	}
 	if *licID == "" {
 		*licID = fmt.Sprintf("LIC-%s-%04d", now.Format("20060102"), now.Unix()%10000)
 	}
@@ -132,7 +139,7 @@ func issue(args []string) {
 		Customer: license.Customer{ID: *customerID, Name: *customer},
 		Edition:  license.Edition(*edition), Features: feats,
 		Limits:   license.Limits{Nodes: *nodes, Sites: *sites, AuditDays: 365},
-		IssuedAt: now, NotBefore: notBefore, ExpiresAt: exp, MaintenanceUntil: exp, GraceDays: *grace,
+		IssuedAt: now, NotBefore: notBefore, ExpiresAt: exp, MaintenanceUntil: maintUntil, GraceDays: *grace,
 		Binding: license.Binding{Type: *binding, InstallationID: req.InstallationID},
 		Product: license.Product{Name: version.Product, MinVersion: "0.0.0", MaxVersion: "1.*"},
 	}

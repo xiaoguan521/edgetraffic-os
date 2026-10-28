@@ -11,19 +11,80 @@
 
 ## 准备（演示前一天完成）
 
+三种方式任选其一，推荐 A。
+
 | 项目 | 要求 |
 | --- | --- |
-| 服务器 | Linux x86_64，4 核 8 GB，Docker 24+ 与 docker compose 插件 |
-| 网络 | 构建镜像时需访问 Docker Hub、GitHub（拉取上游源码）、npm |
+| 服务器 | Linux x86_64 或 arm64，4 核 8 GB，Docker 24+ 与 docker compose 插件（方式 A / B） |
 | 端口 | 8443（控制台）、8001 / 8002（两台节点）对演示电脑开放 |
 | 演示密钥 | 把 `etos-demo-2026.key` 放到 `demo/keys/`（向项目负责人索取，**不要提交到仓库**） |
+
+### 方式 A：拉取预构建镜像（推荐，约 1 分钟）
+
+每次推送 `mvp` / `main` 分支、打 `v*` 标签，GitHub Actions 都会构建 linux/amd64 + linux/arm64 镜像并推送到 GitHub 容器仓库：
+
+| 镜像 | 内容 |
+| --- | --- |
+| `ghcr.io/xiaoguan521/edgetraffic-os/console` | 控制台（含签发工具，用于现场签发演示授权） |
+| `ghcr.io/xiaoguan521/edgetraffic-os/node` | 边缘节点：syapp + syapp-agent + syapp-wrapper |
+| `ghcr.io/xiaoguan521/edgetraffic-os/demo-backend` | 演示用上游服务 order-api |
+
+标签：分支名（`mvp`、`main`）、版本号（`0.1.0`）、`sha-<提交>`、`latest`（最新正式版）。
+
+```bash
+# 仓库是私有的，先登录一次（GitHub 个人令牌，勾选 read:packages）
+echo <令牌> | docker login ghcr.io -u <GitHub 用户名> --password-stdin
+
+git clone https://github.com/xiaoguan521/edgetraffic-os.git   # 只用到 demo/ 目录
+cd edgetraffic-os/demo
+mkdir -p keys && cp /path/to/etos-demo-2026.key keys/
+./demo.sh pull            # 默认 mvp 分支最新构建；指定版本：./demo.sh pull v0.1.0
+```
+
+`pull` 会把镜像名写入 `demo/.env`，之后 `./demo.sh up / down / reset` 都使用这批镜像；`./demo.sh build` 切回本地构建。
+
+### 方式 B：本地构建镜像（5–10 分钟）
+
+服务器需要能访问 Docker Hub、GitHub、npm。
 
 ```bash
 git clone https://github.com/xiaoguan521/edgetraffic-os.git
 cd edgetraffic-os/demo
 mkdir -p keys && cp /path/to/etos-demo-2026.key keys/
-./demo.sh up          # 首次构建约 5–10 分钟
-./e2e.sh              # 可选：自动把整个演示跑一遍做彩排，结束后执行 ./demo.sh reset 清空
+./demo.sh up
+```
+
+### 方式 C：直接用二进制，不用 Docker
+
+到仓库 Releases 页下载（`dev-mvp` 是分支滚动构建，`v*` 是正式版），`SHA256SUMS` 可校验完整性：
+
+| 发布包 | 平台 |
+| --- | --- |
+| `edgetraffic-os-console-<版本>-<系统>-<架构>` | linux / darwin（tar.gz）、windows（zip），amd64 / arm64 |
+| `edgetraffic-os-node-<版本>-linux-<架构>.tar.gz` | Linux amd64 / arm64，systemd，glibc 2.35+、OpenSSL 3（Ubuntu 22.04+ / Debian 12+） |
+
+```bash
+gh release download dev-mvp -R xiaoguan521/edgetraffic-os -p '*linux-amd64*'
+
+# 控制台（任意一台机器，笔记本也可以）
+tar -xzf edgetraffic-os-console-*-linux-amd64.tar.gz && cd edgetraffic-os-console-*/
+./syapp-console -listen 0.0.0.0:8443 -grpc-listen 0.0.0.0:9443 \
+  -grpc-hosts <控制台IP> -grpc-advertise <控制台IP>:9443 -data ./data
+# 演示授权：./syapp-license-server issue -key etos-demo-2026.key -kid etos-demo-2026 \
+#   -installation-id <data/installation.json 中的 ID> -binding installation_only -customer 演示客户 -out demo.lic
+
+# 每台边缘节点（真实 Linux 服务器）
+tar -xzf edgetraffic-os-node-*-linux-amd64.tar.gz && cd edgetraffic-os-node-*/
+sudo ./install.sh          # 安装并由 systemd 启动 syapp
+# 然后把控制台“添加节点”生成的命令粘贴执行
+```
+
+方式 C 下演示流程中的 `./demo.sh enroll`、`curl :8001` 换成在节点上直接执行注册命令、`curl` 节点的 80 端口即可。
+
+### 彩排
+
+```bash
+./e2e.sh                          # 自动把整个演示跑一遍（方式 A / B）
 ./demo.sh reset && ./demo.sh up   # 回到干净的初始状态
 ```
 
@@ -101,6 +162,7 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 | 命令 | 作用 |
 | --- | --- |
 | `./demo.sh status` | 容器状态与访问地址 |
+| `./demo.sh pull [版本]` | 拉取预构建镜像并启动 |
 | `./demo.sh ps node2` | 查看节点进程 |
 | `docker compose logs -f node1` | 查看节点 agent 日志 |
 | `./demo.sh down` | 停止，保留数据 |

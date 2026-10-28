@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # EdgeTraffic OS 演示助手。在 demo/ 目录下运行。
 #
-#   ./demo.sh up                 构建并启动演示环境（首次约 5–10 分钟）
+#   ./demo.sh up                 构建并启动演示环境（首次约 5–10 分钟）；执行过 pull 后直接用已拉取的镜像
+#   ./demo.sh pull [版本]        从 GitHub 容器仓库拉取预构建镜像并启动，免构建（默认 mvp，可填 v0.1.0 等）
+#   ./demo.sh build              改回本地构建模式（删除 pull 写入的 .env）
 #   ./demo.sh license [天数]     用演示密钥签发授权，输出 out/demo.lic（默认 365 天）
 #   ./demo.sh license-expired    签发一份已过期的授权，用于演示“过期只读”
 #   ./demo.sh enroll <node> <控制台“添加节点”给出的命令>
@@ -16,6 +18,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 DC="docker compose"
 KEY=keys/etos-demo-2026.key
+REGISTRY=ghcr.io/xiaoguan521/edgetraffic-os
+
+prebuilt() { [[ -f .env ]] && grep -q '^ETOS_REGISTRY=' .env; }
+
+show_urls() {
+  echo
+  echo "控制台：  http://$(host_ip):${CONSOLE_PORT:-8443}"
+  echo "节点 1：  http://$(host_ip):${NODE1_PORT:-8001}   节点 2：http://$(host_ip):${NODE2_PORT:-8002}"
+}
 
 host_ip() { hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1; }
 
@@ -35,16 +46,39 @@ issue() {
 case "${1:-}" in
   up)
     mkdir -p keys out
-    $DC up -d --build
-    echo
-    echo "控制台：  http://$(host_ip):${CONSOLE_PORT:-8443}"
-    echo "节点 1：  http://$(host_ip):${NODE1_PORT:-8001}   节点 2：http://$(host_ip):${NODE2_PORT:-8002}"
+    if prebuilt; then
+      echo "使用预构建镜像（$(grep -h '^ETOS_' .env | tr '\n' ' ')），如需本地构建先执行 ./demo.sh build"
+      $DC up -d --no-build
+    else
+      $DC up -d --build
+    fi
+    show_urls
+    ;;
+  pull)
+    tag="${2:-mvp}"
+    tag="${tag#v}"
+    mkdir -p keys out
+    printf 'ETOS_REGISTRY=%s\nETOS_TAG=%s\n' "$REGISTRY" "$tag" > .env
+    echo "拉取 $REGISTRY/{console,node,demo-backend}:$tag"
+    if ! $DC pull; then
+      echo >&2
+      echo "拉取失败。仓库为私有时需要先登录（GitHub 个人令牌需要 read:packages 权限）：" >&2
+      echo "  echo <令牌> | docker login ghcr.io -u <GitHub 用户名> --password-stdin" >&2
+      exit 1
+    fi
+    $DC up -d --no-build
+    show_urls
+    ;;
+  build)
+    rm -f .env
+    echo "已切回本地构建模式，执行 ./demo.sh up 构建并启动。"
     ;;
   license)
     OUT=demo.lic issue -days "${2:-365}"
     ;;
   license-expired)
-    OUT=expired.lic issue -expires "$(date -d '-20 days' +%F)" -grace 15
+    # 维护期仍有效（控制台版本在维护期内），只是使用期已过
+    OUT=expired.lic issue -expires "$(date -d '-20 days' +%F)" -grace 15 -maintenance "$(date -d '+365 days' +%F)"
     ;;
   enroll)
     node="${2:?usage: ./demo.sh enroll <node1|node2> <command>}"
@@ -86,7 +120,7 @@ case "${1:-}" in
     echo "演示数据已清空。"
     ;;
   *)
-    sed -n '2,17p' "$0"
+    sed -n '2,19p' "$0"
     exit 2
     ;;
 esac
