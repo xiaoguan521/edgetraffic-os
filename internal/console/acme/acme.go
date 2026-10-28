@@ -470,7 +470,9 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 		fail(err)
 		return
 	}
-	chain, _, err := c.CreateOrderCert(ctx, order.FinalizeURL, csr, true)
+	// CreateCertFromOrder 显式带上订单地址；旧的 CreateOrderCert 依赖 finalize 响应里的 Location 头，
+	// RFC 8555 并不要求 CA 返回它（Pebble 等就不返回），会导致轮询空地址。
+	chain, _, err := c.CreateCertFromOrder(ctx, order, csr, true)
 	if err != nil {
 		fail(fmt.Errorf("签发失败：%w", err))
 		return
