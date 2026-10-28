@@ -10,7 +10,7 @@ EdgeTraffic OS 控制台
   ./syapp-console -listen 0.0.0.0:8443 -grpc-listen 0.0.0.0:9443 -tls-auto \
       -grpc-hosts <本机IP或域名> -grpc-advertise <本机IP或域名>:9443 -data ./data
 
-浏览器打开 https://<本机>:8443（自签证书，核对启动日志中的指纹后继续访问） 创建管理员，导入授权后在“节点”页添加边缘节点。
+浏览器打开 https://<本机>:8443（自签证书，核对启动日志中的指纹后继续访问），创建管理员，导入授权后在“节点”页添加边缘节点。
 边缘节点使用 edgetraffic-os-node-<版本>-linux-<架构>.tar.gz 安装（见其中 README.txt）。
 
 正式部署建议：
