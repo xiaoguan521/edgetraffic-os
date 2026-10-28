@@ -82,6 +82,8 @@ expect "节点 1 返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演�
 expect "节点 2 返回 v1 页面" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v1"
 expect "反向代理到后端" "$("${H[@]}" "http://127.0.0.1:$P1/api/orders")" '"service":"order-api"'
 expect "拒绝访问路由" "$("${H[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$P2/admin/")" "403"
+expect "发布后无待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" '"changed":false'
+expect "无变更时文件列表为空数组" "$("${C[@]}" "$B/node-groups/1/preview")" '"files":[]'
 expect "响应头 Server 为 syapp" "$("${H[@]}" -I "http://127.0.0.1:$P1/")" "Server: syapp"
 
 echo "== 内容更新 v2"

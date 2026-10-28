@@ -31,7 +31,7 @@ async function loadPreview() {
   previewErr.value = ''
   try {
     preview.value = await api.get(`/node-groups/${gid.value}/preview`)
-    openFiles.value = preview.value.files.filter((f: any) => f.path.startsWith('conf.d/')).map((f: any) => f.path)
+    openFiles.value = (preview.value.files ?? []).filter((f: any) => f.path.startsWith('conf.d/')).map((f: any) => f.path)
   } catch (e) {
     preview.value = null
     previewErr.value = errMsg(e)
