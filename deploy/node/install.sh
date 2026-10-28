@@ -52,7 +52,8 @@ mv /etc/sudoers.d/syapp-agent.new /etc/sudoers.d/syapp-agent
 ln -sfn /opt/syapp/sbin/syapp /usr/sbin/syapp
 chown -R root:root /opt/syapp/sbin /opt/syapp/share /opt/syapp/html
 
-mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp /var/lib/syapp-agent /run/syapp-agent
+# syapp -t 会检查 pid 文件可写，/run/syapp 平时由 syapp.service 的 RuntimeDirectory 创建
+mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp /var/lib/syapp-agent /run/syapp-agent /run/syapp
 chmod 0750 /var/lib/syapp-agent
 
 echo "== 初始化配置"
