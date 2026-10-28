@@ -1,0 +1,29 @@
+# syapp-console 软件包：控制台（Web 界面已内置）。签发工具 syapp-license-server 只给授权方使用，不随此包分发。
+name: syapp-console
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: EdgeTraffic OS <support@edgetraffic.invalid>
+vendor: EdgeTraffic OS
+homepage: https://github.com/xiaoguan521/edgetraffic-os
+license: Proprietary
+description: |
+  syapp-console: EdgeTraffic OS console. Manages syapp edge nodes: sites, certificates, releases, audit and licensing.
+contents:
+  - src: ${STAGE}/console/syapp-console
+    dst: /usr/bin/syapp-console
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/console/syapp-console.service
+    dst: /usr/lib/systemd/system/syapp-console.service
+  - src: ${STAGE}/console/console.env
+    dst: /etc/syapp-console/console.env
+    type: config|noreplace
+    file_info: { mode: 0640 }
+  - src: ${STAGE}/console/NOTICE
+    dst: /usr/share/doc/syapp-console/NOTICE
+scripts:
+  preinstall: ${STAGE}/scripts/console-preinstall.sh
+  postinstall: ${STAGE}/scripts/console-postinstall.sh
+  preremove: ${STAGE}/scripts/console-preremove.sh

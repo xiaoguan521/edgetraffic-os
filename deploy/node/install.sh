@@ -27,9 +27,8 @@ command -v sudo >/dev/null || die "缺少 sudo（apt install sudo / dnf install 
 missing=$(ldd "$HERE/rootfs/opt/syapp/sbin/syapp" 2>&1 | awk '/not found/{print $1}' || true)
 if [[ -n "$missing" ]]; then
   echo "缺少运行库：" $missing >&2
-  echo "Ubuntu / Debian：apt install libpcre2-8-0 libssl3 zlib1g" >&2
   if ldd "$HERE/rootfs/opt/syapp/sbin/syapp" 2>&1 | grep -q 'GLIBC_'; then
-    echo "glibc 版本过低：需要 2.35 及以上" >&2
+    echo "glibc 版本过低：需要 2.17 及以上" >&2
   fi
   exit 1
 fi

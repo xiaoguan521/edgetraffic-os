@@ -1,0 +1,52 @@
+# 软件包校验（不发布）：静态构建 syapp → 生成 RPM / DEB → 在 9 个发行版容器中安装冒烟。
+# 改动数据面构建、软件包定义或发布脚本的 PR 自动运行；正式发布由 release.yml 完成。
+name: packages
+
+on:
+  pull_request:
+    paths:
+      - "dataplane/**"
+      - "deploy/**"
+      - "scripts/release/**"
+      - ".github/workflows/packages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      VERSION: 0.0.0-pr.${{ github.run_number }}
+      OUT: ${{ github.workspace }}/dist/release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: static syapp (glibc 2.17)
+        run: scripts/release/build-syapp-static.sh dist/syapp
+      - name: build web
+        run: cd web && pnpm install --frozen-lockfile && pnpm build
+      - name: rpm / deb
+        run: |
+          trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
+          GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+      - name: install on 9 distributions
+        run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}

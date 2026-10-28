@@ -9,6 +9,9 @@
 #       节点包（仅 Linux）：syapp 数据面 + syapp-agent + syapp-wrapper + systemd 单元 + install.sh
 #       产物 edgetraffic-os-node-<ver>-linux-<goarch>.tar.gz
 #
+#   scripts/release/package.sh pkg <goarch> <syapp tarball>
+#       RPM / DEB 软件包（需要 nfpm）：syapp、syapp-agent、syapp-console（控制台须先构建 web/dist）
+#
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
@@ -73,6 +76,41 @@ case "${1:-}" in
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
     echo "$OUT/$name.tar.gz"
     ;;
+  pkg)
+    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    command -v nfpm >/dev/null || { echo "需要 nfpm：go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0" >&2; exit 2; }
+    ls web/dist/index.html >/dev/null 2>&1 || { echo "web/dist 未构建：先执行 make web" >&2; exit 2; }
+    st="$WORK/stage"
+    mkdir -p "$st/syapp" "$st/agent" "$st/console" "$st/scripts"
+    tar -C "$st/syapp" -xzf "$syapp_tgz"
+    cp dataplane/packaging/systemd/syapp.service "$st/syapp/syapp.service"
+    cp dataplane/packaging/logrotate/syapp "$st/syapp/logrotate"
+    gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper
+    cp dataplane/packaging/sudoers/syapp-agent "$st/agent/sudoers"
+    cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"
+    gobuild linux "$arch" "$st/console" ./cmd/syapp-console
+    cp deploy/systemd/syapp-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"
+    # 每个脚本 = shebang + 共用函数 + 本体（软件包脚本不能引用包外文件）
+    for f in deploy/nfpm/scripts/*.sh; do
+      [[ $(basename "$f") == common.sh ]] && continue
+      { echo '#!/bin/sh'; cat deploy/nfpm/scripts/common.sh; cat "$f"; } > "$st/scripts/$(basename "$f")"
+      chmod 0755 "$st/scripts/$(basename "$f")"
+    done
+    # 先把 ${VERSION} / ${ARCH} / ${STAGE} 代入配置，不依赖 nfpm 对各字段的环境变量展开
+    for p in syapp syapp-agent syapp-console; do
+      sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "deploy/nfpm/$p.yaml" > "$st/$p.yaml"
+    done
+    for fmt in deb rpm; do
+      for p in syapp syapp-agent syapp-console; do
+        if ! log=$(nfpm package -f "$st/$p.yaml" -p "$fmt" -t "$OUT/" 2>&1); then
+          echo "nfpm $p $fmt failed:" >&2; echo "$log" >&2
+          [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=nfpm $p $fmt::$(echo "$log" | tail -5 | tr '\n' ' ')"
+          exit 1
+        fi
+      done
+    done
+    ls "$OUT"/*.deb "$OUT"/*.rpm
+    ;;
   backend)
     arch=${2:?goarch}
     mkdir -p "$OUT/backend-linux-$arch"
@@ -80,5 +118,5 @@ case "${1:-}" in
     echo "$OUT/backend-linux-$arch/demo-backend"
     ;;
   *)
-    sed -n '2,16p' "$0"; exit 2 ;;
+    sed -n '2,19p' "$0"; exit 2 ;;
 esac

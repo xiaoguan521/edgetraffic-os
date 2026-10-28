@@ -40,8 +40,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev
       - name: hpack-gen test
         run: go test ./dataplane/hpack-gen/
-      - name: build syapp
-        run: dataplane/build-syapp.sh -o dist
+      - name: build syapp (static dependencies, as released)
+        run: dataplane/build-syapp.sh -S -o dist
       - name: install and run golden acceptance
         run: |
           trap 'echo "::error title=dataplane step::exit $? at: $BASH_COMMAND"' ERR

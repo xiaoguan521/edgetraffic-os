@@ -7,9 +7,10 @@
 # 产物
 #   控制台包  edgetraffic-os-console-<ver>-{linux,darwin}-{amd64,arm64}.tar.gz、-windows-{amd64,arm64}.zip
 #   节点包    edgetraffic-os-node-<ver>-linux-{amd64,arm64}.tar.gz（syapp + agent + wrapper + install.sh）
+#   软件包    syapp / syapp-agent / syapp-console 的 RPM 与 DEB（amd64 / arm64），在 9 个发行版上安装冒烟
 #   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}，linux/amd64 + linux/arm64
 #
-# syapp 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（Ubuntu 22.04，glibc 2.35），不用 QEMU；
+# syapp 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（manylinux2014 容器，glibc 2.17，OpenSSL / PCRE2 / zlib 静态链接），不用 QEMU；
 # Go 程序 CGO_ENABLED=0 交叉编译。产物直接上传到 Release（不占用 Actions artifact 存储）。
 # 发布构建绝不注入 CI 临时授权公钥；冒烟测试用的控制台单独构建，不进入任何发布物。
 name: release
@@ -111,12 +112,10 @@ jobs:
         with:
           node-version: 22
       - name: build deps
-        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev zip
+        run: sudo apt-get update && sudo apt-get install -y zip
 
-      - name: build syapp (native)
-        run: |
-          dataplane/build-syapp.sh -o dist/syapp
-          ls -l dist/syapp
+      - name: build syapp (static, glibc 2.17)
+        run: scripts/release/build-syapp-static.sh dist/syapp
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: package
@@ -127,7 +126,11 @@ jobs:
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
           scripts/release/package.sh backend ${{ matrix.arch }}
+          GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
           ls -l "$OUT"
+      - name: smoke test rpm / deb on 9 distributions
+        run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
 
       - name: smoke test node package (systemd install + enroll + publish)
         run: |
@@ -158,7 +161,7 @@ jobs:
 
       - name: upload release assets
         run: |
-          for f in "$OUT"/*.tar.gz "$OUT"/*.zip; do
+          for f in "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/*.deb "$OUT"/*.rpm; do
             [[ -f "$f" ]] || continue
             for try in 1 2 3; do
               if err=$(gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$f" 2>&1); then echo "uploaded $(basename "$f")"; break; fi
@@ -214,8 +217,8 @@ jobs:
       - name: checksums and publish release
         run: |
           d=$(mktemp -d); cd "$d"
-          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'edgetraffic-os-*'
-          sha256sum edgetraffic-os-* | tee SHA256SUMS
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'edgetraffic-os-*' -p 'syapp*'
+          sha256sum edgetraffic-os-* syapp* | tee SHA256SUMS
           gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber SHA256SUMS
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             gh release edit "$RELEASE" -R "$GITHUB_REPOSITORY" --draft=false --latest=${{ needs.meta.outputs.stable }} \
