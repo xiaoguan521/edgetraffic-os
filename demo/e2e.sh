@@ -86,12 +86,29 @@ expect "发布后无待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" '
 expect "无变更时文件列表为空数组" "$("${C[@]}" "$B/node-groups/1/preview")" '"files":[]'
 expect "响应头 Server 为 syapp" "$("${H[@]}" -I "http://127.0.0.1:$P1/")" "Server: syapp"
 
+echo "== 漂移检测：有人登录节点手工改了配置"
+$DC exec -T node1 sh -c 'echo "# manual edit" >> /opt/syapp/conf/current/syapp.conf'
+drift=""
+for _ in $(seq 1 40); do
+  drift=$("${C[@]}" "$B/nodes" | j "','.join(n['name']+'='+str(n['drifted']) for n in sorted(d, key=lambda n: n['name']))")
+  [[ "$drift" == *"=True,"* ]] && break
+  sleep 2
+done
+expect "控制台标记 node1 配置被改动" "$drift" "edge-sg-01=True"
+expect "node2 未被误报" "$drift" "edge-sg-02=False"
+
 echo "== 内容更新 v2"
 ver=$("${C[@]}" "$B/sites/1" | j "d['version']")
 "${C[@]}" -X PUT "$B/sites/1" -d "$(echo "$SITE" | sed "s/v1/v2/; s/\"group_id\":1/\"version\":$ver/")" >/dev/null
 d=$(publish "首页改版 v2")
 expect "v2 发布生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点返回 v2 页面" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v2"
+for _ in $(seq 1 25); do
+  drift=$("${C[@]}" "$B/nodes" | j "','.join(str(n['drifted']) for n in d)")
+  [[ "$drift" != *True* ]] && break
+  sleep 2
+done
+expect "重新发布后漂移标记消除" "$drift" "False,False"
 
 echo "== 根路径改到宕机后端：探活失败自动回滚"
 "${C[@]}" -X POST "$B/upstreams" -d '{"group_id":1,"spec":{"name":"new-api","servers":[{"addr":"172.30.0.99:9001"}]}}' >/dev/null
