@@ -24,6 +24,7 @@ services:
       ETOS_GRPC_ADVERTISE: "console:9443"
       ETOS_DATA: /var/lib/syapp-console
       ETOS_ACME_CA_FILE: "${ETOS_ACME_CA_FILE:-}"
+      ETOS_DB: "${ETOS_DB:-}"
     volumes:
       - console-data:/var/lib/syapp-console
       - ./keys:/keys:ro
@@ -90,3 +91,12 @@ services:
     command: -defaultIPv6 "" -defaultIPv4 172.30.0.21
     networks:
       edge: { ipv4_address: 172.30.0.41 }
+
+  # 可选：PostgreSQL（默认使用 SQLite）。启用：
+  # COMPOSE_PROFILES=postgres ETOS_DB=postgres://etos:etos@postgres:5432/etos?sslmode=disable ./demo.sh up
+  postgres:
+    image: postgres:16
+    profiles: [postgres]
+    environment: { POSTGRES_USER: etos, POSTGRES_PASSWORD: etos, POSTGRES_DB: etos }
+    networks:
+      edge: { ipv4_address: 172.30.0.50 }

@@ -12,6 +12,11 @@ permissions:
 
 jobs:
   demo:
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    name: demo (${{ matrix.db }})
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -28,13 +33,14 @@ jobs:
       - name: build and start demo (with the ACME test CA)
         working-directory: demo
         env:
-          COMPOSE_PROFILES: acme
+          COMPOSE_PROFILES: ${{ matrix.db == 'postgres' && 'acme,postgres' || 'acme' }}
           ETOS_ACME_CA_FILE: /var/lib/syapp-console/acme-ca.pem
+          ETOS_DB: ${{ matrix.db == 'postgres' && 'postgres://etos:etos@postgres:5432/etos?sslmode=disable' || '' }}
         run: ./demo.sh up
       - name: end-to-end
         working-directory: demo
         env:
-          COMPOSE_PROFILES: acme
+          COMPOSE_PROFILES: ${{ matrix.db == 'postgres' && 'acme,postgres' || 'acme' }}
           LIC_TOOL: /tmp/lic
           LIC_KEY: /tmp/keys/etos-ci-ephemeral.key
           LIC_KID: etos-ci-ephemeral

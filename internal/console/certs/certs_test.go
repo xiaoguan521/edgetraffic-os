@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/storetest"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -40,10 +41,7 @@ func pair(t *testing.T, notAfter time.Time, hosts ...string) (string, string) {
 func newSvc(t *testing.T) *Service {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.Open(t)
 	box, err := secretbox.LoadOrCreate(filepath.Join(dir, "secret.key"))
 	if err != nil {
 		t.Fatal(err)
