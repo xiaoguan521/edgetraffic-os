@@ -40,10 +40,18 @@ id syapp >/dev/null 2>&1 || useradd -r -g syapp -d /nonexistent -s /usr/sbin/nol
 id syapp-agent >/dev/null 2>&1 || useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp-agent
 
 echo "== 安装文件"
-# 程序与默认文件；不覆盖 conf/ 下已有的配置版本
-cp -a "$HERE/rootfs/opt/syapp/." /opt/syapp/ 2>/dev/null || { mkdir -p /opt/syapp && cp -a "$HERE/rootfs/opt/syapp/." /opt/syapp/; }
-install -o root -g root -m 0755 "$HERE/rootfs/usr/bin/syapp-agent" /usr/bin/syapp-agent
-install -o root -g root -m 0755 -D "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrapper
+# 可执行文件先写临时文件再 rename：正在运行的程序不能原地覆盖（Text file busy），
+# 运行中的 syapp 不受影响，新二进制在下次二进制热升级（USR2）时才生效。
+put() { install -o root -g root -m 0755 -D "$1" "$2.new" && mv -f "$2.new" "$2"; }
+mkdir -p /opt/syapp
+# 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
+(cd "$HERE/rootfs/opt/syapp" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
+  install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syapp/$f" "/opt/syapp/$f"
+done
+mkdir -p /opt/syapp/conf/releases
+put "$HERE/rootfs/opt/syapp/sbin/syapp" /opt/syapp/sbin/syapp
+put "$HERE/rootfs/usr/bin/syapp-agent" /usr/bin/syapp-agent
+put "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrapper
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syapp" /etc/logrotate.d/syapp
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syapp-agent" /etc/sudoers.d/syapp-agent.new
