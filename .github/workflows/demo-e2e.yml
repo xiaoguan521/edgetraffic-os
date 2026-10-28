@@ -25,12 +25,16 @@ jobs:
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys | tee /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           echo "EXTRA_LICENSE_KEY=$pub" >> "$GITHUB_ENV"
-      - name: build and start demo
+      - name: build and start demo (with the ACME test CA)
         working-directory: demo
+        env:
+          COMPOSE_PROFILES: acme
+          ETOS_ACME_CA_FILE: /var/lib/syapp-console/acme-ca.pem
         run: ./demo.sh up
       - name: end-to-end
         working-directory: demo
         env:
+          COMPOSE_PROFILES: acme
           LIC_TOOL: /tmp/lic
           LIC_KEY: /tmp/keys/etos-ci-ephemeral.key
           LIC_KID: etos-ci-ephemeral

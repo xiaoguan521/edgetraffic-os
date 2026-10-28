@@ -165,6 +165,11 @@ func (s *Service) audit(user, action string, c *store.Certificate, extra map[str
 
 // Create 上传一张新证书。
 func (s *Service) Create(name, certPEM, keyPEM, user string) (*store.Certificate, error) {
+	return s.CreateFrom("upload", name, certPEM, keyPEM, user)
+}
+
+// CreateFrom 写入一张新证书并记录来源；ACME 签发的证书默认开启自动续期。
+func (s *Service) CreateFrom(source, name, certPEM, keyPEM, user string) (*store.Certificate, error) {
 	if err := render.ValidateName(name); err != nil {
 		return nil, fmt.Errorf("证书名称不合法：只能使用小写字母、数字和连字符")
 	}
@@ -172,14 +177,14 @@ func (s *Service) Create(name, certPEM, keyPEM, user string) (*store.Certificate
 	if err != nil {
 		return nil, err
 	}
-	c := &store.Certificate{Name: name, Source: "upload"}
+	c := &store.Certificate{Name: name, Source: source, AutoRenew: source == "acme"}
 	if err := s.fill(c, p, user); err != nil {
 		return nil, err
 	}
 	if err := s.Store.DB.Create(c).Error; err != nil {
 		return nil, fmt.Errorf("同名证书已存在")
 	}
-	s.audit(user, "certificate.create", c, map[string]any{"domains": p.domains})
+	s.audit(user, "certificate.create", c, map[string]any{"domains": p.domains, "source": source})
 	return c, nil
 }
 

@@ -23,6 +23,7 @@ services:
       ETOS_GRPC_HOSTS: "console,172.30.0.10"
       ETOS_GRPC_ADVERTISE: "console:9443"
       ETOS_DATA: /var/lib/syapp-console
+      ETOS_ACME_CA_FILE: "${ETOS_ACME_CA_FILE:-}"
     volumes:
       - console-data:/var/lib/syapp-console
       - ./keys:/keys:ro
@@ -69,3 +70,23 @@ services:
     networks:
       edge: { ipv4_address: 172.30.0.32 }
     restart: unless-stopped
+
+  # 可选：ACME 测试 CA（Let's Encrypt 官方的 Pebble，仅用于演示与测试，不随产品分发）
+  # 启用：COMPOSE_PROFILES=acme ETOS_ACME_CA_FILE=/var/lib/syapp-console/acme-ca.pem ./demo.sh up
+  # challtestsrv 把所有域名解析到 node1，Pebble 通过 80 端口访问 node1 完成 HTTP-01 验证。
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.1
+    profiles: [acme]
+    command: -config /config/pebble-config.json -dnsserver 172.30.0.41:8053
+    environment: { PEBBLE_VA_NOSLEEP: "1", PEBBLE_WFE_NONCEREJECT: "0" }
+    volumes:
+      - ./acme/pebble-config.json:/config/pebble-config.json:ro
+    networks:
+      edge: { ipv4_address: 172.30.0.40 }
+
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:2.10.1
+    profiles: [acme]
+    command: -defaultIPv6 "" -defaultIPv4 172.30.0.21
+    networks:
+      edge: { ipv4_address: 172.30.0.41 }

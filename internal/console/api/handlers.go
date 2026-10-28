@@ -664,6 +664,62 @@ func (s *Server) deleteCert(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ---------- ACME ----------
+
+func (s *Server) acmeGet(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"settings": s.Acme.GetSettings(), "orders": s.Acme.Orders(20)})
+}
+
+func (s *Server) acmePut(c *gin.Context) {
+	var req struct {
+		Directory string `json:"directory"`
+		Email     string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	if err := s.Acme.SaveSettings(req.Directory, req.Email, c.GetString("user")); err != nil {
+		fail(c, http.StatusBadRequest, "INVALID_ACME_SETTINGS", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, s.Acme.GetSettings())
+}
+
+func (s *Server) acmeIssue(c *gin.Context) {
+	var req struct {
+		Name    string   `json:"name"`
+		Domains []string `json:"domains"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	o, err := s.Acme.Issue(strings.TrimSpace(req.Name), req.Domains, c.GetString("user"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "ACME_REJECTED", err.Error())
+		return
+	}
+	c.JSON(http.StatusAccepted, o)
+}
+
+func (s *Server) acmeRenew(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	o, err := s.Acme.Renew(id, c.GetString("user"))
+	if errors.Is(err, store.ErrNotFound) {
+		failErr(c, err)
+		return
+	}
+	if err != nil {
+		fail(c, http.StatusBadRequest, "ACME_REJECTED", err.Error())
+		return
+	}
+	c.JSON(http.StatusAccepted, o)
+}
+
 // ---------- 上游 ----------
 
 type upstreamReq struct {

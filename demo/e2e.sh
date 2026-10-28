@@ -164,6 +164,30 @@ d=$(publish "启用 HTTPS")
 expect "HTTPS 站点发布生效" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "节点使用证书库中的证书" "$(served)" "$(enddate "$CT/c30.crt")"
 
+ACME=0
+if $DC ps --status running --services 2>/dev/null | grep -qx pebble; then
+  ACME=1
+  echo "== ACME 自动申请证书（Pebble 测试 CA）"
+  $DC cp pebble:/test/certs/pebble.minica.pem "$CT/pebble.pem" >/dev/null && $DC cp "$CT/pebble.pem" console:/var/lib/syapp-console/acme-ca.pem >/dev/null
+  "${C[@]}" -X PUT "$B/acme" -d '{"directory":"https://pebble:14000/dir","email":"ops@demo.local"}' >/dev/null
+  wait_order() { # $1 = order id -> prints the order json
+    local st=""
+    for _ in $(seq 1 120); do
+      st=$("${C[@]}" "$B/acme" | j "[o['status'] for o in d['orders'] if o['id']==$1][0]")
+      [[ "$st" != "pending" ]] && break
+      sleep 2
+    done
+    "${C[@]}" "$B/acme" | python3 -c "import json,sys;d=json.load(sys.stdin);print(json.dumps([o for o in d['orders'] if o['id']==$1][0],ensure_ascii=False))"
+  }
+  expect "没有站点的域名被拒绝" "$("${C[@]}" -X POST "$B/certificates/acme" -d '{"name":"blog-acme","domains":["blog.demo.local"]}')" "blog.demo.local"
+  oid=$("${C[@]}" -X POST "$B/certificates/acme" -d '{"name":"shop-acme","domains":["shop.demo.local"]}' | j "d['id']")
+  o=$(wait_order "$oid")
+  expect "ACME 签发成功" "$o" '"status": "valid"'
+  acid=$("${C[@]}" "$B/certificates" | j "[c['id'] for c in d if c['name']=='shop-acme'][0]")
+  expect "ACME 证书入库并开启自动续期" "$("${C[@]}" "$B/certificates" | j "[(c['source'],c['auto_renew']) for c in d if c['name']=='shop-acme'][0]")" "('acme', True)"
+  if $DC exec -T node1 grep -q "location" /opt/syapp/conf/current/snippets/acme-challenge.conf; then bad "签发后节点上仍有挑战"; else ok "签发后挑战已从节点清除"; fi
+fi
+
 echo "== 授权过期：只读但回滚与流量不受影响"
 issue -expires "$(date -u -d '-20 days' +%F)" -grace 15 -maintenance "$(date -u -d '+365 days' +%F)" > /tmp/demo-expired.lic
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-expired.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
@@ -177,6 +201,10 @@ d=$(wait_deploy "$id")
 expect "续期版本由节点放行并生效" "$(echo "$d" | j "d['kind']+' '+d['status']")" "cert_renew APPLIED"
 expect "节点换上续期后的证书" "$(served)" "$(enddate "$CT/c90.crt")"
 expect "续期后草稿与线上一致" "$("${C[@]}" "$B/node-groups/1/preview")" '"changed":false'
+if [[ $ACME == 1 ]]; then
+  oid=$("${C[@]}" -X POST "$B/certificates/$acid/acme-renew" | j "d.get('id','')")
+  expect "过期后 ACME 续期仍可用（挑战与证书均由节点放行）" "$(wait_order "$oid")" '"status": "valid"'
+fi
 id=$("${C[@]}" -X POST "$B/node-groups/1/rollback" -d '{"revision_id":"r000002"}' | j "d['id']")
 d=$(wait_deploy "$id")
 expect "过期后回滚仍可用" "$(echo "$d" | j "d['status']")" "APPLIED"
