@@ -10,7 +10,11 @@
 ## 数据面
 - syapp = nginx 官方 stable 源码 + dataplane/patches/0001-syapp-rename.patch。
   patch 只允许改字符串字面量与宏的值，禁止改动判断、结构体、函数签名、模块 ABI。
-- 信号：reload=HUP，quit=QUIT，stop=TERM，reopen=USR1，USR2 仅用于二进制热升级。
+- 信号：reload=HUP，quit=QUIT，stop=TERM，reopen=USR1；USR2 与 WINCH 仅用于二进制热升级流程
+  （USR2 发给当前 master 启动新版，WINCH 只发给旧 master `syapp.pid.oldbin` 让旧 worker 退出），均由 wrapper 发出。
+- Lua 发行变体（P10）：lua-nginx-module、ngx_devel_kit、LuaJIT 以动态模块形式放在 /opt/syapp/modules/，
+  不改 syapp 核心与改名 patch。只有该目录下的 Lua 模块文件免于“二进制无上游名”检查；进程名、命令、日志、包名仍须为 syapp。
+- 不开放客户自定义 Lua 脚本：Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。
 - 永远不得 restart syapp；任何代码路径（含授权失效）不得停止 syapp。
 
 ## 配置
@@ -21,9 +25,13 @@
 
 ## agent 与安全
 - agent 只主动连接控制台，不得监听任何端口。
-- agent 协议中不得加入「执行命令」「读写任意文件」类指令。
+- agent 协议中不得加入「执行命令」「读写任意文件」类指令。仅有两个受限的专用消息：
+  - 漂移 diff 上报：只限受管版本目录 /opt/syapp/conf/releases/ 内的文件，单文件大小设上限，私钥文件只报哈希。
+  - UpgradeDataplane：升级包必须带厂商 Ed25519 签名（与 License 签名密钥分开），由 wrapper 以 root 验签后才可使用。
 - 所有外部命令用 exec.Command 切片调用，禁止 sh -c。
-- wrapper 只接受子命令 test|reload|reopen|quit，test 只接受 ^r[0-9]{6,12}$。
+- wrapper 只接受子命令 test|reload|reopen|quit|upgrade-start|upgrade-commit|upgrade-abort（升级三个在 P8 实现）；
+  test 只接受 ^r[0-9]{6,12}$，upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$；每个子命令都必须有注入测试；
+  sudoers 每个子命令单独一行（共 7 行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验。
 - 私钥、凭据、License 签名私钥不得出现在代码、日志、前端响应中。
 - 数据库访问只用参数化查询；MVP 阶段集中在 internal/console/store 封装，正式版迁移到 gorm/gen。每个写接口写审计。
 
@@ -33,7 +41,7 @@
 - EXPIRED/INVALID 状态下回滚、证书续期、导入 License 必须仍可用。
 
 ## 品牌
-- 产品代码、界面文案、日志、打包脚本中不得出现 "nginx"（范围见 scripts/brand-check.sh）。
+- 产品代码、界面文案、日志、打包脚本中不得出现 "nginx"（范围见 scripts/brand-check.sh；/opt/syapp/modules/ 下的 Lua 模块是唯一例外，见“数据面”）。
 - 关于页与 docs/NOTICE 必须保留 "Based on NGINX Open Source (BSD-2-Clause)"。
 
 ## 依赖
