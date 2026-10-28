@@ -102,6 +102,7 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		}
 		in.Sites = append(in.Sites, rs)
 	}
+	in.AcmeChallenges = d.challenges()
 	var ups []store.Upstream
 	d.Store.DB.Where("group_id = ?", groupID).Order("name").Find(&ups)
 	for _, u := range ups {
@@ -245,10 +246,31 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 	return d.start(lk, g, rev, "publish", note, user, nil)
 }
 
+// ErrNeedsPublish 表示线上版本早于 ACME 支持（没有挑战片段），需要先正常发布一次。
+var ErrNeedsPublish = errors.New("live revision predates ACME support; publish the node group once first")
+
+// challenges 返回进行中的 ACME 挑战（按 token 排序，保证渲染确定）。
+func (d *Service) challenges() []render.AcmeChallenge {
+	var rows []store.AcmeChallenge
+	d.Store.DB.Order("token").Find(&rows)
+	out := make([]render.AcmeChallenge, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, render.AcmeChallenge{Token: r.Token, KeyAuth: r.KeyAuth})
+	}
+	return out
+}
+
 // CertRefresh 证书续期后，以组的线上版本为基础只替换引用该证书的站点的证书文件，生成新版本并下发。
 // 不夹带草稿中的其他改动，因此在授权只读时也可执行（规格书 8.6）；agent 侧会再次核对“只有证书变化”。
-// 返回 nil, nil 表示该组线上版本中没有需要替换的证书文件。
+// 返回 nil, nil 表示该组线上版本中没有需要替换的文件。
 func (d *Service) CertRefresh(groupID, certID uint, user, ip string) (*store.Deployment, error) {
+	return d.RenewalRefresh(groupID, certID, user, ip)
+}
+
+// RenewalRefresh 以组的线上版本为基础，只更新续期类文件后生成新版本下发：
+// certID 非 0 时替换引用该证书的站点的证书文件；同时把 ACME 挑战片段同步为当前进行中的挑战。
+// 只有这两类文件会变化，因此在授权只读时也可执行，agent 会逐文件核对（规格书 8.6）。
+func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.Deployment, error) {
 	lk := d.groupLock(groupID)
 	if !lk.TryLock() {
 		return nil, ErrBusy
@@ -268,31 +290,48 @@ func (d *Service) CertRefresh(groupID, certID uint, user, ip string) (*store.Dep
 		lk.Unlock()
 		return nil, err
 	}
-	crt, key, err := d.Certs.Resolve(certID)
-	if err != nil {
+	var changed []string
+	if certID != 0 {
+		crt, key, err := d.Certs.Resolve(certID)
+		if err != nil {
+			lk.Unlock()
+			return nil, err
+		}
+		for _, name := range d.Certs.SitesUsing(certID, groupID) {
+			c, k := "certs/site-"+name+".crt", "certs/site-"+name+".key"
+			if _, ok := files[c]; !ok { // 站点尚未发布过，下次正常发布时自然带上新证书
+				continue
+			}
+			if string(files[c]) == crt && string(files[k]) == key {
+				continue
+			}
+			files[c], files[k] = []byte(crt), []byte(key)
+			changed = append(changed, name)
+		}
+	}
+	ch := d.challenges()
+	if old, ok := files[render.AcmeSnippet]; ok {
+		snip, err := render.RenderAcmeSnippet(ch)
+		if err != nil {
+			lk.Unlock()
+			return nil, err
+		}
+		if string(old) != string(snip) {
+			files[render.AcmeSnippet] = snip
+			changed = append(changed, "ACME 验证")
+		}
+	} else if len(ch) > 0 {
 		lk.Unlock()
-		return nil, err
+		return nil, ErrNeedsPublish
 	}
-	var sites []string
-	for _, name := range d.Certs.SitesUsing(certID, groupID) {
-		c, k := "certs/site-"+name+".crt", "certs/site-"+name+".key"
-		if _, ok := files[c]; !ok { // 站点尚未发布过，下次正常发布时自然带上新证书
-			continue
-		}
-		if string(files[c]) == crt && string(files[k]) == key {
-			continue
-		}
-		files[c], files[k] = []byte(crt), []byte(key)
-		sites = append(sites, name)
-	}
-	if len(sites) == 0 {
+	if len(changed) == 0 {
 		lk.Unlock()
 		return nil, nil
 	}
 	var rev *store.Revision
 	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
 		r := &store.Revision{ID: fmt.Sprintf("tmp-%d", time.Now().UnixNano()), GroupID: groupID, ParentID: cur.ID,
-			Note: "证书续期：" + strings.Join(sites, "、"), CreatedBy: user}
+			Note: "证书续期：" + strings.Join(changed, "、"), CreatedBy: user}
 		if err := tx.Create(r).Error; err != nil {
 			return err
 		}
@@ -315,8 +354,26 @@ func (d *Service) CertRefresh(groupID, certID uint, user, ip string) (*store.Dep
 		return nil, err
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.cert_renew", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
-		Detail: map[string]any{"revision": rev.ID, "parent": cur.ID, "sites": sites, "digest": rev.Digest}})
+		Detail: map[string]any{"revision": rev.ID, "parent": cur.ID, "changed": changed, "digest": rev.Digest}})
 	return d.start(lk, g, rev, "cert_renew", rev.Note, user, nil)
+}
+
+// Wait 等待发布结束（ACME 需要等挑战真正下发到节点后再通知 CA 验证）。
+func (d *Service) Wait(ctx context.Context, depID uint) (*store.Deployment, error) {
+	for {
+		var dep store.Deployment
+		if err := d.Store.DB.First(&dep, depID).Error; err != nil {
+			return nil, err
+		}
+		if dep.Status != "APPLYING" {
+			return &dep, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // ErrNotDrifted 表示节点当前没有漂移，无需恢复。

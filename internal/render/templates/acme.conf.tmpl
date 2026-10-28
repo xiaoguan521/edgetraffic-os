@@ -1,0 +1,4 @@
+# ACME HTTP-01 challenges (generated)
+{{- range .AcmeChallenges }}
+location = /.well-known/acme-challenge/{{ .Token }} { default_type text/plain; return 200 "{{ .KeyAuth }}"; }
+{{- end }}

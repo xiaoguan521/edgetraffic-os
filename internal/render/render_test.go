@@ -146,6 +146,9 @@ func TestRenderSyappSyntax(t *testing.T) {
 	if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
 		in.MimeTypes = mt
 	}
+	// 带一个进行中的 ACME 挑战，确认挑战 location 也能通过真实 syapp -t
+	tok := "abcDEF0123456789_-tokenXYZ"
+	in.AcmeChallenges = []AcmeChallenge{{Token: tok, KeyAuth: tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"}}
 	b, err := Render(in)
 	if err != nil {
 		t.Fatal(err)

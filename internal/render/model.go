@@ -16,6 +16,14 @@ type Input struct {
 	Sites      []Site          // 站点
 	Upstreams  []UpstreamGroup // 上游组
 	MimeTypes  []byte          // 由数据面安装包的 share/defaults/mime.types 提供
+
+	AcmeChallenges []AcmeChallenge // 进行中的 ACME HTTP-01 挑战，渲染进 snippets/acme-challenge.conf
+}
+
+// AcmeChallenge 是一个 HTTP-01 挑战：节点对 /.well-known/acme-challenge/<Token> 返回 KeyAuth。
+type AcmeChallenge struct {
+	Token   string `json:"token"`
+	KeyAuth string `json:"key_auth"`
 }
 
 // Site 是一个站点（规格书 6.1，MVP 子集）。
@@ -79,9 +87,20 @@ var (
 )
 
 // Validate 对输入做结构与语义校验（规格书 6.2 第 1、2 步）。
+// ACME token 与账号公钥指纹均为 base64url 字符（RFC 8555 第 8.1、8.3 节）。
+var (
+	acmeTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
+	acmeThumbRe = regexp.MustCompile(`^[A-Za-z0-9_-]{32,64}$`)
+)
+
 func (in *Input) Validate() error {
 	if !revisionRe.MatchString(in.Revision) {
 		return fmt.Errorf("render: invalid revision %q", in.Revision)
+	}
+	for _, c := range in.AcmeChallenges {
+		if !acmeTokenRe.MatchString(c.Token) || !strings.HasPrefix(c.KeyAuth, c.Token+".") || !acmeThumbRe.MatchString(c.KeyAuth[len(c.Token)+1:]) {
+			return fmt.Errorf("render: invalid ACME challenge")
+		}
 	}
 	ups := map[string]bool{}
 	for _, u := range in.Upstreams {
