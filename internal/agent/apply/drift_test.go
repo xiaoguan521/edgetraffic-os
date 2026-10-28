@@ -75,3 +75,40 @@ func TestTreeDigestDetectsDrift(t *testing.T) {
 	}
 	check("deleted file", true)
 }
+
+// 授权只读时 agent 用 CurrentFiles 与新版本比较，只放行证书续期（规格书 8.6）。
+func TestCurrentFilesForCertOnlyCheck(t *testing.T) {
+	mt, err := os.ReadFile("../../render/defaults/mime.types")
+	if err != nil {
+		t.Skip("mime.types fixture not found:", err)
+	}
+	b, err := render.Render(render.Input{Revision: "r000000", MimeTypes: mt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgz, _ := b.TarGz()
+	a := &Applier{C: Config{ConfRoot: t.TempDir()}}
+	if err := a.Bootstrap("r000000", tgz, b.Manifest.Digest); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := a.CurrentFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for n, want := range b.Files {
+		if string(cur[n]) != string(want) {
+			t.Fatalf("%s differs from the bundle", n)
+		}
+	}
+	if len(cur) != len(b.Files) {
+		t.Fatalf("got %d files, bundle has %d", len(cur), len(b.Files))
+	}
+	next := map[string][]byte{}
+	for k, v := range cur {
+		next[k] = v
+	}
+	next["syapp.conf"] = append(append([]byte(nil), next["syapp.conf"]...), '#')
+	if render.CertOnlyChange(cur, next) {
+		t.Fatal("a config change passed as certificate-only")
+	}
+}

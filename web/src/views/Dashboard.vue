@@ -51,6 +51,15 @@ function ago(t?: string) {
       <router-link to="/nodes"><a-button>添加节点</a-button></router-link>
     </div>
 
+    <a-alert v-if="data && (data.certs_expired || data.certs_expiring)" :type="data.certs_expired ? 'error' : 'warning'" show-icon style="margin-bottom: 16px">
+      <template #message>
+        <span v-if="data.certs_expired"><b class="num">{{ data.certs_expired }}</b> 张证书已过期</span>
+        <span v-if="data.certs_expired && data.certs_expiring">，</span>
+        <span v-if="data.certs_expiring"><b class="num">{{ data.certs_expiring }}</b> 张证书 30 天内到期</span>
+        <router-link to="/certificates" style="margin-left: 12px">去续期</router-link>
+      </template>
+    </a-alert>
+
     <section class="fleet" v-if="data">
       <a-empty v-if="!nodes.length" description="还没有节点。在“节点”页生成注册命令，在边缘服务器上执行即可接入。" />
       <article v-for="n in nodes" :key="n.id" class="node" :class="[n.status, { drift: n.drifted, behind: n.status === 'online' && currentRev(n.group_id) && n.applied_revision !== currentRev(n.group_id) }]">

@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
@@ -28,6 +29,7 @@ type Server struct {
 	Store         *store.Store
 	GW            *gateway.Server
 	Deploy        *deploy.Service
+	Certs         *certs.Service
 	Lic           *licsvc.Service
 	Audit         *audit.Logger
 	Log           *slog.Logger
@@ -101,6 +103,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/sites", role(store.RoleOperator), s.writable, s.createSite)
 	a.PUT("/sites/:id", role(store.RoleOperator), s.writable, s.updateSite)
 	a.DELETE("/sites/:id", role(store.RoleOperator), s.writable, s.deleteSite)
+
+	a.GET("/certificates", s.listCerts)
+	a.POST("/certificates", role(store.RoleOperator), s.writable, s.createCert)
+	a.PUT("/certificates/:id", role(store.RoleOperator), s.renewCert)          // 证书续期：任何授权状态下可用（规格书 8.6）
+	a.POST("/certificates/:id/deploy", role(store.RoleOperator), s.deployCert) // 重新下发证书：同上
+	a.DELETE("/certificates/:id", role(store.RoleOperator), s.writable, s.deleteCert)
 
 	a.GET("/upstreams", s.listUpstreams)
 	a.POST("/upstreams", role(store.RoleOperator), s.writable, s.createUpstream)

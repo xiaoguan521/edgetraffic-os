@@ -29,9 +29,11 @@ type Site struct {
 }
 
 // TLS 证书以 PEM 原文传入，渲染进版本目录 certs/。
+// 控制台中站点只保存 CertID（证书库编号），渲染前由控制台解析为 PEM；PEM 字段不落库。
 type TLS struct {
-	CertPEM string `json:"cert_pem"`
-	KeyPEM  string `json:"key_pem"`
+	CertID  uint   `json:"cert_id,omitempty"`
+	CertPEM string `json:"cert_pem,omitempty"`
+	KeyPEM  string `json:"key_pem,omitempty"`
 }
 
 // Route 是站点内的一条路由。

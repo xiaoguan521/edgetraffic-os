@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
@@ -29,6 +30,7 @@ const ApplyTimeout = 90 * time.Second
 // Service 负责发布与回滚。
 type Service struct {
 	Store     *store.Store
+	Certs     *certs.Service
 	GW        *gateway.Server
 	Audit     *audit.Logger
 	Log       *slog.Logger
@@ -93,6 +95,11 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 			return in, fmt.Errorf("site %s: %w", s.Name, err)
 		}
 		rs.Name = s.Name
+		if d.Certs != nil {
+			if err := d.Certs.ResolveSite(&rs); err != nil {
+				return in, fmt.Errorf("site %s: %w", s.Name, err)
+			}
+		}
 		in.Sites = append(in.Sites, rs)
 	}
 	var ups []store.Upstream
@@ -236,6 +243,80 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.publish", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
 		Detail: map[string]string{"revision": rev.ID, "parent": rev.ParentID, "note": note, "digest": rev.Digest}})
 	return d.start(lk, g, rev, "publish", note, user, nil)
+}
+
+// CertRefresh 证书续期后，以组的线上版本为基础只替换引用该证书的站点的证书文件，生成新版本并下发。
+// 不夹带草稿中的其他改动，因此在授权只读时也可执行（规格书 8.6）；agent 侧会再次核对“只有证书变化”。
+// 返回 nil, nil 表示该组线上版本中没有需要替换的证书文件。
+func (d *Service) CertRefresh(groupID, certID uint, user, ip string) (*store.Deployment, error) {
+	lk := d.groupLock(groupID)
+	if !lk.TryLock() {
+		return nil, ErrBusy
+	}
+	g, err := store.First[store.NodeGroup](d.Store, groupID)
+	if err != nil || g.CurrentRevisionID == "" {
+		lk.Unlock()
+		return nil, err
+	}
+	var cur store.Revision
+	if err := d.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&cur).Error; err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	files, err := render.ReadTarGz(cur.Bundle)
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	crt, key, err := d.Certs.Resolve(certID)
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	var sites []string
+	for _, name := range d.Certs.SitesUsing(certID, groupID) {
+		c, k := "certs/site-"+name+".crt", "certs/site-"+name+".key"
+		if _, ok := files[c]; !ok { // 站点尚未发布过，下次正常发布时自然带上新证书
+			continue
+		}
+		if string(files[c]) == crt && string(files[k]) == key {
+			continue
+		}
+		files[c], files[k] = []byte(crt), []byte(key)
+		sites = append(sites, name)
+	}
+	if len(sites) == 0 {
+		lk.Unlock()
+		return nil, nil
+	}
+	var rev *store.Revision
+	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
+		r := &store.Revision{ID: fmt.Sprintf("tmp-%d", time.Now().UnixNano()), GroupID: groupID, ParentID: cur.ID,
+			Note: "证书续期：" + strings.Join(sites, "、"), CreatedBy: user}
+		if err := tx.Create(r).Error; err != nil {
+			return err
+		}
+		r.ID = fmt.Sprintf("r%06d", r.Seq)
+		b := render.Repack(r.ID, files)
+		tgz, err := b.TarGz()
+		if err != nil {
+			return err
+		}
+		mj, _ := json.Marshal(b.Manifest)
+		r.Digest, r.Bundle, r.Manifest = b.Manifest.Digest, tgz, string(mj)
+		if err := tx.Save(r).Error; err != nil {
+			return err
+		}
+		rev = r
+		return nil
+	})
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.cert_renew", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
+		Detail: map[string]any{"revision": rev.ID, "parent": cur.ID, "sites": sites, "digest": rev.Digest}})
+	return d.start(lk, g, rev, "cert_renew", rev.Note, user, nil)
 }
 
 // Rollback 把组回滚到某个历史版本（重新下发该版本）。
