@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -74,6 +75,10 @@ func Render(in Input) (*Bundle, error) {
 		return nil, err
 	}
 	files["mime.types"] = in.MimeTypes
+	// 挑战片段总是生成（无挑战时只有注释行），这样 ACME 期间只有这一个文件变化
+	if files[AcmeSnippet], err = exec("acme.conf.tmpl", in); err != nil {
+		return nil, err
+	}
 
 	ups := append([]UpstreamGroup(nil), in.Upstreams...)
 	sort.Slice(ups, func(i, j int) bool { return ups[i].Name < ups[j].Name })
@@ -147,6 +152,43 @@ func Repack(rev string, src map[string][]byte) *Bundle {
 	return &Bundle{Revision: rev, Files: files, Manifest: m}
 }
 
+// AcmeSnippet 是 ACME HTTP-01 挑战片段，被每个监听 80 端口的站点 server 块 include。
+const AcmeSnippet = "snippets/acme-challenge.conf"
+
+const acmeHeader = "# ACME HTTP-01 challenges (generated)"
+
+var acmeLineRe = regexp.MustCompile(`^location = /\.well-known/acme-challenge/([A-Za-z0-9_-]{16,128}) \{ default_type text/plain; return 200 "([A-Za-z0-9_-]{16,128})\.[A-Za-z0-9_-]{32,64}"; \}$`)
+
+// RenderAcmeSnippet 只渲染挑战片段（用于在线上版本基础上更新挑战，不重新渲染其他文件）。
+func RenderAcmeSnippet(ch []AcmeChallenge) ([]byte, error) {
+	in := Input{Revision: "r000000", AcmeChallenges: ch}
+	for _, c := range ch {
+		if !acmeTokenRe.MatchString(c.Token) || !strings.HasPrefix(c.KeyAuth, c.Token+".") || !acmeThumbRe.MatchString(c.KeyAuth[len(c.Token)+1:]) {
+			return nil, fmt.Errorf("render: invalid ACME challenge")
+		}
+	}
+	var b bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&b, "acme.conf.tmpl", in); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// ValidAcmeSnippet 严格校验挑战片段：只允许注释头、空行和固定格式的挑战 location。
+// agent 在授权只读时用它确认 ACME 版本没有夹带其他配置。
+func ValidAcmeSnippet(b []byte) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		if line == "" || line == acmeHeader {
+			continue
+		}
+		m := acmeLineRe.FindStringSubmatch(line)
+		if m == nil || m[1] != m[2] {
+			return false
+		}
+	}
+	return true
+}
+
 // isCertFile 判断是否为渲染器生成的站点证书 / 私钥文件。
 func isCertFile(n string) bool {
 	if !strings.HasPrefix(n, "certs/site-") || strings.Contains(n[len("certs/"):], "/") {
@@ -173,7 +215,11 @@ func CertOnlyChange(cur, next map[string][]byte) bool {
 		if bytes.Equal(cb, nb) {
 			continue
 		}
-		if !isCertFile(n) {
+		if n == AcmeSnippet {
+			if !ValidAcmeSnippet(nb) {
+				return false
+			}
+		} else if !isCertFile(n) {
 			return false
 		}
 		changed = true

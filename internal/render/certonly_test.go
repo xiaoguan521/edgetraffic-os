@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,71 @@ func TestCertOnlyChange(t *testing.T) {
 		if got := CertOnlyChange(base, c.next); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// ACME HTTP-01：挑战片段只由校验过的 token / key authorization 生成，agent 只放行严格符合格式的片段。
+func TestAcmeChallengeSnippet(t *testing.T) {
+	in := sampleInput(t)
+	tok := "abcDEF0123456789_-tokenXYZ"
+	ka := tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"
+	in.AcmeChallenges = []AcmeChallenge{{Token: tok, KeyAuth: ka}}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snip := string(b.Files[AcmeSnippet])
+	if !strings.Contains(snip, "/.well-known/acme-challenge/"+tok) || !strings.Contains(snip, `"`+ka+`"`) {
+		t.Fatalf("snippet missing challenge:\n%s", snip)
+	}
+	if !ValidAcmeSnippet(b.Files[AcmeSnippet]) {
+		t.Fatal("rendered snippet rejected by the validator")
+	}
+	for name, f := range b.Files {
+		if strings.HasPrefix(name, "conf.d/site-") && !strings.Contains(string(f), "include  snippets/acme-challenge.conf;") {
+			t.Fatalf("%s does not include the ACME snippet", name)
+		}
+	}
+	empty := sampleInput(t)
+	eb, _ := Render(empty)
+	if !ValidAcmeSnippet(eb.Files[AcmeSnippet]) {
+		t.Fatal("empty snippet rejected")
+	}
+
+	for _, bad := range []AcmeChallenge{
+		{Token: "short", KeyAuth: "short.x"},
+		{Token: tok + `";} location / { return 200 "x`, KeyAuth: ka},
+		{Token: tok, KeyAuth: tok + `.x"; } server { listen 9 `},
+		{Token: tok, KeyAuth: "other0123456789abcdef.thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"},
+	} {
+		in := sampleInput(t)
+		in.AcmeChallenges = []AcmeChallenge{bad}
+		if _, err := Render(in); err == nil {
+			t.Errorf("bad challenge accepted: %+v", bad)
+		}
+	}
+	for _, bad := range []string{
+		"location / { proxy_pass http://10.0.0.1; }\n",
+		"location = /.well-known/acme-challenge/" + tok + " { default_type text/plain; return 200 \"" + ka + "\"; }\nlocation /x { }\n",
+		"include /etc/passwd;\n",
+	} {
+		if ValidAcmeSnippet([]byte(bad)) {
+			t.Errorf("validator accepted %q", bad)
+		}
+	}
+}
+
+// 证书续期类变更也可以同时更新 ACME 挑战片段，但片段内容必须合规。
+func TestCertOnlyChangeWithAcmeSnippet(t *testing.T) {
+	tok := "abcDEF0123456789_-tokenXYZ"
+	good := []byte("# ACME HTTP-01 challenges (generated)\nlocation = /.well-known/acme-challenge/" + tok + " { default_type text/plain; return 200 \"" + tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab\"; }\n")
+	base := map[string][]byte{"syapp.conf": []byte("a"), AcmeSnippet: []byte("# ACME HTTP-01 challenges (generated)\n"), ManifestName: []byte("m")}
+	next := map[string][]byte{"syapp.conf": []byte("a"), AcmeSnippet: good, ManifestName: []byte("m2")}
+	if !CertOnlyChange(base, next) {
+		t.Fatal("valid challenge snippet change rejected")
+	}
+	next[AcmeSnippet] = []byte("location / { return 200 \"pwned\"; }\n")
+	if CertOnlyChange(base, next) {
+		t.Fatal("arbitrary config passed through the ACME snippet")
 	}
 }

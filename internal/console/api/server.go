@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/acme"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
@@ -30,6 +31,7 @@ type Server struct {
 	GW            *gateway.Server
 	Deploy        *deploy.Service
 	Certs         *certs.Service
+	Acme          *acme.Service
 	Lic           *licsvc.Service
 	Audit         *audit.Logger
 	Log           *slog.Logger
@@ -110,6 +112,10 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.PUT("/certificates/:id", role(store.RoleOperator), s.renewCert)          // 证书续期：任何授权状态下可用（规格书 8.6）
 	a.POST("/certificates/:id/deploy", role(store.RoleOperator), s.deployCert) // 重新下发证书：同上
 	a.DELETE("/certificates/:id", role(store.RoleOperator), s.writable, s.deleteCert)
+	a.POST("/certificates/acme", role(store.RoleOperator), s.writable, s.acmeIssue)
+	a.POST("/certificates/:id/acme-renew", role(store.RoleOperator), s.acmeRenew) // ACME 续期：任何授权状态下可用
+	a.GET("/acme", s.acmeGet)
+	a.PUT("/acme", role(store.RoleAdmin), s.writable, s.acmePut)
 
 	a.GET("/upstreams", s.listUpstreams)
 	a.POST("/upstreams", role(store.RoleOperator), s.writable, s.createUpstream)

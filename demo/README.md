@@ -143,6 +143,12 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 看点：控制台当场拒绝“证书与私钥不匹配”。再上传正确的一对，在站点里启用 HTTPS 并选这张证书，同时多填一个域名 `blog.demo.local`，保存被拒绝“证书不包含域名 blog.demo.local”。错误在控制台就被拦下，线上配置没有被改动。
 去掉多余域名后保存并发布，在节点上验证：`docker compose exec node1 curl -skv --resolve shop.demo.local:443:127.0.0.1 https://shop.demo.local/ 2>&1 | grep 'expire date'`。
 
+**可选：ACME 自动申请证书。** 演示服务器通常无法被 Let's Encrypt 访问，可启用内置的测试 CA（Pebble）：
+`COMPOSE_PROFILES=acme ETOS_ACME_CA_FILE=/var/lib/syapp-console/acme-ca.pem ./demo.sh up`，然后执行
+`docker compose cp pebble:/test/certs/pebble.minica.pem /tmp/p.pem && docker compose cp /tmp/p.pem console:/var/lib/syapp-console/acme-ca.pem`。
+在“证书”页的 ACME 设置里把服务地址改为 `https://pebble:14000/dir`，点“自动申请证书”，填 `shop.demo.local`。
+看点：“ACME 签发记录”依次显示 下发验证文件到节点 → 等待 CA 验证 → 签发证书 → 写入证书库并下发；“发布”页多出两条“证书续期”记录（下发验证文件、换上证书并清除验证文件）。
+
 **场景 C：一键回滚。** 先把站点改回正常内容并发布 v2，再到“版本历史”对 r000001 点“回滚到此版本”，几秒内全部节点回到 v1。
 
 ### 6. 授权过期不影响业务（2 分钟）

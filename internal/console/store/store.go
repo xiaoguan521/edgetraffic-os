@@ -189,9 +189,34 @@ type Certificate struct {
 	CertPEM     string    `json:"-"`
 	KeyEnc      string    `json:"-"`
 	Source      string    `gorm:"size:16" json:"source"` // upload | migrated | acme
+	AutoRenew   bool      `json:"auto_renew"`            // ACME 证书到期前 30 天自动续期
 	UpdatedBy   string    `json:"updated_by"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// AcmeOrder 是一次 ACME 签发 / 续期（规格书 P6-4）。
+type AcmeOrder struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	Name       string     `gorm:"size:64" json:"name"`
+	CertID     uint       `gorm:"index" json:"cert_id"`  // 0 表示新签发
+	Domains    string     `json:"-"`                     // JSON 数组
+	Status     string     `gorm:"size:16" json:"status"` // pending | valid | failed
+	Step       string     `json:"step"`                  // 当前步骤（展示用）
+	Error      string     `json:"error"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+// AcmeChallenge 是进行中的 HTTP-01 挑战，渲染进节点配置的挑战片段。
+type AcmeChallenge struct {
+	ID        uint   `gorm:"primaryKey"`
+	OrderID   uint   `gorm:"index"`
+	Domain    string `gorm:"size:255"`
+	Token     string `gorm:"uniqueIndex;size:128"`
+	KeyAuth   string `gorm:"size:255"`
+	CreatedAt time.Time
 }
 
 type SystemKV struct {
@@ -228,6 +253,11 @@ func Open(dsn string) (*Store, error) {
 		ID: "202610280001_certificates",
 		Migrate: func(tx *gorm.DB) error {
 			return tx.AutoMigrate(&Certificate{})
+		},
+	}, {
+		ID: "202610290001_acme",
+		Migrate: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&Certificate{}, &AcmeOrder{}, &AcmeChallenge{})
 		},
 	}})
 	if err := m.Migrate(); err != nil {

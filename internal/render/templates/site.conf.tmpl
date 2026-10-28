@@ -5,6 +5,7 @@
 server {
     listen       80;
     server_name  {{ join $s.Domains " " }};
+    include  snippets/acme-challenge.conf;
     location / {
         return  301  https://$host$request_uri;
     }
@@ -30,6 +31,9 @@ server {
 {{- end }}
 
     include  snippets/security.conf;
+{{- if not (and $s.HTTPS $s.ForceHTTPS) }}
+    include  snippets/acme-challenge.conf;
+{{- end }}
 {{- range $i, $r := .Routes }}
 
     location {{ if eq $r.Match "exact" }}= {{ end }}{{ $r.Path }} {

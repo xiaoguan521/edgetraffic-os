@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/acme"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/api"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
@@ -45,6 +46,7 @@ func main() {
 	grpcAdvertise := flag.String("grpc-advertise", envOr("ETOS_GRPC_ADVERTISE", ""), "写入节点安装命令的控制台地址 host:port")
 	dataDir := flag.String("data", envOr("ETOS_DATA", "/var/lib/syapp-console"), "数据目录（数据库、CA、安装 ID）")
 	dsn := flag.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）")
+	acmeCA := flag.String("acme-ca-file", os.Getenv("ETOS_ACME_CA_FILE"), "额外信任的 ACME 服务 CA 证书（内网自建 ACME 时使用，可选）")
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	flag.Parse()
 	if *showVersion {
@@ -53,13 +55,13 @@ func main() {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log, *listen, *tlsCert, *tlsKey, *grpcListen, *grpcHosts, *grpcAdvertise, *dataDir, *dsn); err != nil {
+	if err := run(log, *listen, *tlsCert, *tlsKey, *grpcListen, *grpcHosts, *grpcAdvertise, *dataDir, *dsn, *acmeCA); err != nil {
 		log.Error("syapp-console stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn string) error {
+func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn, acmeCA string) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
@@ -97,6 +99,7 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 	gw := &gateway.Server{Store: st, CA: ca, CmdKey: cmdKey, Lic: lic, Audit: aud, Log: log}
 	dep := &deploy.Service{Store: st, Certs: crt, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes()}
 	gw.OnOnline = dep.Align
+	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
 	// 启动时所有节点先视为离线，等待重新连接
 	st.DB.Model(&store.Node{}).Where("status = ?", "online").Update("status", "offline")
 
@@ -119,7 +122,7 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 		return err
 	}
 
-	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
+	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
 		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: tlsCert != ""}
 	h, err := apiSrv.Handler()
 	if err != nil {
@@ -130,6 +133,7 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go housekeeping(ctx, st, lic)
+	go acm.Loop(ctx)
 
 	errc := make(chan error, 2)
 	go func() { errc <- gs.Serve(gl) }()
