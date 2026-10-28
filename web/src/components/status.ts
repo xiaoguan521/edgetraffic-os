@@ -20,4 +20,4 @@ export const nodeResult: Record<string, { text: string; color: string }> = {
   TIMEOUT: { text: '超时', color: 'red' },
 }
 
-export const kindName: Record<string, string> = { publish: '发布', rollback: '回滚', align: '自动对齐', cert_renew: '证书续期' }
+export const kindName: Record<string, string> = { publish: '发布', rollback: '回滚', align: '自动对齐', cert_renew: '证书续期', restore: '漂移恢复' }

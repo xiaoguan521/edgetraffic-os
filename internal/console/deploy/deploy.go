@@ -319,6 +319,40 @@ func (d *Service) CertRefresh(groupID, certID uint, user, ip string) (*store.Dep
 	return d.start(lk, g, rev, "cert_renew", rev.Note, user, nil)
 }
 
+// ErrNotDrifted 表示节点当前没有漂移，无需恢复。
+var ErrNotDrifted = errors.New("node has no manual changes to restore")
+
+// Restore 把一台漂移节点恢复为它应有的版本（重新下发节点当前版本的原样内容，规格书 5.6）。
+// 只作用于这一台节点，不改变节点组的当前版本；与回滚一样在授权只读时可用，agent 侧核对内容未变。
+func (d *Service) Restore(nodeID uint, user, ip string) (*store.Deployment, error) {
+	n, err := store.First[store.Node](d.Store, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if !n.Drifted {
+		return nil, ErrNotDrifted
+	}
+	if n.AppliedRevision == "" {
+		return nil, fmt.Errorf("节点 %s 还没有由控制台下发过版本", n.Name)
+	}
+	g, err := store.First[store.NodeGroup](d.Store, n.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	lk := d.groupLock(g.ID)
+	if !lk.TryLock() {
+		return nil, ErrBusy
+	}
+	var rev store.Revision
+	if err := d.Store.DB.Where("id = ? AND group_id = ?", n.AppliedRevision, g.ID).First(&rev).Error; err != nil {
+		lk.Unlock()
+		return nil, fmt.Errorf("revision %s not found", n.AppliedRevision)
+	}
+	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "node.restore", ObjectType: "node", ObjectID: n.Name,
+		Detail: map[string]any{"revision": rev.ID, "tree_hash": n.TreeHash}})
+	return d.start(lk, g, &rev, "restore", "恢复 "+n.Name+" 的手工改动", user, []uint{n.ID})
+}
+
 // Rollback 把组回滚到某个历史版本（重新下发该版本）。
 func (d *Service) Rollback(groupID uint, revID, user, ip string) (*store.Deployment, error) {
 	lk := d.groupLock(groupID)
@@ -462,7 +496,7 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 	}
 	now := time.Now()
 	d.Store.DB.Model(&store.Deployment{}).Where("id = ?", dep.ID).Updates(map[string]any{"status": status, "finished_at": now})
-	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" {
+	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" && dep.Kind != "restore" {
 		d.Store.DB.Model(&store.NodeGroup{}).Where("id = ?", g.ID).Update("current_revision_id", rev.ID)
 	}
 	d.Log.Info("deployment finished", "id", dep.ID, "kind", dep.Kind, "revision", rev.ID, "status", status, "applied", applied, "failed", failed)

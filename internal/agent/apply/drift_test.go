@@ -112,3 +112,51 @@ func TestCurrentFilesForCertOnlyCheck(t *testing.T) {
 		t.Fatal("a config change passed as certificate-only")
 	}
 }
+
+// 漂移恢复：用同一版本的干净副本原子替换被手改的目录，保留被改动的副本备查。
+func TestReplaceDriftedDir(t *testing.T) {
+	mt, err := os.ReadFile("../../render/defaults/mime.types")
+	if err != nil {
+		t.Skip("mime.types fixture not found:", err)
+	}
+	b, err := render.Render(render.Input{Revision: "r000000", MimeTypes: mt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgz, _ := b.TarGz()
+	root := t.TempDir()
+	a := &Applier{C: Config{ConfRoot: root}}
+	if err := a.Bootstrap("r000000", tgz, b.Manifest.Digest); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(root, "releases", "r000000", "syapp.conf")
+	orig, _ := os.ReadFile(f)
+	if err := os.WriteFile(f, append(append([]byte(nil), orig...), []byte("# manual\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := a.TreeDigest(); !strings.HasPrefix(d, "drifted") {
+		t.Fatal("expected drift before restore")
+	}
+	// 摘要不符的包必须被拒绝，且不动现有目录
+	if _, err := a.replaceDir("r000000", tgz, "sha256:bogus"); err == nil {
+		t.Fatal("bundle with wrong digest accepted")
+	}
+	backup, err := a.replaceDir("r000000", tgz, b.Manifest.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := a.TreeDigest(); d != b.Manifest.Digest {
+		t.Fatalf("still drifted after restore: %s", d)
+	}
+	kept, err := os.ReadFile(filepath.Join(backup, "syapp.conf"))
+	if err != nil || !strings.Contains(string(kept), "# manual") {
+		t.Fatalf("drifted copy not kept: %v", err)
+	}
+	if !strings.HasPrefix(filepath.Base(backup), ".drift-r000000-") {
+		t.Fatalf("unexpected backup name %s", backup)
+	}
+	// 备份目录不会被当成版本（Current / 版本列表只认 r 开头的目录）
+	if a.Current() != "r000000" {
+		t.Fatalf("current = %s", a.Current())
+	}
+}

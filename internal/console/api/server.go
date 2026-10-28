@@ -97,6 +97,7 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	a.GET("/nodes", s.listNodes)
 	a.POST("/nodes/:id/revoke", role(store.RoleAdmin), s.revokeNode)
+	a.POST("/nodes/:id/restore", role(store.RoleReleaser), s.restoreNode) // 漂移恢复：与回滚一样在过期状态下可用
 
 	a.GET("/sites", s.listSites)
 	a.GET("/sites/:id", s.getSite)

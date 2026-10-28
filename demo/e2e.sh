@@ -96,6 +96,21 @@ for _ in $(seq 1 40); do
 done
 expect "控制台标记 node1 配置被改动" "$drift" "edge-sg-01=True"
 expect "node2 未被误报" "$drift" "edge-sg-02=False"
+n1=$("${C[@]}" "$B/nodes" | j "[n['id'] for n in d if n['name']=='edge-sg-01' and n['status']=='online'][0]")
+id=$("${C[@]}" -X POST "$B/nodes/$n1/restore" | j "d.get('id','')")
+d=$(wait_deploy "$id")
+expect "一键恢复生效" "$(echo "$d" | j "d['kind']+' '+d['status']")" "restore APPLIED"
+for _ in $(seq 1 25); do
+  drift=$("${C[@]}" "$B/nodes" | j "','.join(n['name']+'='+str(n['drifted']) for n in sorted(d, key=lambda n: n['name']))")
+  [[ "$drift" == *"edge-sg-01=False"* ]] && break
+  sleep 2
+done
+expect "恢复后漂移标记消除" "$drift" "edge-sg-01=False"
+if $DC exec -T node1 grep -q "manual edit" /opt/syapp/conf/current/syapp.conf; then bad "恢复后仍是手改的配置"; else ok "恢复后配置为控制台版本"; fi
+expect "手工改动已备份" "$($DC exec -T node1 sh -c 'ls -a /opt/syapp/conf/releases')" ".drift-r000001-"
+expect "恢复不改变组版本" "$("${C[@]}" "$B/node-groups" | j "d[0]['current_revision_id']")" "r000001"
+expect "恢复后流量正常" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演示商城 v1"
+expect "无漂移时拒绝恢复" "$("${C[@]}" -X POST "$B/nodes/$n1/restore")" "NOT_DRIFTED"
 
 echo "== 内容更新 v2"
 ver=$("${C[@]}" "$B/sites/1" | j "d['version']")
