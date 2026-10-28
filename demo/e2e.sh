@@ -135,6 +135,24 @@ expect "过期后回滚仍可用" "$(echo "$d" | j "d['status']")" "APPLIED"
 expect "过期后流量正常" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城 v2"
 python3 -c "import json;print(json.dumps({'raw':open('/tmp/demo-valid.lic').read()}))" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 
+echo "== 吊销节点后重新添加"
+n2=$("${C[@]}" "$B/nodes" | j "[n['id'] for n in d if n['name']=='edge-sg-02' and n['status']!='revoked'][0]")
+"${C[@]}" -X POST "$B/nodes/$n2/revoke" >/dev/null
+sleep 3
+expect "吊销后节点状态" "$("${C[@]}" "$B/nodes" | j "[n['status'] for n in d if n['id']==$n2][0]")" "revoked"
+cmd=$("${C[@]}" -X POST "$B/node-groups/1/enroll" | j "d['command']")
+out=$(./demo.sh enroll node2 $cmd 2>&1)
+expect "重新注册命令执行成功" "$out" "已注册"
+st=""
+for _ in $(seq 1 45); do
+  st=$("${C[@]}" "$B/nodes" | j "','.join(n['status'] for n in d if n['name']=='edge-sg-02' and n['id']!=$n2)")
+  [[ "$st" == "online" ]] && break
+  sleep 2
+done
+expect "重新添加的节点上线（无需重启 agent）" "$st" "online"
+expect "旧身份仍为吊销" "$("${C[@]}" "$B/nodes" | j "[n['status'] for n in d if n['id']==$n2][0]")" "revoked"
+expect "重新添加后流量正常" "$("${H[@]}" "http://127.0.0.1:$P2/")" "演示商城"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 

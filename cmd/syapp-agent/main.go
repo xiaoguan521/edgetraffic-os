@@ -62,13 +62,19 @@ func main() {
 		if cfg.Server == "" || *token == "" || *caFP == "" {
 			fatal(log, "enroll", fmt.Errorf("-server, -token and -ca-fingerprint are required"))
 		}
+		// 每个令牌只能用一次，能拿到新令牌说明管理员要求（重新）注册本机：
+		// 例如节点被吊销后重新添加。新身份只在控制台接受后才替换旧身份，失败时旧身份保持不变。
 		a := conn.New(cfg, log)
-		if a.Enrolled() {
-			log.Info("already enrolled; skipping")
-			return
-		}
+		had := a.Enrolled()
 		if err := a.Enroll(ctx, *token, *caFP); err != nil {
+			if had {
+				log.Error("enroll failed; existing identity kept unchanged", "err", err)
+				os.Exit(1)
+			}
 			fatal(log, "enroll", err)
+		}
+		if had {
+			log.Info("re-enrolled: previous identity replaced; a running agent picks it up on its next reconnect")
 		}
 	case "run":
 		a := conn.New(cfg, log)

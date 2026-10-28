@@ -24,10 +24,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	grpcstatus "google.golang.org/grpc/status"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/apply"
@@ -149,17 +152,35 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 		"node.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: resp.ClientCertDer}),
 		"ca.crt":   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: resp.CaCertDer}),
 	}
+	// 每个文件先写临时文件再 rename；node.json 最后写，它的出现代表注册完成
 	for n, b := range files {
-		if err := os.WriteFile(a.path(n), b, 0o600); err != nil {
+		if err := a.writeAtomic(n, b); err != nil {
 			return err
 		}
 	}
 	st, _ := json.MarshalIndent(state{NodeID: resp.NodeId, Server: a.C.Server, CommandPub: resp.CommandPubkey}, "", "  ")
-	if err := os.WriteFile(a.path("node.json"), st, 0o600); err != nil {
+	if err := a.writeAtomic("node.json", st); err != nil {
 		return err
 	}
 	a.log.Info("enrolled", "node_id", resp.NodeId)
 	return nil
+}
+
+// writeAtomic 写入身份文件。enroll 通常以 root 执行，而 agent 以 syapp-agent 运行：
+// 文件属主跟随状态目录，运行中的 agent 才能读取新身份。
+func (a *Agent) writeAtomic(name string, b []byte) error {
+	tmp := a.path(name + ".tmp")
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(a.C.StateDir); err == nil && os.Geteuid() == 0 {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			if err := os.Chown(tmp, int(st.Uid), int(st.Gid)); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Rename(tmp, a.path(name))
 }
 
 func fp(der []byte) string { s := sha256.Sum256(der); return hex.EncodeToString(s[:]) }
@@ -198,6 +219,7 @@ func (a *Agent) load() (*tls.Config, error) {
 }
 
 // Run 保持与控制台的连接，断线后指数退避重连（1s → 60s），直到 ctx 结束。
+// 每次重连前重新读取注册身份：节点被吊销后在本机重新注册，运行中的 agent 无需重启即可换用新身份。
 func (a *Agent) Run(ctx context.Context) error {
 	tlsCfg, err := a.load()
 	if err != nil {
@@ -206,6 +228,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		start := time.Now()
+		ident := a.identityStamp()
 		err := a.session(ctx, tlsCfg)
 		if ctx.Err() != nil {
 			break
@@ -213,16 +236,46 @@ func (a *Agent) Run(ctx context.Context) error {
 		if time.Since(start) > time.Minute {
 			backoff = time.Second
 		}
-		a.log.Warn("disconnected from console; syapp keeps serving", "err", err, "retry_in", backoff)
-		select {
-		case <-ctx.Done():
-		case <-time.After(backoff):
+		if grpcstatus.Code(err) == codes.PermissionDenied {
+			a.log.Error("console rejected this node (revoked?); re-add it in the console and run the enroll command on this host; syapp keeps serving", "err", err)
+		} else {
+			a.log.Warn("disconnected from console; syapp keeps serving", "err", err, "retry_in", backoff)
+		}
+		// 等待退避时间，期间若本机重新注册则立即重连
+		deadline := time.After(backoff)
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				break wait
+			case <-deadline:
+				break wait
+			case <-time.After(2 * time.Second):
+				if a.identityStamp() != ident {
+					backoff = time.Second / 2
+					break wait
+				}
+			}
+		}
+		if cfg, err := a.load(); err == nil {
+			tlsCfg = cfg
+		} else {
+			a.log.Warn("reload identity failed; keeping current one", "err", err)
 		}
 		if backoff *= 2; backoff > time.Minute {
 			backoff = time.Minute
 		}
 	}
 	return ctx.Err()
+}
+
+// identityStamp 标识当前注册身份（node.json 的修改时间与大小），用于发现本机重新注册。
+func (a *Agent) identityStamp() string {
+	fi, err := os.Stat(a.path("node.json"))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size())
 }
 
 func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {

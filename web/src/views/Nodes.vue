@@ -60,7 +60,7 @@ async function saveGroup() {
 
 async function revoke(n: any) {
   await api.post(`/nodes/${n.id}/revoke`)
-  message.success(`已吊销 ${n.name}，其证书立即失效`)
+  message.success(`已吊销 ${n.name}，其证书立即失效。如需重新接入：点“添加节点”，在该机器上执行新生成的命令`, 6)
   load()
 }
 
