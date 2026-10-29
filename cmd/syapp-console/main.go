@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -29,6 +30,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/webtls"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
@@ -41,6 +43,7 @@ func main() {
 	listen := flag.String("listen", envOr("ETOS_LISTEN", "127.0.0.1:8443"), "Web 控制台监听地址（生产环境只在内网或前置 TLS）")
 	tlsCert := flag.String("tls-cert", os.Getenv("ETOS_TLS_CERT"), "Web 控制台 TLS 证书（可选）")
 	tlsKey := flag.String("tls-key", os.Getenv("ETOS_TLS_KEY"), "Web 控制台 TLS 私钥（可选）")
+	tlsAuto := flag.Bool("tls-auto", os.Getenv("ETOS_TLS_AUTO") == "true", "未指定 -tls-cert 时自动生成自签 HTTPS 证书（保存在 <data>/web-tls）")
 	grpcListen := flag.String("grpc-listen", envOr("ETOS_GRPC_LISTEN", "0.0.0.0:9443"), "节点连接的 gRPC 监听地址")
 	grpcHosts := flag.String("grpc-hosts", envOr("ETOS_GRPC_HOSTS", ""), "gRPC 服务端证书包含的主机名/IP，逗号分隔（节点用它们连接）")
 	grpcAdvertise := flag.String("grpc-advertise", envOr("ETOS_GRPC_ADVERTISE", ""), "写入节点安装命令的控制台地址 host:port")
@@ -55,13 +58,13 @@ func main() {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log, *listen, *tlsCert, *tlsKey, *grpcListen, *grpcHosts, *grpcAdvertise, *dataDir, *dsn, *acmeCA); err != nil {
+	if err := run(log, *listen, *tlsCert, *tlsKey, *tlsAuto, *grpcListen, *grpcHosts, *grpcAdvertise, *dataDir, *dsn, *acmeCA); err != nil {
 		log.Error("syapp-console stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn, acmeCA string) error {
+func run(log *slog.Logger, listen, tlsCert, tlsKey string, tlsAuto bool, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn, acmeCA string) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
@@ -122,8 +125,19 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 		return err
 	}
 
+	// Web 控制台 HTTPS：显式证书优先；否则 -tls-auto 时使用自动生成的自签证书
+	var wt *webtls.Manager
+	if tlsCert == "" && tlsAuto {
+		lh, _, _ := net.SplitHostPort(listen)
+		wt = &webtls.Manager{Dir: filepath.Join(dataDir, "web-tls"), Hosts: append([]string{lh}, hosts...)}
+		c, err := wt.Ensure(time.Now())
+		if err != nil {
+			return fmt.Errorf("web tls: %w", err)
+		}
+		log.Info("web console uses a self-signed certificate; verify it in the browser by fingerprint", "sha256", webtls.Fingerprint(c))
+	}
 	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
-		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: tlsCert != ""}
+		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: tlsCert != "" || wt != nil}
 	h, err := apiSrv.Handler()
 	if err != nil {
 		return err
@@ -138,12 +152,32 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 	errc := make(chan error, 2)
 	go func() { errc <- gs.Serve(gl) }()
 	go func() {
-		if tlsCert != "" {
+		switch {
+		case tlsCert != "":
 			errc <- hs.ListenAndServeTLS(tlsCert, tlsKey)
-		} else {
+		case wt != nil:
+			hs.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: wt.GetCertificate}
+			errc <- hs.ListenAndServeTLS("", "")
+		default:
 			errc <- hs.ListenAndServe()
 		}
 	}()
+	if wt != nil {
+		go func() { // 每天检查一次，30 天内到期时续期，无需重启
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if _, err := wt.Ensure(time.Now()); err != nil {
+						log.Warn("web tls renew failed", "err", err)
+					}
+				}
+			}
+		}()
+	}
 	log.Info("syapp-console started", "version", version.Version, "web", listen, "grpc", grpcListen,
 		"grpc_advertise", grpcAdvertise, "grpc_hosts", strings.Join(hosts, ","), "installation_id", lic.InstallationID())
 

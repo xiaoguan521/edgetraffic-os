@@ -23,6 +23,29 @@ jobs:
       - name: wrapper is static
         run: file bin/syapp-wrapper | grep -q "statically linked"
 
+  go-postgres:
+    # 控制台数据层同时支持 SQLite 与 PostgreSQL：数据库相关测试在 PostgreSQL 上再跑一遍
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: etos
+          POSTGRES_PASSWORD: etos
+          POSTGRES_DB: etos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U etos" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: console tests on PostgreSQL
+        env:
+          ETOS_TEST_DB: postgres://etos:etos@127.0.0.1:5432/etos_test?sslmode=disable
+        run: go test -mod=vendor -count=1 ./internal/console/...
+
   brand:
     runs-on: ubuntu-latest
     steps:
