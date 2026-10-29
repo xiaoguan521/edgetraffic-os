@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# syapp-firewall：边缘节点可选的 nftables 入站防火墙（规格书 P6-6）。默认不启用。
+#
+#   syapp-firewall enable --ssh-from 10.0.0.0/8,203.0.113.5 [--ssh-port 22] [--allow-tcp 9100] [--allow-udp 443] [--force]
+#   syapp-firewall disable
+#   syapp-firewall status
+#
+# 启用后：所有来源可访问 80/443（及 --allow-tcp/--allow-udp），SSH 只对 --ssh-from 开放，其余入站丢弃；出站不限制。
+# 规则只在独立的表 inet syapp_fw 中，不修改其他表；开机由 syapp-firewall.service 加载。
+set -euo pipefail
+RULES=${SYAPP_FW_RULES:-/etc/syapp/firewall.nft}
+UNIT=syapp-firewall.service
+AGENT=${SYAPP_AGENT:-/usr/bin/syapp-agent}
+NFT=${SYAPP_NFT:-nft}
+SYSTEMCTL=${SYAPP_SYSTEMCTL:-systemctl}   # 测试时替换为 true
+
+die() { echo "syapp-firewall: $*" >&2; exit 1; }
+usage() { sed -n '4,6p' "$0" | sed 's/^# \{0,3\}//'; exit 2; }
+
+cmd=${1:-}; [[ -n "$cmd" ]] || usage; shift
+case "$cmd" in
+  enable)
+    from=""; port=22; tcp=""; udp=""; force=0; anyssh=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --ssh-from)      from="$2"; shift 2 ;;
+        --ssh-port)      port="$2"; shift 2 ;;
+        --allow-tcp)     tcp="$2";  shift 2 ;;
+        --allow-udp)     udp="$2";  shift 2 ;;
+        --allow-any-ssh) anyssh=(-allow-any-ssh); shift ;;
+        --force)         force=1; shift ;;
+        *) die "未知参数：$1" ;;
+      esac
+    done
+    [[ $EUID -eq 0 ]] || die "请以 root 运行"
+    command -v "$NFT" >/dev/null || die "未找到 nft（dnf install nftables / apt install nftables）"
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    "$AGENT" firewall render -ssh-from "$from" -ssh-port "$port" -allow-tcp "$tcp" -allow-udp "$udp" "${anyssh[@]}" > "$tmp" \
+      || die "参数无效（见上）"
+    # 防止把自己锁在外面：当前 SSH 会话的来源必须在 --ssh-from 中
+    client=${SSH_CONNECTION:-}; client=${client%% *}
+    if [[ -n "${SSH_CONNECTION:-}" && $force -eq 0 ]]; then
+      if ! "$AGENT" firewall covers -ssh-from "$from" -ip "$client"; then
+        die "当前 SSH 会话来自 $client，不在 --ssh-from 中，启用后会断开。请把它加入 --ssh-from，或确认后加 --force"
+      fi
+    fi
+    for svc in firewalld ufw; do
+      if $SYSTEMCTL is-active -q "$svc" 2>/dev/null; then
+        echo "警告：$svc 正在运行。nftables 中任一表丢弃的包都会被丢弃，$svc 的规则仍然生效，需要同时在 $svc 中放行 80/443。" >&2
+      fi
+    done
+    "$NFT" -c -f "$tmp" || die "nft 校验失败"
+    install -o root -g root -m 0600 -D "$tmp" "$RULES.new"
+    mv -f "$RULES.new" "$RULES"
+    "$NFT" -f "$RULES"
+    $SYSTEMCTL daemon-reload
+    $SYSTEMCTL enable "$UNIT" >/dev/null 2>&1
+    $SYSTEMCTL start "$UNIT"   # oneshot + RemainAfterExit：标记为已启用，规则已在上一步加载
+    echo "已启用：80/443${tcp:+、$tcp} 对所有来源开放，SSH($port) 仅允许 $from"
+    ;;
+  disable)
+    [[ $EUID -eq 0 ]] || die "请以 root 运行"
+    $SYSTEMCTL disable --now "$UNIT" >/dev/null 2>&1 || true
+    "$NFT" delete table inet syapp_fw 2>/dev/null || true
+    echo "已停用，规则已移除（$RULES 保留，可再次 enable）"
+    ;;
+  status)
+    if "$NFT" list table inet syapp_fw 2>/dev/null; then
+      echo "状态：已启用（开机加载：$($SYSTEMCTL is-enabled "$UNIT" 2>/dev/null || echo 否)）"
+    else
+      echo "状态：未启用"
+    fi
+    ;;
+  *) usage ;;
+esac

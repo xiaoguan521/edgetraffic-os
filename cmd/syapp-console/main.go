@@ -39,6 +39,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "backup" || os.Args[1] == "restore") {
+		os.Exit(backupMain(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	listen := flag.String("listen", envOr("ETOS_LISTEN", "127.0.0.1:8443"), "Web 控制台监听地址（生产环境只在内网或前置 TLS）")
 	tlsCert := flag.String("tls-cert", os.Getenv("ETOS_TLS_CERT"), "Web 控制台 TLS 证书（可选）")
 	tlsKey := flag.String("tls-key", os.Getenv("ETOS_TLS_KEY"), "Web 控制台 TLS 私钥（可选）")

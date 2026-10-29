@@ -4,17 +4,20 @@
 #   sudo ./install.sh                                   安装并以基线配置启动 syapp
 #   sudo ./install.sh --server H:P --token T --ca-fingerprint F
 #                                                       同时注册到控制台并启动 syapp-agent
+#   sudo ./install.sh --firewall-ssh-from 10.0.0.0/8[,IP...]
+#                                                       同时启用节点防火墙（可选，见 syapp-firewall）
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVER=""; TOKEN=""; CAFP=""
+SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
     --token)          TOKEN="$2";  shift 2 ;;
     --ca-fingerprint) CAFP="$2";   shift 2 ;;
-    -h|--help)        sed -n '2,8p' "$0"; exit 0 ;;
+    --firewall-ssh-from) FW_FROM="$2"; shift 2 ;;
+    -h|--help)        sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +54,7 @@ mkdir -p /opt/syapp/conf/releases
 put "$HERE/rootfs/opt/syapp/sbin/syapp" /opt/syapp/sbin/syapp
 put "$HERE/rootfs/usr/bin/syapp-agent" /usr/bin/syapp-agent
 put "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrapper
+put "$HERE/rootfs/usr/sbin/syapp-firewall" /usr/sbin/syapp-firewall
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syapp" /etc/logrotate.d/syapp
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syapp-agent" /etc/sudoers.d/syapp-agent.new
@@ -94,4 +98,11 @@ elif [[ -f /var/lib/syapp-agent/node.json ]]; then
 else
   echo
   echo "下一步：在控制台“节点”页点“添加节点”，把生成的命令粘贴到本机执行。"
+fi
+
+if [[ -n "$FW_FROM" ]]; then
+  echo "== 启用节点防火墙"
+  /usr/sbin/syapp-firewall enable --ssh-from "$FW_FROM"
+elif systemctl is-enabled -q syapp-firewall.service 2>/dev/null; then
+  systemctl reload syapp-firewall.service   # 已启用：保持原规则
 fi
