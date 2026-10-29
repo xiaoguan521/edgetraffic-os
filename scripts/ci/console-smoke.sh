@@ -58,6 +58,27 @@ echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi
 
+echo "== 备份与恢复（恢复到新的 SQLite 数据目录后重新启动）"
+kill $CPID 2>/dev/null; wait $CPID 2>/dev/null
+printf 'smoke backup passphrase\n' > "$W/pass"; chmod 600 "$W/pass"
+bargs=(-data "$W/data" -passphrase-file "$W/pass"); [[ -n "$DB" ]] && bargs+=(-db "$DB")
+"$CONSOLE" backup "${bargs[@]}" -out "$W/console.etosbk" > "$W/backup.log" 2>&1 \
+  && ok "备份完成" || bad "备份失败：$(cat "$W/backup.log")"
+if grep -aq "PRIVATE KEY" "$W/console.etosbk"; then bad "备份未加密"; else ok "备份已加密"; fi
+"$CONSOLE" restore -data "$W/data2" -in "$W/console.etosbk" -passphrase-file "$W/pass" > "$W/restore.log" 2>&1 \
+  && ok "恢复完成" || bad "恢复失败：$(cat "$W/restore.log")"
+cmp -s "$W/data/pki/ca.key" "$W/data2/pki/ca.key" && ok "节点 CA 私钥随备份恢复" || bad "节点 CA 私钥未恢复"
+"$CONSOLE" -listen 127.0.0.1:18644 -grpc-listen 127.0.0.1:19644 -grpc-hosts 127.0.0.1 -data "$W/data2" -tls-auto > "$W/console2.log" 2>&1 &
+CPID=$!
+B2=https://localhost:18644/api/v1; JAR2=$W/jar2
+for _ in $(seq 1 40); do [[ -f "$W/data2/pki/web-ca.crt" ]] && curl -s --cacert "$W/data2/pki/web-ca.crt" "$B2/setup/status" >/dev/null && break; sleep 0.5; done
+C2=(curl -s --cacert "$W/data2/pki/web-ca.crt" -b "$JAR2" -c "$JAR2" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+"${C2[@]}" -X POST "$B2/auth/login" -d '{"username":"admin","password":"Smoke@2026!"}' >/dev/null
+expect "恢复后可用原账号登录，版本还在" "$("${C2[@]}" "$B2/revisions?group_id=1")" "r000001"
+expect "恢复后授权仍有效（安装 ID 一致）" "$("${C2[@]}" "$B2/license" | j "d['state']")" "VALID"
+expect "恢复后审计哈希链完好" "$("${C2[@]}" "$B2/audit/verify")" '"intact":true'
+expect "恢复操作写入审计" "$("${C2[@]}" "$B2/audit?action=system.restore")" "system.restore"
+
 if [[ $fail -ne 0 ]]; then tail -20 "$W/console.log" | sed 's/^/::warning title=console log::/'; fi
 echo "---- $fail failed"
 [[ $fail -eq 0 ]] && echo "CONSOLE SMOKE OK" || exit 1
