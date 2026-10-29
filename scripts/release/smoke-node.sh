@@ -42,6 +42,7 @@ if ps -eo args | grep -v grep | grep -qi 'ngi''nx'; then bad "进程列表出现
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || true)
 expect "基线配置：未知域名直接断开" "$code" "000"
 MASTER=$(cat /run/syapp/syapp.pid)
+expect "节点防火墙默认不启用" "$(sudo syapp-firewall status)" "未启用"
 
 echo "== 启动控制台并导入授权"
 "$CONSOLE" -listen 127.0.0.1:18443 -grpc-listen 127.0.0.1:9443 -grpc-hosts 127.0.0.1 \

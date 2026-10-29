@@ -61,13 +61,15 @@ case "${1:-}" in
     arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
     name="edgetraffic-os-node-$VERSION-linux-$arch"
     d="$WORK/$name"; r="$d/rootfs"
-    mkdir -p "$r/usr/bin" "$r/usr/libexec/syapp" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
+    mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syapp" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
     tar -C "$r" -xzf "$syapp_tgz"
     [[ -x "$r/opt/syapp/sbin/syapp" ]] || { echo "$syapp_tgz 中没有 opt/syapp/sbin/syapp" >&2; exit 2; }
     gobuild linux "$arch" "$r/usr/bin" ./cmd/syapp-agent
     gobuild linux "$arch" "$r/usr/libexec/syapp" ./cmd/syapp-wrapper
     cp dataplane/packaging/sudoers/syapp-agent "$r/etc/sudoers.d/syapp-agent"
-    cp dataplane/packaging/systemd/syapp.service dataplane/packaging/systemd/syapp-agent.service "$r/etc/systemd/system/"
+    cp dataplane/packaging/systemd/syapp.service dataplane/packaging/systemd/syapp-agent.service \
+       dataplane/packaging/systemd/syapp-firewall.service "$r/etc/systemd/system/"
+    install -m 0755 dataplane/packaging/firewall/syapp-firewall "$r/usr/sbin/syapp-firewall"
     cp dataplane/packaging/logrotate/syapp "$r/etc/logrotate.d/syapp"
     cp deploy/node/install.sh "$d/install.sh"
     cp docs/NOTICE "$d/NOTICE"
@@ -88,6 +90,8 @@ case "${1:-}" in
     gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper
     cp dataplane/packaging/sudoers/syapp-agent "$st/agent/sudoers"
     cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"
+    cp dataplane/packaging/systemd/syapp-firewall.service "$st/agent/syapp-firewall.service"
+    install -m 0755 dataplane/packaging/firewall/syapp-firewall "$st/agent/syapp-firewall"
     gobuild linux "$arch" "$st/console" ./cmd/syapp-console
     cp deploy/systemd/syapp-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"
     # 每个脚本 = shebang + 共用函数 + 本体（软件包脚本不能引用包外文件）

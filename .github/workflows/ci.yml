@@ -23,28 +23,50 @@ jobs:
       - name: wrapper is static
         run: file bin/syapp-wrapper | grep -q "statically linked"
 
-  go-postgres:
-    # 控制台数据层同时支持 SQLite 与 PostgreSQL：数据库相关测试在 PostgreSQL 上再跑一遍
-    runs-on: ubuntu-latest
+  postgres:
+    # 控制台在 PostgreSQL 上的测试：单元测试每个用例一个独立 schema；再用真实控制台对 SQLite 与 PostgreSQL 各跑一遍 API 冒烟（含 -tls-auto）
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: etos
-          POSTGRES_PASSWORD: etos
-          POSTGRES_DB: etos_test
+          POSTGRES_PASSWORD: pg
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U etos" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      ETOS_TEST_DB: postgres://postgres:pg@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
       - name: console tests on PostgreSQL
-        env:
-          ETOS_TEST_DB: postgres://etos:etos@127.0.0.1:5432/etos_test?sslmode=disable
         run: go test -mod=vendor -count=1 ./internal/console/...
+      - name: console smoke (SQLite and PostgreSQL, HTTPS via -tls-auto)
+        run: |
+          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console
+          export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral
+          scripts/ci/console-smoke.sh /tmp/console /tmp/lic
+          PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE smoke'
+          scripts/ci/console-smoke.sh /tmp/console /tmp/lic "postgres://postgres:pg@127.0.0.1:5432/smoke?sslmode=disable"
+
+  firewall:
+    # 可选的节点防火墙：在两个网络命名空间之间真实收发包，验证放行 / 丢弃 / 防锁死 / 停用
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: firewall packet test
+        run: |
+          sudo apt-get install -y -qq nftables >/dev/null
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syapp-agent ./cmd/syapp-agent
+          sudo scripts/ci/firewall-netns.sh /tmp/syapp-agent
 
   brand:
     runs-on: ubuntu-latest

@@ -1,0 +1,17 @@
+[Unit]
+Description=syapp edge firewall (nftables table inet syapp_fw)
+Documentation=man:nft(8)
+DefaultDependencies=no
+Before=network-pre.target syapp.service
+Wants=network-pre.target
+ConditionPathExists=/etc/syapp/firewall.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/syapp/firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/syapp/firewall.nft
+ExecStop=-/usr/sbin/nft delete table inet syapp_fw
+
+[Install]
+WantedBy=multi-user.target

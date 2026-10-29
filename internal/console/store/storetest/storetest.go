@@ -1,5 +1,7 @@
-// Package storetest 为测试提供空数据库：设置 ETOS_TEST_DB（postgres:// DSN）时每个测试使用独立的 schema，
-// 否则使用临时 SQLite 文件。CI 两种都跑，保证 SQLite 与 PostgreSQL 行为一致。
+// Package storetest 为测试提供独立的数据库。
+//
+// 默认每个测试一个临时 SQLite 文件；设置 ETOS_TEST_DB=postgres://... 时，每个测试在该库中
+// 创建独立的 schema，测试结束后删除。CI 的 postgres 任务用它让控制台测试在 PostgreSQL 上再跑一遍。
 package storetest
 
 import (
@@ -8,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -28,6 +31,9 @@ func Open(t testing.TB) *store.Store {
 		}
 		return st
 	}
+	if !strings.HasPrefix(dsn, "postgres") {
+		t.Fatalf("ETOS_TEST_DB must be a postgres:// DSN")
+	}
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	schema := "t_" + hex.EncodeToString(b)
@@ -35,13 +41,13 @@ func Open(t testing.TB) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil { // schema 名由本函数生成，非外部输入
+	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		_ = admin.Exec("DROP SCHEMA " + schema + " CASCADE").Error
 		if db, err := admin.DB(); err == nil {
-			db.Close()
+			_ = db.Close()
 		}
 	})
 	u, err := url.Parse(dsn)
@@ -57,7 +63,7 @@ func Open(t testing.TB) *store.Store {
 	}
 	t.Cleanup(func() {
 		if db, err := st.DB.DB(); err == nil {
-			db.Close()
+			_ = db.Close()
 		}
 	})
 	return st
