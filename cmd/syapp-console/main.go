@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -51,7 +52,7 @@ func main() {
 	dataDir := flag.String("data", envOr("ETOS_DATA", "/var/lib/syapp-console"), "数据目录（数据库、CA、安装 ID）")
 	dsn := flag.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）")
 	acmeCA := flag.String("acme-ca-file", os.Getenv("ETOS_ACME_CA_FILE"), "额外信任的 ACME 服务 CA 证书（内网自建 ACME 时使用，可选）")
-	tlsAuto := flag.Bool("tls-auto", os.Getenv("ETOS_TLS_AUTO") == "1", "Web 控制台使用内置 Web CA 自动签发的 HTTPS 证书（未指定 -tls-cert 时）")
+	tlsAuto := flag.Bool("tls-auto", envBool("ETOS_TLS_AUTO"), "Web 控制台使用内置 Web CA 自动签发的 HTTPS 证书（未指定 -tls-cert 时）")
 	webHosts := flag.String("web-hosts", envOr("ETOS_WEB_HOSTS", ""), "自动 HTTPS 证书包含的主机名/IP，逗号分隔（默认取 -grpc-hosts 并加上 localhost）")
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	flag.Parse()
@@ -245,6 +246,12 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// envBool 接受 1/true/TRUE 等写法（早期版本的 console.env 写的是 true）。
+func envBool(k string) bool {
+	b, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(k)))
+	return b
 }
 
 func envOr(k, def string) string {
