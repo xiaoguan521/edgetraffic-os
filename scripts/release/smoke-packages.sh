@@ -15,6 +15,8 @@ run() { # 发行版名 镜像 安装命令
     $install
     syapp -v 2>&1
     test -x /usr/libexec/syapp/syapp-wrapper
+    test -x /usr/sbin/syapp-firewall && test -f /usr/lib/systemd/system/syapp-firewall.service
+    test ! -e /etc/syapp/firewall.nft   # 防火墙默认不启用
     id syapp-agent >/dev/null && id syapp-console >/dev/null
     test -L /opt/syapp/conf/current
     /opt/syapp/sbin/syapp -t -q

@@ -54,6 +54,20 @@ jobs:
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE smoke'
           scripts/ci/console-smoke.sh /tmp/console /tmp/lic "postgres://postgres:pg@127.0.0.1:5432/smoke?sslmode=disable"
 
+  firewall:
+    # 可选的节点防火墙：在两个网络命名空间之间真实收发包，验证放行 / 丢弃 / 防锁死 / 停用
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: firewall packet test
+        run: |
+          sudo apt-get install -y -qq nftables >/dev/null
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syapp-agent ./cmd/syapp-agent
+          sudo scripts/ci/firewall-netns.sh /tmp/syapp-agent
+
   brand:
     runs-on: ubuntu-latest
     steps:

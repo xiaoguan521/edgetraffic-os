@@ -29,6 +29,17 @@ EdgeTraffic OS 边缘节点
 
   sudo ./install.sh --server <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>
 
+节点防火墙（可选，默认不启用，需要 nftables）：
+
+  sudo syapp-firewall enable --ssh-from <管理网段或 IP，逗号分隔> [--allow-tcp 9100] [--allow-udp 443]
+  sudo syapp-firewall status
+  sudo syapp-firewall disable
+
+  启用后 80/443 对所有来源开放，SSH 只允许 --ssh-from，其余入站丢弃；出站不限制（agent 主动连接控制台）。
+  规则在独立的 nftables 表 inet syapp_fw 中，不修改已有规则；当前 SSH 会话来源不在列表中时拒绝启用。
+  安装时可一并启用：sudo ./install.sh --firewall-ssh-from 10.0.0.0/8
+  已在使用 firewalld / ufw 时，它们的规则同样生效，需在其中放行 80/443。
+
 常用命令：
   syapp -v                          查看版本
   systemctl status syapp            数据面状态
