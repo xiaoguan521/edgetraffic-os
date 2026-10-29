@@ -29,6 +29,9 @@ func main() {
 		usage()
 	}
 	cmd, args := os.Args[1], os.Args[2:]
+	if cmd == "firewall" {
+		os.Exit(firewallMain(args, os.Stdout, os.Stderr))
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	server := fs.String("server", envOr("SYAPP_CONSOLE", ""), "控制台 gRPC 地址 host:port")
 	stateDir := fs.String("state-dir", "/var/lib/syapp-agent", "身份与状态目录")
@@ -137,6 +140,6 @@ func fatal(log *slog.Logger, what string, err error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: syapp-agent bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version")
+	fmt.Fprintln(os.Stderr, "usage: syapp-agent bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version | firewall render|covers ...")
 	os.Exit(2)
 }

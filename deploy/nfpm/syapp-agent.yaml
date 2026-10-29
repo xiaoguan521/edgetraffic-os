@@ -14,6 +14,8 @@ description: |
 depends:
   - syapp
   - sudo
+recommends:
+  - nftables   # 仅可选的 syapp-firewall 需要
 contents:
   - src: ${STAGE}/agent/syapp-agent
     dst: /usr/bin/syapp-agent
@@ -27,6 +29,12 @@ contents:
     file_info: { mode: 0440, owner: root, group: root }
   - src: ${STAGE}/agent/syapp-agent.service
     dst: /usr/lib/systemd/system/syapp-agent.service
+  # 可选的节点防火墙：默认不启用，由管理员执行 syapp-firewall enable --ssh-from ...
+  - src: ${STAGE}/agent/syapp-firewall
+    dst: /usr/sbin/syapp-firewall
+    file_info: { mode: 0755, owner: root, group: root }
+  - src: ${STAGE}/agent/syapp-firewall.service
+    dst: /usr/lib/systemd/system/syapp-firewall.service
 scripts:
   preinstall: ${STAGE}/scripts/agent-preinstall.sh
   postinstall: ${STAGE}/scripts/agent-postinstall.sh
