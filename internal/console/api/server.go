@@ -39,6 +39,7 @@ type Server struct {
 	GRPCAddr      string // 节点连接控制台使用的地址，写入安装命令
 	CAFingerprint string
 	SecureCookie  bool
+	WebCAPEM      []byte // -tls-auto 时的 Web CA 证书，公开下载以便导入浏览器
 
 	jwtKey []byte
 	fails  sync.Map // ip -> *loginFail
@@ -72,6 +73,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), s.securityHeaders)
+
+	if len(s.WebCAPEM) > 0 {
+		r.GET("/web-ca.crt", func(c *gin.Context) {
+			c.Header("Content-Disposition", `attachment; filename="edgetraffic-console-web-ca.crt"`)
+			c.Data(http.StatusOK, "application/x-x509-ca-cert", s.WebCAPEM)
+		})
+	}
 
 	v1 := r.Group("/api/v1")
 	v1.Use(s.csrf)

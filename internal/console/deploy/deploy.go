@@ -188,7 +188,7 @@ func (d *Service) newRevision(groupID uint, parent, note, user string) (*store.R
 	}
 	var rev *store.Revision
 	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
-		r := &store.Revision{ID: fmt.Sprintf("tmp-%d", time.Now().UnixNano()), GroupID: groupID, ParentID: parent, Note: note, CreatedBy: user}
+		r := &store.Revision{ID: tempRevisionID(), GroupID: groupID, ParentID: parent, Note: note, CreatedBy: user}
 		if err := tx.Create(r).Error; err != nil {
 			return err
 		}
@@ -248,6 +248,12 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 
 // ErrNeedsPublish 表示线上版本早于 ACME 支持（没有挑战片段），需要先正常发布一次。
 var ErrNeedsPublish = errors.New("live revision predates ACME support; publish the node group once first")
+
+// tempRevisionID 生成插入时用的临时版本号，随后在同一事务内改为 r%06d。
+// 版本号列是 varchar(16)：PostgreSQL 会严格检查长度（SQLite 不会），临时值必须不超过 16 个字符。
+func tempRevisionID() string {
+	return fmt.Sprintf("t%015x", uint64(time.Now().UnixNano())&0xfffffffffffffff)
+}
 
 // challenges 返回进行中的 ACME 挑战（按 token 排序，保证渲染确定）。
 func (d *Service) challenges() []render.AcmeChallenge {
@@ -330,7 +336,7 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 	}
 	var rev *store.Revision
 	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
-		r := &store.Revision{ID: fmt.Sprintf("tmp-%d", time.Now().UnixNano()), GroupID: groupID, ParentID: cur.ID,
+		r := &store.Revision{ID: tempRevisionID(), GroupID: groupID, ParentID: cur.ID,
 			Note: "证书续期：" + strings.Join(changed, "、"), CreatedBy: user}
 		if err := tx.Create(r).Error; err != nil {
 			return err

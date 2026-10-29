@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -47,6 +48,8 @@ func main() {
 	dataDir := flag.String("data", envOr("ETOS_DATA", "/var/lib/syapp-console"), "数据目录（数据库、CA、安装 ID）")
 	dsn := flag.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）")
 	acmeCA := flag.String("acme-ca-file", os.Getenv("ETOS_ACME_CA_FILE"), "额外信任的 ACME 服务 CA 证书（内网自建 ACME 时使用，可选）")
+	tlsAuto := flag.Bool("tls-auto", os.Getenv("ETOS_TLS_AUTO") == "1", "Web 控制台使用内置 Web CA 自动签发的 HTTPS 证书（未指定 -tls-cert 时）")
+	webHosts := flag.String("web-hosts", envOr("ETOS_WEB_HOSTS", ""), "自动 HTTPS 证书包含的主机名/IP，逗号分隔（默认取 -grpc-hosts 并加上 localhost）")
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	flag.Parse()
 	if *showVersion {
@@ -55,13 +58,26 @@ func main() {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log, *listen, *tlsCert, *tlsKey, *grpcListen, *grpcHosts, *grpcAdvertise, *dataDir, *dsn, *acmeCA); err != nil {
+	o := options{listen: *listen, tlsCert: *tlsCert, tlsKey: *tlsKey, tlsAuto: *tlsAuto, webHosts: *webHosts, grpcListen: *grpcListen,
+		grpcHosts: *grpcHosts, grpcAdvertise: *grpcAdvertise, dataDir: *dataDir, dsn: *dsn, acmeCA: *acmeCA}
+	if err := run(log, o); err != nil {
 		log.Error("syapp-console stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn, acmeCA string) error {
+type options struct {
+	listen, tlsCert, tlsKey     string
+	tlsAuto                     bool
+	webHosts                    string
+	grpcListen, grpcHosts       string
+	grpcAdvertise, dataDir, dsn string
+	acmeCA                      string
+}
+
+func run(log *slog.Logger, o options) error {
+	listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcAdvertise, dataDir, dsn, acmeCA :=
+		o.listen, o.tlsCert, o.tlsKey, o.grpcListen, o.grpcHosts, o.grpcAdvertise, o.dataDir, o.dsn, o.acmeCA
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
@@ -122,13 +138,37 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 		return err
 	}
 
+	// Web 控制台 HTTPS：-tls-cert 优先；否则 -tls-auto 用内置 Web CA（ECDSA，浏览器可用）自动签发并续期
+	var webCA *pki.WebCA
+	if tlsCert == "" && o.tlsAuto {
+		if webCA, err = pki.LoadOrCreateWebCA(filepath.Join(dataDir, "pki")); err != nil {
+			return fmt.Errorf("web CA: %w", err)
+		}
+	}
+	useTLS := tlsCert != "" || webCA != nil
+	if !useTLS && !loopback(listen) {
+		log.Warn("Web 控制台未启用 HTTPS 却监听在非本机地址：登录凭据会以明文传输。生产环境请配置 -tls-cert/-tls-key 或 -tls-auto（ETOS_TLS_AUTO=1）",
+			"listen", listen)
+	}
 	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
-		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: tlsCert != ""}
+		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: useTLS}
+	if webCA != nil {
+		apiSrv.WebCAPEM = webCA.CertPEM()
+	}
 	h, err := apiSrv.Handler()
 	if err != nil {
 		return err
 	}
 	hs := &http.Server{Addr: listen, Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second}
+	if webCA != nil {
+		wh := splitList(o.webHosts)
+		if len(wh) == 0 {
+			wh = append(append([]string{}, hosts...), "localhost", "127.0.0.1")
+		}
+		hs.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: webCA.GetCertificate(wh)}
+		log.Info("web console HTTPS uses the built-in web CA; import it into browsers once", "hosts", strings.Join(wh, ","),
+			"ca_download", "/web-ca.crt", "ca_file", filepath.Join(dataDir, "pki", "web-ca.crt"))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -140,6 +180,8 @@ func run(log *slog.Logger, listen, tlsCert, tlsKey, grpcListen, grpcHosts, grpcA
 	go func() {
 		if tlsCert != "" {
 			errc <- hs.ListenAndServeTLS(tlsCert, tlsKey)
+		} else if webCA != nil {
+			errc <- hs.ListenAndServeTLS("", "")
 		} else {
 			errc <- hs.ListenAndServe()
 		}
@@ -207,4 +249,17 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// loopback 判断监听地址是否只在本机。
+func loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
