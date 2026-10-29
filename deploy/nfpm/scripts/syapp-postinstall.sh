@@ -1,4 +1,4 @@
-mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp
+mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp /run/syapp
 chown -R root:root /opt/syapp/sbin /opt/syapp/share /opt/syapp/html
 if has_systemd; then
   systemctl daemon-reload || true

@@ -59,6 +59,7 @@ put "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrap
 put "$HERE/rootfs/usr/sbin/syapp-firewall" /usr/sbin/syapp-firewall
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syapp" /etc/logrotate.d/syapp
+install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syapp.conf" /etc/tmpfiles.d/syapp.conf
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syapp-agent" /etc/sudoers.d/syapp-agent.new
 visudo -cf /etc/sudoers.d/syapp-agent.new >/dev/null || { rm -f /etc/sudoers.d/syapp-agent.new; die "sudoers 校验失败"; }
 mv /etc/sudoers.d/syapp-agent.new /etc/sudoers.d/syapp-agent
