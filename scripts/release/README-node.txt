@@ -29,6 +29,16 @@ EdgeTraffic OS 边缘节点
 
   sudo ./install.sh --server <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>
 
+独立模式（不接入控制台）：
+
+  只安装 syapp 软件包（rpm -i / dnf install / apt install syapp）即可独立使用，安装时写入初始配置：
+    systemctl enable --now syapp
+    cp /opt/syapp/share/defaults/standalone-example.conf /opt/syapp/conf/current/conf.d/www.conf
+    syapp -t && systemctl reload syapp
+  详见 /opt/syapp/share/doc/STANDALONE.txt。之后要接入控制台时，若本机已有自定义配置，注册会被拒绝以免被
+  静默替换；确认由控制台接管时加 --replace-local-config（install.sh）或 -replace-local-config（syapp-agent enroll），
+  当前配置会先备份到 /var/lib/syapp-agent/backups/。
+
 节点防火墙（可选，默认不启用，需要 nftables）：
 
   sudo syapp-firewall enable --ssh-from <管理网段或 IP，逗号分隔> [--allow-tcp 9100] [--allow-udp 443]

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -32,6 +33,17 @@ func main() {
 	if cmd == "firewall" {
 		os.Exit(firewallMain(args, os.Stdout, os.Stderr))
 	}
+	if cmd == "package-defaults" { // 打包时使用：写入初始版本与独立模式文件
+		if len(args) != 2 || args[0] != "-out" {
+			fmt.Fprintln(os.Stderr, "usage: syapp-agent package-defaults -out <opt/syapp 暂存目录>")
+			os.Exit(2)
+		}
+		if err := render.WritePackageDefaults(args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	server := fs.String("server", envOr("SYAPP_CONSOLE", ""), "控制台 gRPC 地址 host:port")
 	stateDir := fs.String("state-dir", "/var/lib/syapp-agent", "身份与状态目录")
@@ -39,6 +51,7 @@ func main() {
 	wrapper := fs.String("wrapper", envOr("SYAPP_WRAPPER", "sudo -n /usr/libexec/syapp/syapp-wrapper"), "提权入口（按空格切分，不经过 shell）")
 	token := fs.String("token", "", "一次性注册令牌（enroll）")
 	caFP := fs.String("ca-fingerprint", "", "控制台 CA 证书 sha256 指纹（enroll）")
+	replaceLocal := fs.Bool("replace-local-config", false, "本机有独立模式下的自定义配置时，备份后由控制台接管（enroll）")
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -69,6 +82,15 @@ func main() {
 		// 例如节点被吊销后重新添加。新身份只在控制台接受后才替换旧身份，失败时旧身份保持不变。
 		a := conn.New(cfg, log)
 		had := a.Enrolled()
+		if !had {
+			bk, err := localConfigCheck(&apply.Applier{C: cfg.Apply}, *replaceLocal, filepath.Join(*stateDir, "backups"), time.Now())
+			if err != nil {
+				fatal(log, "enroll", err)
+			}
+			if bk != "" {
+				log.Warn("local standalone configuration backed up; it keeps running until the first publish from the console", "backup", bk)
+			}
+		}
 		if err := a.Enroll(ctx, *token, *caFP); err != nil {
 			if had {
 				log.Error("enroll failed; existing identity kept unchanged", "err", err)
@@ -95,11 +117,7 @@ func main() {
 
 // bootstrap 写入空站点的初始版本 r000000，使 syapp 能以基线配置启动。
 func bootstrap(cfg conn.Config) error {
-	mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types")
-	if err != nil {
-		return err
-	}
-	b, err := render.Render(render.Input{Revision: "r000000", MimeTypes: mt})
+	b, err := render.Baseline()
 	if err != nil {
 		return err
 	}
@@ -107,7 +125,7 @@ func bootstrap(cfg conn.Config) error {
 	if err != nil {
 		return err
 	}
-	return (&apply.Applier{C: cfg.Apply}).Bootstrap("r000000", tgz, b.Manifest.Digest)
+	return (&apply.Applier{C: cfg.Apply}).Bootstrap(render.BaselineRevision, tgz, b.Manifest.Digest)
 }
 
 func serverFromState(dir string) string {
