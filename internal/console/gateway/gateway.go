@@ -31,6 +31,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 )
 
@@ -97,9 +98,14 @@ func (s *Server) NewEnrollToken(groupID uint, by string) (string, time.Time, err
 	}
 	tok := "et_" + hex.EncodeToString(b)
 	exp := time.Now().Add(15 * time.Minute)
-	err := s.Store.DB.Create(&store.EnrollToken{TokenHash: hashToken(tok), GroupID: groupID, ExpiresAt: exp, CreatedBy: by}).Error
+	err := s.q().EnrollToken.WithContext(bg).Create(&store.EnrollToken{TokenHash: hashToken(tok), GroupID: groupID, ExpiresAt: exp, CreatedBy: by})
 	return tok, exp, err
 }
+
+// bg 用于不依附请求的写入（例如连接断开后标记离线）。
+var bg = context.Background()
+
+func (s *Server) q() *query.Query { return query.Use(s.Store.DB) }
 
 func remoteAddr(ctx context.Context) string {
 	if p, ok := peer.FromContext(ctx); ok {
@@ -119,16 +125,20 @@ func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agent
 	if !snap.Writable() {
 		return fail(codes.FailedPrecondition, "license does not allow registering nodes: "+string(snap.State))
 	}
-	var tok store.EnrollToken
-	if err := s.Store.DB.Where("token_hash = ?", hashToken(req.EnrollToken)).First(&tok).Error; err != nil {
+	q := s.q()
+	et, nd := q.EnrollToken, q.Node
+	tok, err := et.WithContext(ctx).Where(et.TokenHash.Eq(hashToken(req.EnrollToken))).First()
+	if err != nil {
 		return fail(codes.PermissionDenied, "invalid enroll token")
 	}
 	if tok.UsedAt != nil || time.Now().After(tok.ExpiresAt) {
 		return fail(codes.PermissionDenied, "enroll token expired or already used")
 	}
 	if snap.Payload != nil && snap.Payload.Limits.Nodes > 0 {
-		var n int64
-		s.Store.DB.Model(&store.Node{}).Where("status <> ?", "revoked").Count(&n)
+		n, err := nd.WithContext(ctx).Where(nd.Status.Neq("revoked")).Count()
+		if err != nil {
+			return nil, status.Error(codes.Internal, "count nodes")
+		}
 		if n >= int64(snap.Payload.Limits.Nodes) {
 			return fail(codes.ResourceExhausted, fmt.Sprintf("LICENSE_NODE_LIMIT: %d nodes licensed", snap.Payload.Limits.Nodes))
 		}
@@ -139,22 +149,25 @@ func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agent
 	}
 	node := &store.Node{GroupID: tok.GroupID, Name: host, Hostname: host, RemoteAddr: ip, Status: "offline", AgentVersion: req.AgentVersion}
 	var certDER []byte
-	if err := s.Store.DB.Create(node).Error; err != nil {
+	if err := nd.WithContext(ctx).Create(node); err != nil {
 		return nil, status.Error(codes.Internal, "create node")
 	}
 	der, serial, err := s.CA.SignNode(req.CsrDer, strconv.FormatUint(uint64(node.ID), 10))
 	if err != nil {
-		s.Store.DB.Delete(node)
+		_, _ = nd.WithContext(bg).Delete(node)
 		return fail(codes.InvalidArgument, "bad csr: "+err.Error())
 	}
 	certDER = der
 	now := time.Now()
-	res := s.Store.DB.Model(&store.EnrollToken{}).Where("id = ? AND used_at IS NULL", tok.ID).Update("used_at", now)
-	if res.RowsAffected != 1 {
-		s.Store.DB.Delete(node)
+	// 令牌只能用一次：带 used_at IS NULL 条件的更新，并发注册时只有一个能更新成功
+	res, err := et.WithContext(ctx).Where(et.ID.Eq(tok.ID), et.UsedAt.IsNull()).Update(et.UsedAt, now)
+	if err != nil || res.RowsAffected != 1 {
+		_, _ = nd.WithContext(bg).Delete(node)
 		return fail(codes.PermissionDenied, "enroll token already used")
 	}
-	s.Store.DB.Model(node).Update("cert_serial", serial.String())
+	if _, err := nd.WithContext(ctx).Where(nd.ID.Eq(node.ID)).Update(nd.CertSerial, serial.String()); err != nil {
+		return nil, status.Error(codes.Internal, "save node certificate serial")
+	}
 	_ = s.Audit.Write(audit.Entry{Username: "agent:" + host, IP: ip, Action: "node.enroll", ObjectType: "node", ObjectID: strconv.Itoa(int(node.ID)),
 		Detail: map[string]any{"group_id": tok.GroupID, "token_created_by": tok.CreatedBy}})
 	return &agentv1.EnrollResponse{NodeId: strconv.Itoa(int(node.ID)), ClientCertDer: certDER, CaCertDer: s.CA.Cert.Raw, CommandPubkey: s.CmdKey.Public().(ed25519.PublicKey)}, nil
@@ -207,7 +220,8 @@ func (s *Server) Connect(stream agentv1.AgentGateway_ConnectServer) error {
 		s.mu.Lock()
 		if s.sessions[node.ID] == sess {
 			delete(s.sessions, node.ID)
-			s.Store.DB.Model(&store.Node{}).Where("id = ? AND status = ?", node.ID, "online").Update("status", "offline")
+			nd := s.q().Node // 连接已断开，流的 ctx 已取消，用 bg
+			_, _ = nd.WithContext(bg).Where(nd.ID.Eq(node.ID), nd.Status.Eq("online")).Update(nd.Status, "offline")
 			s.Log.Info("node offline", "node", node.ID)
 		}
 		s.mu.Unlock()
@@ -248,10 +262,10 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 	switch b := m.Body.(type) {
 	case *agentv1.AgentMessage_Hello:
 		ver := strings.SplitN(strings.TrimSpace(b.Hello.SyappVersionOutput), "\n", 2)[0]
-		s.Store.DB.Model(&store.Node{}).Where("id = ?", nodeID).Updates(map[string]any{
-			"status": "online", "agent_version": b.Hello.AgentVersion, "syapp_version": ver, "syapp_sha256": b.Hello.SyappSha256,
-			"applied_revision": b.Hello.AppliedRevisionId, "last_seen_at": now, "remote_addr": remoteAddr(ctx),
-		})
+		nd := s.q().Node
+		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(b.Hello.AgentVersion),
+			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
+			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
 		go func() {
 			s.PushLicense(nodeID)
@@ -261,23 +275,21 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		}()
 	case *agentv1.AgentMessage_Heartbeat:
 		hb := b.Heartbeat
-		var n store.Node
-		s.Store.DB.First(&n, nodeID)
+		q := s.q()
+		nd, rv := q.Node, q.Revision
 		drifted := false
 		if strings.HasPrefix(hb.TreeHash, "drifted") {
 			drifted = true
-		} else if n.AppliedRevision != "" {
-			var rev store.Revision
-			if s.Store.DB.Where("id = ?", n.AppliedRevision).First(&rev).Error == nil && hb.TreeHash != "" && hb.TreeHash != rev.Digest {
+		} else if n, err := nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).First(); err == nil && n.AppliedRevision != "" {
+			if rev, err := rv.WithContext(ctx).Where(rv.ID.Eq(n.AppliedRevision)).First(); err == nil && hb.TreeHash != "" && hb.TreeHash != rev.Digest {
 				drifted = true
 			}
 		}
-		s.Store.DB.Model(&store.Node{}).Where("id = ?", nodeID).Updates(map[string]any{
-			"status": "online", "cpu_percent": hb.CpuPercent, "mem_used_bytes": hb.MemUsedBytes, "active_conns": hb.ActiveConnections,
-			"requests_total": hb.RequestsTotal, "tree_hash": hb.TreeHash, "drifted": drifted, "last_seen_at": now,
-		})
+		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.CPUPercent.Value(hb.CpuPercent),
+			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
+			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now))
 		for _, sm := range hb.SiteMinutes {
-			s.Store.DB.Create(&store.MetricMinute{NodeID: nodeID, Site: sm.Site, Minute: sm.MinuteUnix, Requests: sm.Requests,
+			_ = q.MetricMinute.WithContext(ctx).Create(&store.MetricMinute{NodeID: nodeID, Site: sm.Site, Minute: sm.MinuteUnix, Requests: sm.Requests,
 				S2xx: sm.Status_2Xx, S3xx: sm.Status_3Xx, S4xx: sm.Status_4Xx, S5xx: sm.Status_5Xx, P50ms: sm.P50Ms, P95ms: sm.P95Ms, Bytes: sm.BytesSent})
 		}
 	case *agentv1.AgentMessage_Result:
@@ -345,8 +357,9 @@ func (s *Server) FetchBundle(req *agentv1.FetchBundleRequest, stream agentv1.Age
 	if err != nil {
 		return err
 	}
-	var rev store.Revision
-	if err := s.Store.DB.Where("id = ?", req.RevisionId).First(&rev).Error; err != nil {
+	rv := s.q().Revision
+	rev, err := rv.WithContext(stream.Context()).Where(rv.ID.Eq(req.RevisionId)).First()
+	if err != nil {
 		return status.Error(codes.NotFound, "revision not found")
 	}
 	if rev.GroupID != node.GroupID {
