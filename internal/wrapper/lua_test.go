@@ -142,9 +142,17 @@ http {
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {
 		t.Fatalf("traversal: %v", err)
 	}
-	dropLua(t, p, priv, "9.2.0", "standard", luaPackage(t, "9.2.0", nil))
+	// 签名是 syapp 包的（名称不符）：拒绝
+	wrong := luaPackage(t, "9.2.0", nil)
+	ws, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", "9.2.0", p.Arch, "standard", wrong)
+	wb, _ := json.Marshal(ws)
+	_ = os.WriteFile(filepath.Join(p.Incoming, "syapp-lua-9.2.0.tar.gz"), wrong, 0o644)
+	_ = os.WriteFile(filepath.Join(p.Incoming, "syapp-lua-9.2.0.tar.gz.sig"), wb, 0o644)
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {
-		t.Fatalf("variant: %v", err)
+		t.Fatalf("wrong package name: %v", err)
+	}
+	if _, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-lua", "9.2.0", p.Arch, "standard", wrong); err == nil {
+		t.Fatal("syapp-lua signed with a non-lua variant")
 	}
 	dropLua(t, p, priv, "9.2.0", "lua", luaPackage(t, "9.1.9", nil))
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {

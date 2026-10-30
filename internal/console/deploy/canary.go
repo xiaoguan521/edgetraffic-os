@@ -171,6 +171,8 @@ func (d *Service) runCanary(c *store.CanaryRelease, rev *store.Revision, o Canar
 		cr := q.CanaryRelease
 		sel := cr.WithContext(bg).Where(cr.ID.Eq(c.ID))
 		if done {
+			// 先撤销“灰度进行中”标记，再写最终状态：看到结束状态的调用方随即发布时不会被误拒
+			canaryActive.Delete(c.GroupID)
 			_, _ = sel.UpdateSimple(cr.Batches.Value(string(bj)), cr.Status.Value(status), cr.Message.Value(msg), cr.FinishedAt.Value(time.Now()))
 		} else {
 			_, _ = sel.UpdateSimple(cr.Batches.Value(string(bj)), cr.Status.Value(status), cr.Message.Value(msg))
