@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -334,7 +335,7 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 }
 
 func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
-	h := &agentv1.Hello{AgentVersion: version.Version, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint()}
+	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint()}
 	if out, err := exec.CommandContext(ctx, a.C.SyappBin, "-V").CombinedOutput(); err == nil {
 		h.SyappVersionOutput = string(out)
 	}
@@ -479,6 +480,8 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 			return
 		}
 		reply(agentv1.CommandResult_APPLIED, sig+" done", "")
+	case *agentv1.ServerMessage_Upgrade:
+		a.handleUpgrade(ctx, client, b.Upgrade, reply, send)
 	default:
 		reply(agentv1.CommandResult_REJECTED, "command not supported by this agent", "")
 	}

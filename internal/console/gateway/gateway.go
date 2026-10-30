@@ -264,8 +264,9 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 	switch b := m.Body.(type) {
 	case *agentv1.AgentMessage_Hello:
 		ver := strings.SplitN(strings.TrimSpace(b.Hello.SyappVersionOutput), "\n", 2)[0]
+		agentVer, arch := ParseAgentVersion(b.Hello.AgentVersion)
 		nd := s.q().Node
-		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(b.Hello.AgentVersion),
+		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(agentVer), nd.Arch.Value(arch),
 			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
 			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
@@ -463,5 +464,42 @@ func (s *Server) saveDrift(ctx context.Context, nodeID uint, r *agentv1.DriftRep
 		}
 		_ = s.Audit.Write(audit.Entry{Username: "system", Action: "node.drift_detected", ObjectType: "node", ObjectID: name,
 			Detail: map[string]any{"revision": r.RevisionId, "tree_hash": r.TreeHash, "files": paths}})
+	}
+}
+
+// ParseAgentVersion 拆分 agent 上报的“版本 linux/架构”（旧版 agent 只有版本号，架构为空）。
+func ParseAgentVersion(v string) (version, arch string) {
+	f := strings.Fields(v)
+	if len(f) == 2 && strings.HasPrefix(f[1], "linux/") {
+		a := strings.TrimPrefix(f[1], "linux/")
+		if a == "amd64" || a == "arm64" {
+			return f[0], a
+		}
+	}
+	return v, ""
+}
+
+// FetchPackage 分片下发版本库中的升级包（规格书 12.6）：只有已验签入库的包；签名随指令下发，由 wrapper / agent 使用前再校验。
+func (s *Server) FetchPackage(req *agentv1.FetchPackageRequest, stream agentv1.AgentGateway_FetchPackageServer) error {
+	if _, err := s.nodeFromPeer(stream.Context()); err != nil {
+		return err
+	}
+	p := s.q().DataplanePackage
+	pkg, err := p.WithContext(stream.Context()).Where(p.Name.Eq(req.Name), p.Version.Eq(req.Version), p.Arch.Eq(req.Arch), p.Variant.Eq(req.Variant)).First()
+	if err != nil {
+		return status.Error(codes.NotFound, "package not found in the version library")
+	}
+	const chunk = 256 << 10
+	for off := 0; ; off += chunk {
+		end := off + chunk
+		if end > len(pkg.Data) {
+			end = len(pkg.Data)
+		}
+		if err := stream.Send(&agentv1.BundleChunk{Data: pkg.Data[off:end], Offset: int64(off), Last: end == len(pkg.Data)}); err != nil {
+			return err
+		}
+		if end == len(pkg.Data) {
+			return nil
+		}
 	}
 }

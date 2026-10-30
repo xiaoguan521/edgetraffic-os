@@ -24,6 +24,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300004_api_tokens", Migrate: migrateAPITokens},
 		{ID: "202610300005_alerts", Migrate: migrateAlerts},
 		{ID: "202610300006_node_drifts", Migrate: migrateNodeDrifts},
+		{ID: "202610300007_dataplane_upgrades", Migrate: migrateDataplaneUpgrades},
 	}
 }
 
@@ -391,4 +392,44 @@ func migrateNodeDrifts(tx *gorm.DB) error {
 		ReportedAt time.Time
 	}
 	return tx.AutoMigrate(&NodeDrift{})
+}
+
+// ---- 202610300007_dataplane_upgrades：数据面版本库与分批热升级（P8）----
+
+func migrateDataplaneUpgrades(tx *gorm.DB) error {
+	type Node struct {
+		Arch string `gorm:"size:16"`
+	}
+	type DataplanePackage struct {
+		ID         uint   `gorm:"primaryKey"`
+		Name       string `gorm:"uniqueIndex:idx_pkg;size:32"`
+		Version    string `gorm:"uniqueIndex:idx_pkg;size:32"`
+		Arch       string `gorm:"uniqueIndex:idx_pkg;size:16"`
+		Variant    string `gorm:"uniqueIndex:idx_pkg;size:16"`
+		SHA256     string `gorm:"column:sha256;size:64"`
+		Size       int64
+		KID        string `gorm:"column:kid;size:40"`
+		Sig        string
+		Data       []byte
+		UploadedBy string `gorm:"size:64"`
+		CreatedAt  time.Time
+	}
+	type DataplaneUpgrade struct {
+		ID         uint   `gorm:"primaryKey"`
+		GroupID    uint   `gorm:"index"`
+		Version    string `gorm:"size:32"`
+		Variant    string `gorm:"size:16"`
+		Status     string `gorm:"size:16"`
+		Nodes      string
+		Note       string
+		CreatedBy  string `gorm:"size:64"`
+		CreatedAt  time.Time
+		FinishedAt *time.Time
+	}
+	if !tx.Migrator().HasColumn(&Node{}, "Arch") {
+		if err := tx.Migrator().AddColumn(&Node{}, "Arch"); err != nil {
+			return err
+		}
+	}
+	return tx.AutoMigrate(&DataplanePackage{}, &DataplaneUpgrade{})
 }

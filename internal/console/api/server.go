@@ -124,6 +124,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/node-groups/:id/rollback", role(store.RoleReleaser), s.rollback) // 过期状态下仍可用
 	a.POST("/node-groups/:id/release-requests", role(store.RoleReleaser), s.writable, s.requestRelease)
 
+	// 数据面版本库与分批热升级（P8，规格书 12.6）：全程不中断连接，任一节点失败即停止
+	a.GET("/packages", role(store.RoleOperator), s.listPackages)
+	a.POST("/packages", role(store.RoleAdmin), s.writable, s.importPackage)
+	a.POST("/node-groups/:id/upgrade", role(store.RoleOperator), s.writable, s.startUpgrade)
+	a.GET("/upgrades", s.listUpgrades)
+	a.GET("/upgrades/:id", s.getUpgrade)
+
 	// 配置导入（P7，规格书 12.4）
 	a.GET("/imports", role(store.RoleOperator), s.listImports)
 	a.POST("/imports", role(store.RoleOperator), s.writable, s.createImport)
@@ -262,6 +269,8 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "STALE_REQUEST", "提交后线上版本已变化（例如有人回滚），该申请已过期，请重新提交")
 	case errors.Is(err, deploy.ErrSelfApproval):
 		fail(c, http.StatusForbidden, "SELF_APPROVAL", "提交人不能审批自己的发布申请")
+	case errors.Is(err, deploy.ErrUpgradeRunning):
+		fail(c, http.StatusConflict, "UPGRADE_RUNNING", "该节点组正在升级")
 	case errors.Is(err, deploy.ErrNoDriftReport):
 		fail(c, http.StatusNotFound, "NO_DRIFT_REPORT", err.Error())
 	case errors.Is(err, deploy.ErrNoPendingChange):

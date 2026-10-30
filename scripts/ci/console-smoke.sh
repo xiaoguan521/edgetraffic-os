@@ -139,6 +139,19 @@ al=$("${C[@]}" "$B/alerts")
 expect "告警页数据" "$al" '"has_secret":true'
 if [[ "$al" == *SECsmoke* ]]; then bad "接口返回了通道密钥"; else ok "接口不返回通道密钥"; fi
 
+if [[ -n "${PKG_KEY:-}" ]]; then
+  echo "== 数据面版本库（P8）"
+  mkdir -p "$W/pkg/sbin" && printf '#!/bin/sh\nexit 0\n' > "$W/pkg/sbin/syapp" && chmod 755 "$W/pkg/sbin/syapp" && echo 9.9.1 > "$W/pkg/VERSION"
+  tar -C "$W/pkg" -czf "$W/syapp-9.9.1-amd64.tar.gz" sbin/syapp VERSION
+  "$LIC" sign-package -key "$PKG_KEY" -kid etos-ci-pkg-ephemeral -in "$W/syapp-9.9.1-amd64.tar.gz" -version 9.9.1 -arch amd64 >/dev/null
+  P=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR" -H 'X-Requested-With: etos')
+  expect "导入签名升级包" "$("${P[@]}" -F "package=@$W/syapp-9.9.1-amd64.tar.gz" -F "signature=@$W/syapp-9.9.1-amd64.tar.gz.sig" "$B/packages")" '"version":"9.9.1"'
+  printf 'x' >> "$W/syapp-9.9.1-amd64.tar.gz"
+  expect "篡改的升级包被拒绝" "$("${P[@]}" -F "package=@$W/syapp-9.9.1-amd64.tar.gz" -F "signature=@$W/syapp-9.9.1-amd64.tar.gz.sig" "$B/packages")" "PACKAGE_REJECTED"
+  expect "版本库列表" "$("${C[@]}" "$B/packages")" '"kid":"etos-ci-pkg-ephemeral"'
+  expect "节点组没有节点时拒绝升级" "$("${C[@]}" -X POST "$B/node-groups/1/upgrade" -d '{"version":"9.9.1"}')" "没有节点"
+fi
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

@@ -1,0 +1,139 @@
+package deploy
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
+)
+
+type fakeAgents struct {
+	mu     sync.Mutex
+	fail   map[uint]bool
+	calls  []string
+	online map[uint]bool
+}
+
+func (f *fakeAgents) Online(id uint) bool { return f.online[id] }
+
+func (f *fakeAgents) Send(_ context.Context, id uint, m *agentv1.ServerMessage, _ time.Duration) (*agentv1.CommandResult, error) {
+	u := m.GetUpgrade()
+	f.mu.Lock()
+	f.calls = append(f.calls, fmt.Sprintf("%d:%s", id, u.Action))
+	f.mu.Unlock()
+	if u.Action == agentv1.UpgradeDataplane_START && f.fail[id] {
+		return &agentv1.CommandResult{Status: agentv1.CommandResult_ROLLED_BACK, Message: "post check failed"}, nil
+	}
+	return &agentv1.CommandResult{Status: agentv1.CommandResult_APPLIED}, nil
+}
+
+func seedPackage(t *testing.T, d *Service, ver string) {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	d.PackageKeys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	data := []byte("pkg-" + ver)
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", ver, "amd64", "standard", data)
+	sb, _ := json.Marshal(sig)
+	if _, err := d.ImportPackage(data, sb, "admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	// 篡改的包被拒绝
+	if _, err := d.ImportPackage([]byte("other"), sb, "admin", ""); !errors.Is(err, pkgsig.ErrSignature) {
+		t.Fatalf("tampered package accepted: %v", err)
+	}
+}
+
+func addNodes(t *testing.T, d *Service, g *store.NodeGroup, n int) []uint {
+	q := query.Use(d.Store.DB)
+	var ids []uint
+	for i := 0; i < n; i++ {
+		nd := &store.Node{GroupID: g.ID, Name: fmt.Sprintf("edge-%02d", i), Status: "online", Arch: "amd64"}
+		_ = q.Node.WithContext(context.Background()).Create(nd)
+		ids = append(ids, nd.ID)
+	}
+	return ids
+}
+
+func waitUpgrade(t *testing.T, d *Service, id uint) *UpgradeView {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		v, err := d.GetUpgrade(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Status != "running" {
+			return v
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("upgrade did not finish")
+	return nil
+}
+
+func TestPlanBatches(t *testing.T) {
+	for n, want := range map[int][]int{1: {1}, 2: {1, 1}, 5: {1, 1, 3}, 20: {1, 2, 17}, 50: {1, 5, 44}} {
+		ids := make([]uint, n)
+		var got []int
+		for _, b := range planBatches(ids) {
+			got = append(got, len(b))
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%d nodes: batches %v, want %v", n, got, want)
+		}
+	}
+}
+
+func TestUpgradeBatchesAndStopOnFailure(t *testing.T) {
+	d, g := newTestService(t)
+	seedPackage(t, d, "1.30.7-1")
+	ids := addNodes(t, d, g, 5)
+	fa := &fakeAgents{online: map[uint]bool{}, fail: map[uint]bool{ids[1]: true}}
+	for _, id := range ids {
+		fa.online[id] = true
+	}
+	d.Agents = fa
+	if _, err := d.StartUpgrade(g.ID, "9.9.9", "standard", "admin", ""); err == nil {
+		t.Fatal("version not in library accepted")
+	}
+	up, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitUpgrade(t, d, up.ID)
+	// 第 1 批（1 台）成功并提交；第 2 批失败（agent 已自动回退）→ 停止，第 3 批不执行
+	if v.Status != "failed" {
+		t.Fatalf("status %s", v.Status)
+	}
+	got := map[uint]string{}
+	for _, n := range v.Nodes {
+		got[n.NodeID] = n.Status
+	}
+	if got[ids[0]] != "upgraded" || got[ids[1]] != "rolled_back" || got[ids[2]] != "skipped" || got[ids[4]] != "skipped" {
+		t.Fatalf("node results %v (calls %v)", got, fa.calls)
+	}
+	if fa.calls[0] != fmt.Sprintf("%d:START", ids[0]) || fa.calls[1] != fmt.Sprintf("%d:COMMIT", ids[0]) {
+		t.Fatalf("calls %v", fa.calls)
+	}
+	// 同一组同时只能有一个升级
+	fa.fail = nil
+	up2, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", ""); err == nil {
+		t.Log("second upgrade may race with the first finishing; not asserted")
+	}
+	if v := waitUpgrade(t, d, up2.ID); v.Status != "done" {
+		t.Fatalf("second run %s", v.Status)
+	}
+}

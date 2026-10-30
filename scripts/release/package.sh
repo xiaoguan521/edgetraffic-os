@@ -20,6 +20,10 @@
 #       厂商授权后台（不交付客户，部署在厂商内网）：syapp-license-server（内嵌 Web）+ systemd 单元 + 运维手册
 #       只持有签名公钥；产物 edgetraffic-os-license-portal-<ver>-linux-<goarch>.tar.gz
 #
+#   scripts/release/package.sh syapp-upgrade <goarch> <syapp tarball>
+#       数据面升级包（规格书 12.6）：sbin/syapp + VERSION，产物 syapp-<ver>-<goarch>.tar.gz（未签名；
+#       正式发布前在离线签名机上 syapp-license-signer sign-package 生成 .sig，与包一起导入控制台版本库）
+#
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
@@ -83,6 +87,20 @@ case "${1:-}" in
       tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
       echo "$OUT/$name.tar.gz"
     fi
+    ;;
+  syapp-upgrade)
+    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    x="$WORK/x"; mkdir -p "$x" "$WORK/up/sbin"
+    tar -C "$x" -xzf "$syapp_tgz"
+    bin=$(find "$x" -type f -path '*/sbin/syapp' | head -1)
+    [[ -n "$bin" ]] || { echo "no sbin/syapp in $syapp_tgz" >&2; exit 2; }
+    install -m 0755 "$bin" "$WORK/up/sbin/syapp"
+    up_ver="${SYAPP_UPGRADE_VERSION:-$VERSION}"
+    [[ "$up_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "upgrade version $up_ver is not N.N.N[-N]" >&2; exit 2; }
+    echo "$up_ver" > "$WORK/up/VERSION"
+    cp docs/NOTICE "$WORK/up/NOTICE"
+    tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/syapp-$up_ver-$arch.tar.gz" sbin/syapp VERSION NOTICE
+    echo "$OUT/syapp-$up_ver-$arch.tar.gz"
     ;;
   license-portal)
     arch=${2:?goarch}

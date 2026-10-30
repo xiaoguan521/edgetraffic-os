@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
 
@@ -54,6 +55,8 @@ func main() {
 		check(cmdRequest(os.Args[2:], os.Stdout))
 	case "crl-request":
 		check(cmdCRLRequest(os.Args[2:], os.Stdout, license.BuiltinKeyRing()))
+	case "sign-package":
+		signPackage(os.Args[2:])
 	case "serve":
 		check(cmdServe(os.Args[2:]))
 	case "import":
@@ -148,6 +151,29 @@ func issue(args []string) {
 	fmt.Printf("issued %s for %s (%s, %d nodes, expires %s) -> %s\n", p.LicenseID, *customer, *edition, *nodes, p.ExpiresAt.Format("2006-01-02"), *out)
 }
 
+// signPackage 用演示 / CI 密钥为升级包签名（正式升级包由离线签名机上的 syapp-license-signer sign-package 签名）。
+func signPackage(args []string) {
+	fs := flag.NewFlagSet("sign-package", flag.ExitOnError)
+	keyPath := fs.String("key", "", "演示 / CI 升级包签名私钥（PEM）")
+	kid := fs.String("kid", "", "密钥编号（etos-demo-pkg-* / etos-ci-pkg-*）")
+	in := fs.String("in", "", "升级包 tar.gz")
+	name := fs.String("name", "syapp", "syapp | syapp-agent")
+	ver := fs.String("version", "", "版本号")
+	arch := fs.String("arch", "", "amd64 | arm64")
+	variant := fs.String("variant", "standard", "standard | gmssl | lua")
+	_ = fs.Parse(args)
+	if !strings.HasPrefix(*kid, "etos-demo-pkg-") && !strings.HasPrefix(*kid, "etos-ci-pkg-") {
+		die("syapp-license-server sign-package 只能用演示 / CI 升级包密钥；正式升级包请在离线签名机上用 syapp-license-signer sign-package 签名")
+	}
+	data, err := os.ReadFile(*in)
+	check(err)
+	sig, err := pkgsig.Sign(loadKey(*keyPath), *kid, *name, *ver, *arch, *variant, data)
+	check(err)
+	b, _ := json.MarshalIndent(sig, "", "  ")
+	check(os.WriteFile(*in+".sig", append(b, '\n'), 0o644))
+	fmt.Printf("signed %s %s %s %s (sha256 %s) -> %s.sig\n", *name, *ver, *arch, *variant, sig.SHA256, *in)
+}
+
 func inspect(args []string) {
 	if len(args) != 1 {
 		die("usage: inspect <file.lic>")
@@ -197,6 +223,6 @@ func die(msg string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: syapp-license-server serve | request | crl-request | import | keygen | issue | inspect | version")
+	fmt.Fprintln(os.Stderr, "usage: syapp-license-server serve | request | crl-request | import | keygen | issue | sign-package | inspect | version")
 	os.Exit(2)
 }

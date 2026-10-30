@@ -4,6 +4,7 @@ package deploy
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,9 @@ type Service struct {
 	Audit     *audit.Logger
 	Log       *slog.Logger
 	MimeTypes []byte
+
+	Agents      Agents                       // 数据面升级用；为空时使用 GW
+	PackageKeys map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
 
 	mu    sync.Mutex
 	locks map[uint]*sync.Mutex

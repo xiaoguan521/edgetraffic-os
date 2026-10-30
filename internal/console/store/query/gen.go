@@ -17,61 +17,65 @@ import (
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
-		db:             db,
-		APIToken:       newAPIToken(db, opts...),
-		AcmeChallenge:  newAcmeChallenge(db, opts...),
-		AcmeOrder:      newAcmeOrder(db, opts...),
-		AlertChannel:   newAlertChannel(db, opts...),
-		AlertEvent:     newAlertEvent(db, opts...),
-		AlertRule:      newAlertRule(db, opts...),
-		AuditLog:       newAuditLog(db, opts...),
-		Certificate:    newCertificate(db, opts...),
-		ConfigImport:   newConfigImport(db, opts...),
-		Deployment:     newDeployment(db, opts...),
-		DeploymentNode: newDeploymentNode(db, opts...),
-		EnrollToken:    newEnrollToken(db, opts...),
-		LicenseStore:   newLicenseStore(db, opts...),
-		MetricMinute:   newMetricMinute(db, opts...),
-		Node:           newNode(db, opts...),
-		NodeDrift:      newNodeDrift(db, opts...),
-		NodeGroup:      newNodeGroup(db, opts...),
-		ReleaseRequest: newReleaseRequest(db, opts...),
-		Revision:       newRevision(db, opts...),
-		Site:           newSite(db, opts...),
-		Snippet:        newSnippet(db, opts...),
-		SystemKV:       newSystemKV(db, opts...),
-		Upstream:       newUpstream(db, opts...),
-		User:           newUser(db, opts...),
+		db:               db,
+		APIToken:         newAPIToken(db, opts...),
+		AcmeChallenge:    newAcmeChallenge(db, opts...),
+		AcmeOrder:        newAcmeOrder(db, opts...),
+		AlertChannel:     newAlertChannel(db, opts...),
+		AlertEvent:       newAlertEvent(db, opts...),
+		AlertRule:        newAlertRule(db, opts...),
+		AuditLog:         newAuditLog(db, opts...),
+		Certificate:      newCertificate(db, opts...),
+		ConfigImport:     newConfigImport(db, opts...),
+		DataplanePackage: newDataplanePackage(db, opts...),
+		DataplaneUpgrade: newDataplaneUpgrade(db, opts...),
+		Deployment:       newDeployment(db, opts...),
+		DeploymentNode:   newDeploymentNode(db, opts...),
+		EnrollToken:      newEnrollToken(db, opts...),
+		LicenseStore:     newLicenseStore(db, opts...),
+		MetricMinute:     newMetricMinute(db, opts...),
+		Node:             newNode(db, opts...),
+		NodeDrift:        newNodeDrift(db, opts...),
+		NodeGroup:        newNodeGroup(db, opts...),
+		ReleaseRequest:   newReleaseRequest(db, opts...),
+		Revision:         newRevision(db, opts...),
+		Site:             newSite(db, opts...),
+		Snippet:          newSnippet(db, opts...),
+		SystemKV:         newSystemKV(db, opts...),
+		Upstream:         newUpstream(db, opts...),
+		User:             newUser(db, opts...),
 	}
 }
 
 type Query struct {
 	db *gorm.DB
 
-	APIToken       aPIToken
-	AcmeChallenge  acmeChallenge
-	AcmeOrder      acmeOrder
-	AlertChannel   alertChannel
-	AlertEvent     alertEvent
-	AlertRule      alertRule
-	AuditLog       auditLog
-	Certificate    certificate
-	ConfigImport   configImport
-	Deployment     deployment
-	DeploymentNode deploymentNode
-	EnrollToken    enrollToken
-	LicenseStore   licenseStore
-	MetricMinute   metricMinute
-	Node           node
-	NodeDrift      nodeDrift
-	NodeGroup      nodeGroup
-	ReleaseRequest releaseRequest
-	Revision       revision
-	Site           site
-	Snippet        snippet
-	SystemKV       systemKV
-	Upstream       upstream
-	User           user
+	APIToken         aPIToken
+	AcmeChallenge    acmeChallenge
+	AcmeOrder        acmeOrder
+	AlertChannel     alertChannel
+	AlertEvent       alertEvent
+	AlertRule        alertRule
+	AuditLog         auditLog
+	Certificate      certificate
+	ConfigImport     configImport
+	DataplanePackage dataplanePackage
+	DataplaneUpgrade dataplaneUpgrade
+	Deployment       deployment
+	DeploymentNode   deploymentNode
+	EnrollToken      enrollToken
+	LicenseStore     licenseStore
+	MetricMinute     metricMinute
+	Node             node
+	NodeDrift        nodeDrift
+	NodeGroup        nodeGroup
+	ReleaseRequest   releaseRequest
+	Revision         revision
+	Site             site
+	Snippet          snippet
+	SystemKV         systemKV
+	Upstream         upstream
+	User             user
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -80,31 +84,33 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
-		db:             db,
-		APIToken:       q.APIToken.clone(db),
-		AcmeChallenge:  q.AcmeChallenge.clone(db),
-		AcmeOrder:      q.AcmeOrder.clone(db),
-		AlertChannel:   q.AlertChannel.clone(db),
-		AlertEvent:     q.AlertEvent.clone(db),
-		AlertRule:      q.AlertRule.clone(db),
-		AuditLog:       q.AuditLog.clone(db),
-		Certificate:    q.Certificate.clone(db),
-		ConfigImport:   q.ConfigImport.clone(db),
-		Deployment:     q.Deployment.clone(db),
-		DeploymentNode: q.DeploymentNode.clone(db),
-		EnrollToken:    q.EnrollToken.clone(db),
-		LicenseStore:   q.LicenseStore.clone(db),
-		MetricMinute:   q.MetricMinute.clone(db),
-		Node:           q.Node.clone(db),
-		NodeDrift:      q.NodeDrift.clone(db),
-		NodeGroup:      q.NodeGroup.clone(db),
-		ReleaseRequest: q.ReleaseRequest.clone(db),
-		Revision:       q.Revision.clone(db),
-		Site:           q.Site.clone(db),
-		Snippet:        q.Snippet.clone(db),
-		SystemKV:       q.SystemKV.clone(db),
-		Upstream:       q.Upstream.clone(db),
-		User:           q.User.clone(db),
+		db:               db,
+		APIToken:         q.APIToken.clone(db),
+		AcmeChallenge:    q.AcmeChallenge.clone(db),
+		AcmeOrder:        q.AcmeOrder.clone(db),
+		AlertChannel:     q.AlertChannel.clone(db),
+		AlertEvent:       q.AlertEvent.clone(db),
+		AlertRule:        q.AlertRule.clone(db),
+		AuditLog:         q.AuditLog.clone(db),
+		Certificate:      q.Certificate.clone(db),
+		ConfigImport:     q.ConfigImport.clone(db),
+		DataplanePackage: q.DataplanePackage.clone(db),
+		DataplaneUpgrade: q.DataplaneUpgrade.clone(db),
+		Deployment:       q.Deployment.clone(db),
+		DeploymentNode:   q.DeploymentNode.clone(db),
+		EnrollToken:      q.EnrollToken.clone(db),
+		LicenseStore:     q.LicenseStore.clone(db),
+		MetricMinute:     q.MetricMinute.clone(db),
+		Node:             q.Node.clone(db),
+		NodeDrift:        q.NodeDrift.clone(db),
+		NodeGroup:        q.NodeGroup.clone(db),
+		ReleaseRequest:   q.ReleaseRequest.clone(db),
+		Revision:         q.Revision.clone(db),
+		Site:             q.Site.clone(db),
+		Snippet:          q.Snippet.clone(db),
+		SystemKV:         q.SystemKV.clone(db),
+		Upstream:         q.Upstream.clone(db),
+		User:             q.User.clone(db),
 	}
 }
 
@@ -118,87 +124,93 @@ func (q *Query) WriteDB() *Query {
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
-		db:             db,
-		APIToken:       q.APIToken.replaceDB(db),
-		AcmeChallenge:  q.AcmeChallenge.replaceDB(db),
-		AcmeOrder:      q.AcmeOrder.replaceDB(db),
-		AlertChannel:   q.AlertChannel.replaceDB(db),
-		AlertEvent:     q.AlertEvent.replaceDB(db),
-		AlertRule:      q.AlertRule.replaceDB(db),
-		AuditLog:       q.AuditLog.replaceDB(db),
-		Certificate:    q.Certificate.replaceDB(db),
-		ConfigImport:   q.ConfigImport.replaceDB(db),
-		Deployment:     q.Deployment.replaceDB(db),
-		DeploymentNode: q.DeploymentNode.replaceDB(db),
-		EnrollToken:    q.EnrollToken.replaceDB(db),
-		LicenseStore:   q.LicenseStore.replaceDB(db),
-		MetricMinute:   q.MetricMinute.replaceDB(db),
-		Node:           q.Node.replaceDB(db),
-		NodeDrift:      q.NodeDrift.replaceDB(db),
-		NodeGroup:      q.NodeGroup.replaceDB(db),
-		ReleaseRequest: q.ReleaseRequest.replaceDB(db),
-		Revision:       q.Revision.replaceDB(db),
-		Site:           q.Site.replaceDB(db),
-		Snippet:        q.Snippet.replaceDB(db),
-		SystemKV:       q.SystemKV.replaceDB(db),
-		Upstream:       q.Upstream.replaceDB(db),
-		User:           q.User.replaceDB(db),
+		db:               db,
+		APIToken:         q.APIToken.replaceDB(db),
+		AcmeChallenge:    q.AcmeChallenge.replaceDB(db),
+		AcmeOrder:        q.AcmeOrder.replaceDB(db),
+		AlertChannel:     q.AlertChannel.replaceDB(db),
+		AlertEvent:       q.AlertEvent.replaceDB(db),
+		AlertRule:        q.AlertRule.replaceDB(db),
+		AuditLog:         q.AuditLog.replaceDB(db),
+		Certificate:      q.Certificate.replaceDB(db),
+		ConfigImport:     q.ConfigImport.replaceDB(db),
+		DataplanePackage: q.DataplanePackage.replaceDB(db),
+		DataplaneUpgrade: q.DataplaneUpgrade.replaceDB(db),
+		Deployment:       q.Deployment.replaceDB(db),
+		DeploymentNode:   q.DeploymentNode.replaceDB(db),
+		EnrollToken:      q.EnrollToken.replaceDB(db),
+		LicenseStore:     q.LicenseStore.replaceDB(db),
+		MetricMinute:     q.MetricMinute.replaceDB(db),
+		Node:             q.Node.replaceDB(db),
+		NodeDrift:        q.NodeDrift.replaceDB(db),
+		NodeGroup:        q.NodeGroup.replaceDB(db),
+		ReleaseRequest:   q.ReleaseRequest.replaceDB(db),
+		Revision:         q.Revision.replaceDB(db),
+		Site:             q.Site.replaceDB(db),
+		Snippet:          q.Snippet.replaceDB(db),
+		SystemKV:         q.SystemKV.replaceDB(db),
+		Upstream:         q.Upstream.replaceDB(db),
+		User:             q.User.replaceDB(db),
 	}
 }
 
 type queryCtx struct {
-	APIToken       IAPITokenDo
-	AcmeChallenge  IAcmeChallengeDo
-	AcmeOrder      IAcmeOrderDo
-	AlertChannel   IAlertChannelDo
-	AlertEvent     IAlertEventDo
-	AlertRule      IAlertRuleDo
-	AuditLog       IAuditLogDo
-	Certificate    ICertificateDo
-	ConfigImport   IConfigImportDo
-	Deployment     IDeploymentDo
-	DeploymentNode IDeploymentNodeDo
-	EnrollToken    IEnrollTokenDo
-	LicenseStore   ILicenseStoreDo
-	MetricMinute   IMetricMinuteDo
-	Node           INodeDo
-	NodeDrift      INodeDriftDo
-	NodeGroup      INodeGroupDo
-	ReleaseRequest IReleaseRequestDo
-	Revision       IRevisionDo
-	Site           ISiteDo
-	Snippet        ISnippetDo
-	SystemKV       ISystemKVDo
-	Upstream       IUpstreamDo
-	User           IUserDo
+	APIToken         IAPITokenDo
+	AcmeChallenge    IAcmeChallengeDo
+	AcmeOrder        IAcmeOrderDo
+	AlertChannel     IAlertChannelDo
+	AlertEvent       IAlertEventDo
+	AlertRule        IAlertRuleDo
+	AuditLog         IAuditLogDo
+	Certificate      ICertificateDo
+	ConfigImport     IConfigImportDo
+	DataplanePackage IDataplanePackageDo
+	DataplaneUpgrade IDataplaneUpgradeDo
+	Deployment       IDeploymentDo
+	DeploymentNode   IDeploymentNodeDo
+	EnrollToken      IEnrollTokenDo
+	LicenseStore     ILicenseStoreDo
+	MetricMinute     IMetricMinuteDo
+	Node             INodeDo
+	NodeDrift        INodeDriftDo
+	NodeGroup        INodeGroupDo
+	ReleaseRequest   IReleaseRequestDo
+	Revision         IRevisionDo
+	Site             ISiteDo
+	Snippet          ISnippetDo
+	SystemKV         ISystemKVDo
+	Upstream         IUpstreamDo
+	User             IUserDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		APIToken:       q.APIToken.WithContext(ctx),
-		AcmeChallenge:  q.AcmeChallenge.WithContext(ctx),
-		AcmeOrder:      q.AcmeOrder.WithContext(ctx),
-		AlertChannel:   q.AlertChannel.WithContext(ctx),
-		AlertEvent:     q.AlertEvent.WithContext(ctx),
-		AlertRule:      q.AlertRule.WithContext(ctx),
-		AuditLog:       q.AuditLog.WithContext(ctx),
-		Certificate:    q.Certificate.WithContext(ctx),
-		ConfigImport:   q.ConfigImport.WithContext(ctx),
-		Deployment:     q.Deployment.WithContext(ctx),
-		DeploymentNode: q.DeploymentNode.WithContext(ctx),
-		EnrollToken:    q.EnrollToken.WithContext(ctx),
-		LicenseStore:   q.LicenseStore.WithContext(ctx),
-		MetricMinute:   q.MetricMinute.WithContext(ctx),
-		Node:           q.Node.WithContext(ctx),
-		NodeDrift:      q.NodeDrift.WithContext(ctx),
-		NodeGroup:      q.NodeGroup.WithContext(ctx),
-		ReleaseRequest: q.ReleaseRequest.WithContext(ctx),
-		Revision:       q.Revision.WithContext(ctx),
-		Site:           q.Site.WithContext(ctx),
-		Snippet:        q.Snippet.WithContext(ctx),
-		SystemKV:       q.SystemKV.WithContext(ctx),
-		Upstream:       q.Upstream.WithContext(ctx),
-		User:           q.User.WithContext(ctx),
+		APIToken:         q.APIToken.WithContext(ctx),
+		AcmeChallenge:    q.AcmeChallenge.WithContext(ctx),
+		AcmeOrder:        q.AcmeOrder.WithContext(ctx),
+		AlertChannel:     q.AlertChannel.WithContext(ctx),
+		AlertEvent:       q.AlertEvent.WithContext(ctx),
+		AlertRule:        q.AlertRule.WithContext(ctx),
+		AuditLog:         q.AuditLog.WithContext(ctx),
+		Certificate:      q.Certificate.WithContext(ctx),
+		ConfigImport:     q.ConfigImport.WithContext(ctx),
+		DataplanePackage: q.DataplanePackage.WithContext(ctx),
+		DataplaneUpgrade: q.DataplaneUpgrade.WithContext(ctx),
+		Deployment:       q.Deployment.WithContext(ctx),
+		DeploymentNode:   q.DeploymentNode.WithContext(ctx),
+		EnrollToken:      q.EnrollToken.WithContext(ctx),
+		LicenseStore:     q.LicenseStore.WithContext(ctx),
+		MetricMinute:     q.MetricMinute.WithContext(ctx),
+		Node:             q.Node.WithContext(ctx),
+		NodeDrift:        q.NodeDrift.WithContext(ctx),
+		NodeGroup:        q.NodeGroup.WithContext(ctx),
+		ReleaseRequest:   q.ReleaseRequest.WithContext(ctx),
+		Revision:         q.Revision.WithContext(ctx),
+		Site:             q.Site.WithContext(ctx),
+		Snippet:          q.Snippet.WithContext(ctx),
+		SystemKV:         q.SystemKV.WithContext(ctx),
+		Upstream:         q.Upstream.WithContext(ctx),
+		User:             q.User.WithContext(ctx),
 	}
 }
 

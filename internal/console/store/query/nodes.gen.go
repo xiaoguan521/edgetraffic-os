@@ -35,6 +35,7 @@ func newNode(db *gorm.DB, opts ...gen.DOOption) node {
 	_node.CertSerial = field.NewString(tableName, "cert_serial")
 	_node.Status = field.NewString(tableName, "status")
 	_node.AgentVersion = field.NewString(tableName, "agent_version")
+	_node.Arch = field.NewString(tableName, "arch")
 	_node.SyappVersion = field.NewString(tableName, "syapp_version")
 	_node.SyappSHA256 = field.NewString(tableName, "syapp_sha256")
 	_node.AppliedRevision = field.NewString(tableName, "applied_revision")
@@ -64,6 +65,7 @@ type node struct {
 	CertSerial      field.String
 	Status          field.String
 	AgentVersion    field.String
+	Arch            field.String
 	SyappVersion    field.String
 	SyappSHA256     field.String
 	AppliedRevision field.String
@@ -99,6 +101,7 @@ func (n *node) updateTableName(table string) *node {
 	n.CertSerial = field.NewString(table, "cert_serial")
 	n.Status = field.NewString(table, "status")
 	n.AgentVersion = field.NewString(table, "agent_version")
+	n.Arch = field.NewString(table, "arch")
 	n.SyappVersion = field.NewString(table, "syapp_version")
 	n.SyappSHA256 = field.NewString(table, "syapp_sha256")
 	n.AppliedRevision = field.NewString(table, "applied_revision")
@@ -134,7 +137,7 @@ func (n *node) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (n *node) fillFieldMap() {
-	n.fieldMap = make(map[string]field.Expr, 19)
+	n.fieldMap = make(map[string]field.Expr, 20)
 	n.fieldMap["id"] = n.ID
 	n.fieldMap["group_id"] = n.GroupID
 	n.fieldMap["name"] = n.Name
@@ -143,6 +146,7 @@ func (n *node) fillFieldMap() {
 	n.fieldMap["cert_serial"] = n.CertSerial
 	n.fieldMap["status"] = n.Status
 	n.fieldMap["agent_version"] = n.AgentVersion
+	n.fieldMap["arch"] = n.Arch
 	n.fieldMap["syapp_version"] = n.SyappVersion
 	n.fieldMap["syapp_sha256"] = n.SyappSHA256
 	n.fieldMap["applied_revision"] = n.AppliedRevision

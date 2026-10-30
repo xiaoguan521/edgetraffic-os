@@ -56,8 +56,10 @@ jobs:
           go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console
-          export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral
+          /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
+          pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub -X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syapp-console
+          export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral PKG_KEY=/tmp/keys/etos-ci-pkg-ephemeral.key
           scripts/ci/console-smoke.sh /tmp/console /tmp/lic
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE smoke'
           scripts/ci/console-smoke.sh /tmp/console /tmp/lic "postgres://postgres:pg@127.0.0.1:5432/smoke?sslmode=disable"

@@ -43,6 +43,7 @@ type Node struct {
 	CertSerial      string     `json:"-"`
 	Status          string     `gorm:"size:16" json:"status"` // online | offline | revoked
 	AgentVersion    string     `json:"agent_version"`
+	Arch            string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
 	SyappVersion    string     `json:"syapp_version"`
 	SyappSHA256     string     `json:"syapp_sha256"`
 	AppliedRevision string     `gorm:"size:16" json:"applied_revision"`
@@ -239,6 +240,36 @@ type NodeDrift struct {
 	ReportedAt time.Time `json:"reported_at"`
 }
 
+// DataplanePackage 是版本库中的一个厂商签名升级包（规格书 12.6）。导入时验签，包内容存库。
+type DataplanePackage struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Name       string    `gorm:"uniqueIndex:idx_pkg;size:32" json:"name"` // syapp | syapp-agent
+	Version    string    `gorm:"uniqueIndex:idx_pkg;size:32" json:"version"`
+	Arch       string    `gorm:"uniqueIndex:idx_pkg;size:16" json:"arch"`
+	Variant    string    `gorm:"uniqueIndex:idx_pkg;size:16" json:"variant"`
+	SHA256     string    `gorm:"column:sha256;size:64" json:"sha256"`
+	Size       int64     `json:"size"`
+	KID        string    `gorm:"column:kid;size:40" json:"kid"`
+	Sig        string    `json:"-"`
+	Data       []byte    `json:"-"`
+	UploadedBy string    `gorm:"size:64" json:"uploaded_by"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// DataplaneUpgrade 是一次节点组的分批热升级（先 1 台、再 10%、再全量，任一节点失败即停止）。
+type DataplaneUpgrade struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	GroupID    uint       `gorm:"index" json:"group_id"`
+	Version    string     `gorm:"size:32" json:"version"`
+	Variant    string     `gorm:"size:16" json:"variant"`
+	Status     string     `gorm:"size:16" json:"status"` // running | done | failed
+	Nodes      string     `json:"-"`                     // JSON：逐节点批次与结果
+	Note       string     `json:"note"`
+	CreatedBy  string     `gorm:"size:64" json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -338,5 +369,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }
