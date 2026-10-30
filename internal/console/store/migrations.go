@@ -23,6 +23,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300003_config_imports", Migrate: migrateConfigImports},
 		{ID: "202610300004_api_tokens", Migrate: migrateAPITokens},
 		{ID: "202610300005_alerts", Migrate: migrateAlerts},
+		{ID: "202610300006_node_drifts", Migrate: migrateNodeDrifts},
 	}
 }
 
@@ -377,4 +378,17 @@ func migrateAlerts(tx *gorm.DB) error {
 		Notify     string
 	}
 	return tx.AutoMigrate(&AlertChannel{}, &AlertRule{}, &AlertEvent{})
+}
+
+// ---- 202610300006_node_drifts：漂移差异（P7）----
+
+func migrateNodeDrifts(tx *gorm.DB) error {
+	type NodeDrift struct {
+		NodeID     uint   `gorm:"primaryKey"`
+		RevisionID string `gorm:"size:16"`
+		TreeHash   string `gorm:"size:80"`
+		Files      string
+		ReportedAt time.Time
+	}
+	return tx.AutoMigrate(&NodeDrift{})
 }

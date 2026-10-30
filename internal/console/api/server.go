@@ -153,6 +153,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/nodes", s.listNodes)
 	a.POST("/nodes/:id/revoke", role(store.RoleAdmin), s.revokeNode)
 	a.POST("/nodes/:id/restore", role(store.RoleReleaser), s.restoreNode) // 漂移恢复：与回滚一样在过期状态下可用
+	a.GET("/nodes/:id/drift", role(store.RoleOperator), s.nodeDrift)
+	a.POST("/nodes/:id/drift/adopt", role(store.RoleOperator), s.writable, s.adoptDrift)
 
 	a.GET("/sites", s.listSites)
 	a.GET("/sites/:id", s.getSite)
@@ -260,6 +262,8 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "STALE_REQUEST", "提交后线上版本已变化（例如有人回滚），该申请已过期，请重新提交")
 	case errors.Is(err, deploy.ErrSelfApproval):
 		fail(c, http.StatusForbidden, "SELF_APPROVAL", "提交人不能审批自己的发布申请")
+	case errors.Is(err, deploy.ErrNoDriftReport):
+		fail(c, http.StatusNotFound, "NO_DRIFT_REPORT", err.Error())
 	case errors.Is(err, deploy.ErrNoPendingChange):
 		fail(c, http.StatusConflict, "NO_PENDING_CHANGE", "该片段没有待审批的变更")
 	case errors.Is(err, deploy.ErrForbidden):

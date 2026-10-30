@@ -6,9 +6,9 @@ package deps
 
 import (
 	_ "github.com/gin-gonic/gin"
-	_ "github.com/go-ldap/ldap/v3" // LDAP 登录（P9，MIT）
 	_ "github.com/glebarez/sqlite"
 	_ "github.com/go-gormigrate/gormigrate/v2"
+	_ "github.com/go-ldap/ldap/v3" // LDAP 登录（P9，MIT）
 	_ "github.com/golang-jwt/jwt/v5"
 	_ "github.com/gorilla/websocket"
 	_ "github.com/pquerna/otp/totp"

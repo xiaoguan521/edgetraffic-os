@@ -11,9 +11,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,10 +290,15 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.CPUPercent.Value(hb.CpuPercent),
 			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
 			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now))
+		if !drifted {
+			_, _ = q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(nodeID)).Delete()
+		}
 		for _, sm := range hb.SiteMinutes {
 			_ = q.MetricMinute.WithContext(ctx).Create(&store.MetricMinute{NodeID: nodeID, Site: sm.Site, Minute: sm.MinuteUnix, Requests: sm.Requests,
 				S2xx: sm.Status_2Xx, S3xx: sm.Status_3Xx, S4xx: sm.Status_4Xx, S5xx: sm.Status_5Xx, P50ms: sm.P50Ms, P95ms: sm.P95Ms, Bytes: sm.BytesSent})
 		}
+	case *agentv1.AgentMessage_Drift:
+		s.saveDrift(ctx, nodeID, b.Drift)
 	case *agentv1.AgentMessage_Result:
 		sess.mu.Lock()
 		ch := sess.waiters[b.Result.CmdId]
@@ -395,5 +402,66 @@ func (s *Server) Disconnect(nodeID uint) {
 	if sess := s.sessions[nodeID]; sess != nil {
 		close(sess.done)
 		delete(s.sessions, nodeID)
+	}
+}
+
+// DriftFileView 是保存与展示用的漂移文件。
+type DriftFileView struct {
+	Path    string `json:"path"`
+	Change  string `json:"change"` // modified | added | removed
+	SHA256  string `json:"sha256"`
+	Size    int64  `json:"size"`
+	Content string `json:"content,omitempty"`
+	Omitted bool   `json:"omitted"`
+}
+
+var driftPathRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
+
+// saveDrift 保存 agent 上报的漂移差异；只接受版本目录内的相对路径，私钥文件内容一律丢弃。
+func (s *Server) saveDrift(ctx context.Context, nodeID uint, r *agentv1.DriftReport) {
+	if r == nil || len(r.Files) == 0 || len(r.Files) > 200 {
+		return
+	}
+	var files []DriftFileView
+	total := 0
+	for _, f := range r.Files {
+		if !driftPathRe.MatchString(f.Path) || strings.Contains(f.Path, "..") {
+			continue
+		}
+		v := DriftFileView{Path: f.Path, SHA256: f.Sha256, Size: f.Size, Omitted: f.ContentOmitted}
+		switch f.Change {
+		case agentv1.DriftFile_ADDED:
+			v.Change = "added"
+		case agentv1.DriftFile_REMOVED:
+			v.Change = "removed"
+		default:
+			v.Change = "modified"
+		}
+		if !strings.HasSuffix(f.Path, ".key") && len(f.Content) <= 256<<10 && total+len(f.Content) <= 2<<20 {
+			v.Content = string(f.Content)
+			total += len(f.Content)
+		} else if len(f.Content) > 0 {
+			v.Omitted = true
+		}
+		files = append(files, v)
+	}
+	fj, _ := json.Marshal(files)
+	q := s.q()
+	prev, _ := q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(nodeID)).First()
+	row := &store.NodeDrift{NodeID: nodeID, RevisionID: r.RevisionId, TreeHash: r.TreeHash, Files: string(fj), ReportedAt: time.Now()}
+	if err := q.NodeDrift.WithContext(ctx).Save(row); err != nil {
+		return
+	}
+	if prev == nil || prev.TreeHash != r.TreeHash {
+		var paths []string
+		for _, f := range files {
+			paths = append(paths, f.Change+" "+f.Path)
+		}
+		name := fmt.Sprint(nodeID)
+		if n, err := q.Node.WithContext(ctx).Where(q.Node.ID.Eq(nodeID)).First(); err == nil {
+			name = n.Name
+		}
+		_ = s.Audit.Write(audit.Entry{Username: "system", Action: "node.drift_detected", ObjectType: "node", ObjectID: name,
+			Detail: map[string]any{"revision": r.RevisionId, "tree_hash": r.TreeHash, "files": paths}})
 	}
 }

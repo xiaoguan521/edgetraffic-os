@@ -230,6 +230,15 @@ type AlertEvent struct {
 	Notify     string     `json:"notify"` // 最近一次通知结果
 }
 
+// NodeDrift 是节点最近一次上报的漂移差异（规格书 12.7 路径 B）。节点恢复一致后删除。
+type NodeDrift struct {
+	NodeID     uint      `gorm:"primaryKey" json:"node_id"`
+	RevisionID string    `gorm:"size:16" json:"revision_id"`
+	TreeHash   string    `gorm:"size:80" json:"tree_hash"`
+	Files      string    `json:"-"` // JSON：路径、变化、哈希、大小、内容（私钥与超限文件无内容）
+	ReportedAt time.Time `json:"reported_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -329,5 +338,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

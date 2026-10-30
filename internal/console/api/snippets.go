@@ -126,3 +126,31 @@ func (s *Server) withdrawSnippet(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// nodeDrift 返回节点漂移的逐文件差异（规格书 12.7 路径 B）。
+func (s *Server) nodeDrift(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	v, err := s.Deploy.DriftView(id)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// adoptDrift 把节点上的手工改动转成待审批的片段。
+func (s *Server) adoptDrift(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	r, err := s.Deploy.AdoptDrift(id, c.GetString("user"), c.ClientIP())
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}

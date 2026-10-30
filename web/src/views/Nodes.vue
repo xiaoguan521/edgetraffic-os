@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
+import DiffView from '../components/DiffView.vue'
 
 const session = useSession()
 const groups = ref<any[]>([])
@@ -68,6 +69,28 @@ async function restore(n: any) {
   }
 }
 
+// 漂移详情与采纳（规格书 12.7 路径 B）
+const drift = ref<any>(null)
+const driftNode = ref<any>(null)
+const adoptRes = ref<any>(null)
+async function showDrift(n: any) {
+  driftNode.value = n
+  adoptRes.value = null
+  try {
+    drift.value = await api.get(`/nodes/${n.id}/drift`)
+  } catch (e) {
+    drift.value = { files: [], error: errMsg(e) }
+  }
+}
+async function adopt() {
+  try {
+    adoptRes.value = await api.post(`/nodes/${driftNode.value.id}/drift/adopt`, {})
+    message.success(`已提交 ${adoptRes.value.snippets.length} 个片段，等待另一人审批后随下一次发布生效`, 5)
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
 async function revoke(n: any) {
   await api.post(`/nodes/${n.id}/revoke`)
   message.success(`已吊销 ${n.name}，其证书立即失效。如需重新接入：点“添加节点”，在该机器上执行新生成的命令`, 6)
@@ -127,6 +150,7 @@ function mb(b: number) {
             <a-badge :status="record.status === 'online' ? 'success' : 'default'" :text="record.status === 'online' ? '在线' : '离线'" />
             <div v-if="record.drifted" class="warn">
               配置被手动改动
+              <a v-if="session.can('operator')" class="restore" @click="showDrift(record)">查看差异</a>
               <a-popconfirm v-if="session.can('releaser')" :title="`把 ${record.name} 恢复为控制台下发的 ${record.applied_revision}？节点上的改动会备份在版本目录旁，不会丢失。`" ok-text="恢复" @confirm="restore(record)">
                 <a class="restore">恢复</a>
               </a-popconfirm>
@@ -181,6 +205,30 @@ function mb(b: number) {
         </a-form-item>
       </a-form>
     </a-modal>
+    <a-drawer :open="!!drift" :width="760" :title="`${driftNode?.name} 的手工改动`" @close="drift = null">
+      <template v-if="drift">
+        <a-alert v-if="drift.error" type="info" show-icon :message="drift.error" />
+        <template v-else>
+          <p class="sub">基于版本 {{ drift.revision_id }}，上报于 {{ drift.reported_at }}。节点只上报受管版本目录内的文件；私钥与超大文件只比较哈希。</p>
+          <div v-for="f in drift.files" :key="f.path" class="dfile">
+            <div><a-tag>{{ { modified: '修改', added: '新增', removed: '删除' }[f.change as string] }}</a-tag><span class="code">{{ f.path }}</span></div>
+            <DiffView v-if="f.diff && f.diff.startsWith('---')" :diff="f.diff" />
+            <div v-else class="sub">{{ f.diff }}</div>
+          </div>
+          <a-space style="margin-top: 12px">
+            <a-button v-if="session.can('operator')" type="primary" :disabled="!session.writable" @click="adopt">采纳为片段</a-button>
+            <a-popconfirm v-if="session.can('releaser')" :title="`把 ${driftNode?.name} 恢复为 ${driftNode?.applied_revision}？`" ok-text="恢复" @confirm="restore(driftNode); drift = null">
+              <a-button>恢复为控制台版本</a-button>
+            </a-popconfirm>
+          </a-space>
+          <p class="sub" style="margin-top: 8px">采纳：站点配置中新增的白名单内指令转为自定义片段（作者记为“节点手工修改 + 采纳人”），需另一人批准并发布；其余改动只能恢复。</p>
+          <template v-if="adoptRes">
+            <a-alert type="success" show-icon :message="`已提交 ${adoptRes.snippets.length} 个片段到“自定义片段”等待审批`" style="margin-top: 8px" />
+            <a-alert v-for="(r, i) in adoptRes.rejected" :key="i" type="warning" :message="r" style="margin-top: 6px" />
+          </template>
+        </template>
+      </template>
+    </a-drawer>
   </div>
 </template>
 
@@ -209,6 +257,9 @@ function mb(b: number) {
 .warn {
   font-size: 12px;
   color: #a3332d;
+}
+.dfile {
+  margin-bottom: 12px;
 }
 .restore {
   margin-left: 6px;

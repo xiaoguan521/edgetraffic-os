@@ -69,6 +69,8 @@ type Agent struct {
 	st       state
 	verifier *cmdsig.Verifier
 	licRaw   string
+
+	lastDrift string // 最近一次上报的漂移文件状态指纹（heartbeat goroutine 独占）
 }
 
 // New 创建 agent。
@@ -361,6 +363,11 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 			}
 			if d, err := a.applier.TreeDigest(); err == nil {
 				hb.TreeHash = d
+				if strings.HasPrefix(d, "drifted") {
+					a.reportDrift(send)
+				} else {
+					a.lastDrift = ""
+				}
 			}
 			for _, m := range acc.Collect(now) {
 				hb.SiteMinutes = append(hb.SiteMinutes, &agentv1.SiteMinute{
@@ -372,6 +379,27 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 			send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Heartbeat{Heartbeat: hb}})
 		}
 	}
+}
+
+// reportDrift 在发现漂移时上报受管版本目录内的差异（同一文件状态只上报一次，规格书 12.7）。
+func (a *Agent) reportDrift(send func(*agentv1.AgentMessage)) {
+	r, err := a.applier.Drift()
+	if err != nil || r == nil || r.TreeHash == a.lastDrift {
+		return
+	}
+	a.lastDrift = r.TreeHash
+	rep := &agentv1.DriftReport{RevisionId: r.Revision, TreeHash: r.TreeHash}
+	for _, f := range r.Files {
+		ch := agentv1.DriftFile_MODIFIED
+		switch f.Change {
+		case "added":
+			ch = agentv1.DriftFile_ADDED
+		case "removed":
+			ch = agentv1.DriftFile_REMOVED
+		}
+		rep.Files = append(rep.Files, &agentv1.DriftFile{Path: f.Path, Change: ch, Sha256: f.SHA256, Size: f.Size, Content: f.Content, ContentOmitted: f.Omitted})
+	}
+	send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Drift{Drift: rep}})
 }
 
 func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m *agentv1.ServerMessage, send func(*agentv1.AgentMessage)) {
