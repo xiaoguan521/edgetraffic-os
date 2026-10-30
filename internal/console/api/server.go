@@ -186,6 +186,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/certificates/:id/deploy", role(store.RoleOperator), s.deployCert) // 重新下发证书：同上
 	a.DELETE("/certificates/:id", role(store.RoleOperator), s.writable, s.deleteCert)
 	a.POST("/certificates/acme", role(store.RoleOperator), s.writable, s.acmeIssue)
+	a.POST("/certificates/gm", role(store.RoleOperator), s.writable, s.feature(license.FeatureGMTLS), s.createGMCert)
+	a.PUT("/certificates/:id/gm", role(store.RoleOperator), s.renewGMCert)        // 国密证书续期：任何授权状态下可用
 	a.POST("/certificates/:id/acme-renew", role(store.RoleOperator), s.acmeRenew) // ACME 续期：任何授权状态下可用
 	a.GET("/acme", s.acmeGet)
 	a.PUT("/acme", role(store.RoleAdmin), s.writable, s.acmePut)

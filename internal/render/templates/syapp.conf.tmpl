@@ -73,6 +73,10 @@ http {
         listen       443  ssl  default_server;
         server_name  _;
         ssl_reject_handshake  on;
+{{- if .HasGM }}
+        # 国密握手在 SNI 切换前识别，握手最初落在本 server 上，须同样开启
+        ssl_conf_command  Enable_ntls  on;
+{{- end }}
     }
 
     # 仅本机可访问的状态页，供 agent 采集

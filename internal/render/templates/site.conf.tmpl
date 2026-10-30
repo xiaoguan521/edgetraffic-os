@@ -27,6 +27,17 @@ server {
 
     ssl_certificate      certs/site-{{ $s.Name }}.crt;
     ssl_certificate_key  certs/site-{{ $s.Name }}.key;
+{{- if $s.HTTPS.GM }}
+
+    # 国密 TLCP 双证书（铜锁 NTLS）：国密客户端用 SM2 签名 / 加密证书，其他客户端仍用上面的标准证书。
+    # ssl_conf_command 的文件路径不按配置目录解析，因此写本版本目录的绝对路径。
+    ssl_ciphers       "ECC-SM2-SM4-GCM-SM3:ECC-SM2-SM4-CBC-SM3:ECDHE-SM2-SM4-GCM-SM3:ECDHE-SM2-SM4-CBC-SM3:HIGH:!aNULL:!MD5";
+    ssl_conf_command  Enable_ntls  on;
+    ssl_conf_command  SignCertificate  /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.crt;
+    ssl_conf_command  SignPrivateKey   /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.key;
+    ssl_conf_command  EncCertificate   /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.crt;
+    ssl_conf_command  EncPrivateKey    /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.key;
+{{- end }}
     add_header  Strict-Transport-Security  "max-age=31536000"  always;
 {{- end }}
 

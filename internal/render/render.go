@@ -139,6 +139,11 @@ func Render(in Input) (*Bundle, error) {
 		if s.HTTPS != nil {
 			files["certs/site-"+s.Name+".crt"] = []byte(s.HTTPS.CertPEM)
 			files["certs/site-"+s.Name+".key"] = []byte(s.HTTPS.KeyPEM)
+			if g := s.HTTPS.GM; g != nil {
+				for suffix, pem := range GMFiles(g) {
+					files["certs/site-"+s.Name+suffix] = []byte(pem)
+				}
+			}
 		}
 		for _, r := range routes {
 			if r.Mode == "static" {
@@ -185,6 +190,36 @@ func Repack(rev string, src map[string][]byte) *Bundle {
 	mj, _ := json.MarshalIndent(m, "", "  ")
 	files[ManifestName] = append(mj, '\n')
 	return &Bundle{Revision: rev, Files: files, Manifest: m}
+}
+
+// GMFiles 返回国密双证书在 certs/ 下的文件名后缀与内容（续期替换文件时与渲染保持一致）。
+func GMFiles(g *GMPair) map[string]string {
+	return map[string]string{".sm2-sign.crt": g.SignCertPEM, ".sm2-sign.key": g.SignKeyPEM, ".sm2-enc.crt": g.EncCertPEM, ".sm2-enc.key": g.EncKeyPEM}
+}
+
+// ReleasesDir 是节点上版本目录的父目录。国密 ssl_conf_command 的文件路径不按配置目录解析，只能写本版本目录的绝对路径。
+const ReleasesDir = "/opt/syapp/conf/releases/"
+
+// RebaseRevision 把配置文件中指向 oldRev 版本目录的绝对路径改写为 newRev（证书续期在线上版本基础上重打包时使用）。
+// 只改写 .conf 文件；证书、私钥与静态文件原样保留。
+func RebaseRevision(files map[string][]byte, oldRev, newRev string) map[string][]byte {
+	out := make(map[string][]byte, len(files))
+	from, to := []byte(ReleasesDir+oldRev+"/"), []byte(ReleasesDir+newRev+"/")
+	for n, b := range files {
+		if strings.HasSuffix(n, ".conf") && revisionRe.MatchString(oldRev) && revisionRe.MatchString(newRev) {
+			b = bytes.ReplaceAll(b, from, to)
+		}
+		out[n] = b
+	}
+	return out
+}
+
+func manifestRevision(files map[string][]byte) string {
+	var m Manifest
+	if json.Unmarshal(files[ManifestName], &m) != nil || !revisionRe.MatchString(m.Revision) {
+		return ""
+	}
+	return m.Revision
 }
 
 // AcmeSnippet 是 ACME HTTP-01 挑战片段，被每个监听 80 端口的站点 server 块 include。
@@ -236,6 +271,10 @@ func isCertFile(n string) bool {
 // 其他文件逐字节相同，且至少一个证书文件有变化）。agent 在授权只读时据此放行证书续期，
 // 不依赖控制台的任何标记。
 func CertOnlyChange(cur, next map[string][]byte) bool {
+	// 国密指令里的版本目录绝对路径：线上版本的路径只允许被精确改写为新版本自己的路径
+	if cr, nr := manifestRevision(cur), manifestRevision(next); cr != "" && nr != "" && cr != nr {
+		cur = RebaseRevision(cur, cr, nr)
+	}
 	changed := false
 	count := 0
 	for n, nb := range next {

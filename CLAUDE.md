@@ -14,6 +14,9 @@
   （USR2 发给当前 master 启动新版，WINCH 只发给旧 master `syapp.pid.oldbin` 让旧 worker 退出），均由 wrapper 发出。
 - Lua 发行变体（P10）：lua-nginx-module、ngx_devel_kit、LuaJIT 以动态模块形式放在 /opt/syapp/modules/，
   不改 syapp 核心与改名 patch。只有该目录下的 Lua 模块文件免于“二进制无上游名”检查；进程名、命令、日志、包名仍须为 syapp。
+- 国密发行变体（P8）：`build-syapp.sh -t tongsuo` 只把 OpenSSL 换成铜锁（开启 NTLS），不改 syapp 源码与改名 patch；
+  国密双证书只通过 syapp 已有的 `ssl_conf_command`（Enable_ntls / SignCertificate / EncCertificate …）由 internal/render 生成，
+  路径写本版本目录的绝对路径（见 docs/gm.md）。
 - 不开放客户自定义 Lua 脚本：Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。
 - 永远不得 restart syapp；任何代码路径（含授权失效）不得停止 syapp。
 

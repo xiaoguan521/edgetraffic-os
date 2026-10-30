@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gen/field"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
@@ -466,7 +467,7 @@ type siteView struct {
 // stripPEM：站点只保存证书库编号，证书与私钥原文不落在站点配置里（规格书 9.3）。
 func stripPEM(site *render.Site) {
 	if site.HTTPS != nil {
-		site.HTTPS = &render.TLS{CertID: site.HTTPS.CertID}
+		site.HTTPS = &render.TLS{CertID: site.HTTPS.CertID, GMCertID: site.HTTPS.GMCertID}
 	}
 }
 
@@ -539,6 +540,11 @@ func (s *Server) validateWith(groupID uint, site *render.Site, upstream *render.
 			}
 			if err := s.Certs.ResolveSite(&sc); err != nil {
 				return err
+			}
+			if sc.HTTPS != nil && sc.HTTPS.GM != nil {
+				if err := s.Deploy.CheckGM(groupID); err != nil {
+					return err
+				}
 			}
 			keep = append(keep, sc)
 		}
@@ -679,6 +685,49 @@ func (s *Server) listCerts(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+type gmCertReq struct {
+	Name string `json:"name"`
+	certs.GMInput
+}
+
+// createGMCert 上传国密 TLCP 双证书（需要 gm_tls 授权，由路由中间件检查）。
+func (s *Server) createGMCert(c *gin.Context) {
+	var req gmCertReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	cert, err := s.Certs.CreateGM(strings.TrimSpace(req.Name), req.GMInput, c.GetString("user"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "INVALID_CERTIFICATE", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, cert)
+}
+
+// renewGMCert 续期国密双证书：与标准证书续期一样在任何授权状态下可用（规格书 8.6），续期后自动下发。
+func (s *Server) renewGMCert(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req certs.GMInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	cert, err := s.Certs.RenewGM(id, req, c.GetString("user"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			failErr(c, err)
+			return
+		}
+		fail(c, http.StatusBadRequest, "INVALID_CERTIFICATE", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"certificate": cert, "deployments": s.refreshCert(c, id)})
 }
 
 func (s *Server) createCert(c *gin.Context) {

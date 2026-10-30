@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/sm2cert"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
@@ -202,6 +203,9 @@ func (s *Service) Renew(id uint, certPEM, keyPEM, user string) (*store.Certifica
 	if err != nil {
 		return nil, err
 	}
+	if c.Kind == store.KindSM2 {
+		return nil, errors.New("这是国密双证书，请用国密证书续期（同时上传签名证书与加密证书）")
+	}
 	p, err := parse(certPEM, keyPEM, time.Now())
 	if err != nil {
 		return nil, err
@@ -250,6 +254,9 @@ func (s *Service) Resolve(id uint) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("证书 %d 不存在", id)
 	}
+	if c.Kind == store.KindSM2 {
+		return "", "", fmt.Errorf("证书 %s 是国密双证书，不能作为标准证书使用", c.Name)
+	}
 	key, err := s.Box.Open(c.KeyEnc)
 	if err != nil {
 		return "", "", fmt.Errorf("证书 %s 的私钥无法解密：%v", c.Name, err)
@@ -267,7 +274,12 @@ func (s *Service) Covers(id uint, domains []string) error {
 	if blk == nil {
 		return errors.New("证书库中的证书已损坏")
 	}
-	leaf, err := x509.ParseCertificate(blk.Bytes)
+	var leaf interface{ VerifyHostname(string) error }
+	if c.Kind == store.KindSM2 {
+		leaf, err = sm2cert.ParseCertificate(blk.Bytes)
+	} else {
+		leaf, err = x509.ParseCertificate(blk.Bytes)
+	}
 	if err != nil {
 		return err
 	}
@@ -295,6 +307,17 @@ func (s *Service) ResolveSite(site *render.Site) error {
 		return err
 	}
 	site.HTTPS.CertPEM, site.HTTPS.KeyPEM = crt, key
+	site.HTTPS.GM = nil
+	if site.HTTPS.GMCertID != 0 {
+		if err := s.Covers(site.HTTPS.GMCertID, site.Domains); err != nil {
+			return err
+		}
+		g, err := s.ResolveGM(site.HTTPS.GMCertID)
+		if err != nil {
+			return err
+		}
+		site.HTTPS.GM = g
+	}
 	return nil
 }
 
@@ -312,7 +335,7 @@ func (s *Service) users(id uint) []user {
 	var out []user
 	for _, st := range sites {
 		var rs render.Site
-		if json.Unmarshal([]byte(st.Spec), &rs) != nil || rs.HTTPS == nil || rs.HTTPS.CertID != id {
+		if json.Unmarshal([]byte(st.Spec), &rs) != nil || rs.HTTPS == nil || (rs.HTTPS.CertID != id && rs.HTTPS.GMCertID != id) {
 			continue
 		}
 		out = append(out, user{name: st.Name, group: st.GroupID, enabled: st.Enabled, domains: rs.Domains})
@@ -432,4 +455,133 @@ func (s *Service) MigrateInline() error {
 		s.audit("system", "certificate.migrate", c, map[string]any{"site": st.Name})
 	}
 	return nil
+}
+
+// GMInput 是上传的国密 TLCP 双证书：签名证书与加密证书各带私钥（证书可附带中间证书）。
+type GMInput struct {
+	SignCertPEM string `json:"sign_cert_pem"`
+	SignKeyPEM  string `json:"sign_key_pem"`
+	EncCertPEM  string `json:"enc_cert_pem"`
+	EncKeyPEM   string `json:"enc_key_pem"`
+}
+
+type gmParsed struct{ sign, enc *sm2cert.Parsed }
+
+func parseGM(in GMInput, now time.Time) (*gmParsed, error) {
+	sign, err := sm2cert.ParsePair(in.SignCertPEM, in.SignKeyPEM, sm2cert.UsageSign, now)
+	if err != nil {
+		return nil, err
+	}
+	enc, err := sm2cert.ParsePair(in.EncCertPEM, in.EncKeyPEM, sm2cert.UsageEnc, now)
+	if err != nil {
+		return nil, err
+	}
+	if sign.Fingerprint() == enc.Fingerprint() {
+		return nil, errors.New("签名证书与加密证书是同一张证书；国密 TLCP 需要两张不同的证书")
+	}
+	return &gmParsed{sign: sign, enc: enc}, nil
+}
+
+func (s *Service) fillGM(c *store.Certificate, p *gmParsed, user string) error {
+	signKey, err := s.Box.Seal(p.sign.KeyPEM)
+	if err != nil {
+		return err
+	}
+	encKey, err := s.Box.Seal(p.enc.KeyPEM)
+	if err != nil {
+		return err
+	}
+	dj, _ := json.Marshal(p.sign.DNSNames)
+	c.Kind, c.Domains = store.KindSM2, string(dj)
+	c.CertPEM, c.KeyEnc, c.EncCertPEM, c.EncKeyEnc = p.sign.ChainPEM, signKey, p.enc.ChainPEM, encKey
+	c.Subject, c.Issuer, c.Serial = p.sign.Subject, p.sign.Issuer, p.sign.Serial
+	c.NotBefore, c.NotAfter = p.sign.NotBefore, p.sign.NotAfter
+	if p.enc.NotBefore.After(c.NotBefore) {
+		c.NotBefore = p.enc.NotBefore
+	}
+	if p.enc.NotAfter.Before(c.NotAfter) { // 两张证书中较早到期的一张决定续期时间
+		c.NotAfter = p.enc.NotAfter
+	}
+	c.Fingerprint, c.EncFingerprint, c.UpdatedBy = p.sign.Fingerprint(), p.enc.Fingerprint(), user
+	return nil
+}
+
+// CreateGM 上传一套国密双证书（规格书 12.6 国密变体）。
+func (s *Service) CreateGM(name string, in GMInput, user string) (*store.Certificate, error) {
+	if err := render.ValidateName(name); err != nil {
+		return nil, fmt.Errorf("证书名称不合法：只能使用小写字母、数字和连字符")
+	}
+	p, err := parseGM(in, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	c := &store.Certificate{Name: name, Source: "upload"}
+	if err := s.fillGM(c, p, user); err != nil {
+		return nil, err
+	}
+	if err := s.q().Certificate.WithContext(bg).Create(c); err != nil {
+		return nil, fmt.Errorf("同名证书已存在")
+	}
+	s.audit(user, "certificate.create", c, map[string]any{"domains": p.sign.DNSNames, "source": "upload", "kind": store.KindSM2, "enc_fingerprint": c.EncFingerprint})
+	return c, nil
+}
+
+// RenewGM 替换国密双证书（编号不变）。新签名证书必须仍覆盖所有引用站点的域名。
+func (s *Service) RenewGM(id uint, in GMInput, user string) (*store.Certificate, error) {
+	c, err := store.First[store.Certificate](s.Store, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Kind != store.KindSM2 {
+		return nil, errors.New("这是标准证书，不能用国密双证书替换")
+	}
+	p, err := parseGM(in, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range s.users(id) {
+		for _, d := range u.domains {
+			if p.sign.VerifyHostname(d) != nil {
+				return nil, fmt.Errorf("新签名证书不包含站点 %s 使用的域名 %s", u.name, d)
+			}
+		}
+	}
+	old := c.Fingerprint
+	if err := s.fillGM(c, p, user); err != nil {
+		return nil, err
+	}
+	if err := s.q().Certificate.WithContext(bg).Save(c); err != nil {
+		return nil, err
+	}
+	s.audit(user, "certificate.renew", c, map[string]any{"previous_fingerprint": old, "kind": store.KindSM2})
+	return c, nil
+}
+
+// ResolveGM 返回国密双证书的 PEM，只供渲染使用。
+func (s *Service) ResolveGM(id uint) (*render.GMPair, error) {
+	c, err := store.First[store.Certificate](s.Store, id)
+	if err != nil {
+		return nil, fmt.Errorf("证书 %d 不存在", id)
+	}
+	if c.Kind != store.KindSM2 {
+		return nil, fmt.Errorf("证书 %s 不是国密双证书", c.Name)
+	}
+	sk, err := s.Box.Open(c.KeyEnc)
+	if err != nil {
+		return nil, fmt.Errorf("证书 %s 的签名私钥无法解密：%v", c.Name, err)
+	}
+	ek, err := s.Box.Open(c.EncKeyEnc)
+	if err != nil {
+		return nil, fmt.Errorf("证书 %s 的加密私钥无法解密：%v", c.Name, err)
+	}
+	return &render.GMPair{SignCertPEM: c.CertPEM, SignKeyPEM: sk, EncCertPEM: c.EncCertPEM, EncKeyPEM: ek}, nil
+}
+
+// Kind 返回证书类型（空为标准证书，sm2 为国密双证书）。
+func (s *Service) Kind(id uint) string {
+	c, err := store.First[store.Certificate](s.Store, id)
+	if err != nil {
+		return ""
+	}
+	return c.Kind
 }

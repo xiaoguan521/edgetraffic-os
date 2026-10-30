@@ -20,6 +20,7 @@ const blank = () => ({
   domains: [] as string[],
   https: false,
   cert_id: undefined as number | undefined,
+  gm_cert_id: undefined as number | undefined,
   force_https: false,
   http2: false,
   enabled: true,
@@ -67,15 +68,20 @@ function covers(pattern: string, host: string) {
   }
   return false
 }
-const certWarn = computed(() => {
-  const c = certs.value.find((x) => x.id === f.cert_id)
+function warnFor(id: number | undefined) {
+  const c = certs.value.find((x) => x.id === id)
   if (!c) return ''
   const miss = f.domains.map((d) => d.trim().toLowerCase()).filter((d) => d && !c.domains.some((p: string) => covers(p, d)))
   if (miss.length) return `该证书不包含域名 ${miss.join('、')}`
   if (c.status === 'expired') return '该证书已过期，请先在证书页续期'
   if (c.status === 'expiring') return `该证书 ${c.days_left} 天后到期`
   return ''
-})
+}
+const certWarn = computed(() => warnFor(f.cert_id))
+const gmWarn = computed(() => warnFor(f.gm_cert_id))
+const certOpt = (c: any) => ({ value: c.id, label: `${c.name}（${c.domains.join('、')}）` })
+const stdCerts = computed(() => certs.value.filter((c) => c.kind !== 'sm2').map(certOpt))
+const gmCerts = computed(() => certs.value.filter((c) => c.kind === 'sm2').map(certOpt))
 
 watch(
   () => props.open,
@@ -92,6 +98,7 @@ watch(
         domains: [...s.domains],
         https: !!s.https,
         cert_id: s.https?.cert_id || undefined,
+        gm_cert_id: s.https?.gm_cert_id || undefined,
         force_https: s.force_https,
         http2: s.http2,
         enabled: props.site.enabled,
@@ -128,7 +135,7 @@ async function save() {
       return o
     }),
   }
-  if (f.https) spec.https = { cert_id: f.cert_id }
+  if (f.https) spec.https = { cert_id: f.cert_id, ...(f.gm_cert_id ? { gm_cert_id: f.gm_cert_id } : {}) }
   try {
     if (isNew.value) await api.post('/sites', { group_id: props.groupId, enabled: f.enabled, spec })
     else await api.put(`/sites/${props.site.id}`, { version: f.version, enabled: f.enabled, spec })
@@ -169,12 +176,16 @@ const modes = [
       </a-form-item>
       <template v-if="f.https">
         <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期'">
-          <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="certs.map((c) => ({ value: c.id, label: `${c.name}（${c.domains.join('、')}）` }))">
+          <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="stdCerts">
             <template #notFoundContent>
               <span>证书库为空，<router-link to="/certificates">先去上传证书</router-link></span>
             </template>
           </a-select>
           <div v-if="certWarn" class="cert-warn" :class="{ soft: certWarn.includes('天后到期') }">{{ certWarn }}</div>
+        </a-form-item>
+        <a-form-item v-if="gmCerts.length || f.gm_cert_id" label="国密证书（可选）" :extra="gmWarn ? '' : '国密 TLCP 双证书：国密浏览器用 SM2 证书，其他客户端仍用上面的标准证书。只能发布到国密版 syapp 节点。'">
+          <a-select v-model:value="f.gm_cert_id" allow-clear placeholder="不启用国密" :options="gmCerts" />
+          <div v-if="gmWarn" class="cert-warn" :class="{ soft: gmWarn.includes('天后到期') }">{{ gmWarn }}</div>
         </a-form-item>
         <a-space :size="24" style="margin-bottom: 16px">
           <a-checkbox v-model:checked="f.force_https">HTTP 自动跳转 HTTPS</a-checkbox>

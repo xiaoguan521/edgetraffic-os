@@ -55,6 +55,7 @@ type Node struct {
 	Arch            string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
 	SyappVersion    string     `json:"syapp_version"`
 	SyappSHA256     string     `json:"syapp_sha256"`
+	TLSLib          string     `gorm:"size:16" json:"tls_lib"` // syapp -V 中的 TLS 库：openssl | tongsuo（国密变体）
 	AppliedRevision string     `gorm:"size:16" json:"applied_revision"`
 	TreeHash        string     `json:"tree_hash"`
 	Drifted         bool       `json:"drifted"`
@@ -367,6 +368,12 @@ type LicenseStore struct {
 	ImportedAt time.Time
 }
 
+// GM 报告节点是否运行国密变体（铜锁构建，支持 TLCP 双证书）。
+func (n *Node) GM() bool { return n.TLSLib == "tongsuo" }
+
+// KindSM2 是国密双证书的 Kind。
+const KindSM2 = "sm2"
+
 // Certificate 是证书库中的一张证书（规格书 7.3 证书管理）。私钥以 secretbox 加密保存，永不出现在 API 响应中。
 type Certificate struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
@@ -382,9 +389,15 @@ type Certificate struct {
 	KeyEnc      string    `json:"-"`
 	Source      string    `gorm:"size:16" json:"source"` // upload | migrated | acme
 	AutoRenew   bool      `json:"auto_renew"`            // ACME 证书到期前 30 天自动续期
-	UpdatedBy   string    `json:"updated_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// Kind 为 sm2 时是国密 TLCP 双证书：CertPEM / KeyEnc 存签名证书与私钥，Enc* 存加密证书与私钥；
+	// 域名取自签名证书，NotAfter 取两张证书中较早的到期时间。
+	Kind           string    `gorm:"size:8" json:"kind"` // 空：标准证书 | sm2
+	EncCertPEM     string    `json:"-"`
+	EncKeyEnc      string    `json:"-"`
+	EncFingerprint string    `gorm:"size:64" json:"enc_fingerprint,omitempty"`
+	UpdatedBy      string    `json:"updated_by"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // AcmeOrder 是一次 ACME 签发 / 续期（规格书 P6-4）。

@@ -196,6 +196,36 @@ expect "回源网段之外被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"gro
 expect "创建四层代理" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"mysql","listen":3306,"servers":[{"addr":"10.0.0.41:3306"}]}}')" '"listen":3306'
 expect "四层代理进入待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" "stream.d/streams.conf"
 
+echo "== 国密 TLCP 双证书（P8 国密变体）"
+# 系统 OpenSSL 3 内置 SM2：生成真实的 SM2-with-SM3 签名证书与加密证书
+for u in sign:digitalSignature enc:keyEncipherment,dataEncipherment; do
+  n=${u%%:*}; ku=${u#*:}
+  openssl genpkey -algorithm SM2 -out "$W/gm-$n.key" 2>/dev/null
+  openssl req -new -x509 -key "$W/gm-$n.key" -sm3 -days 30 -subj /CN=gm.example.com -addext subjectAltName=DNS:gm.example.com \
+    -addext "keyUsage=critical,$ku" -out "$W/gm-$n.crt" 2>/dev/null
+done
+gmreq() { python3 -c "import json,sys;r=lambda p:open(p).read();print(json.dumps({'name':sys.argv[1],'sign_cert_pem':r(sys.argv[2]),'sign_key_pem':r(sys.argv[3]),'enc_cert_pem':r(sys.argv[4]),'enc_key_pem':r(sys.argv[5])}))" "$@"; }
+expect "专业版不能上传国密证书" "$(gmreq gm "$W/gm-sign.crt" "$W/gm-sign.key" "$W/gm-enc.crt" "$W/gm-enc.key" | "${C[@]}" -X POST "$B/certificates/gm" -d @-)" "LICENSE_FEATURE_DENIED"
+"$LIC" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only -customer smoke -edition enterprise -days 365 > "$W/le.lic"
+python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/le.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
+expect "签名证书与加密证书放反被拒绝" "$(gmreq gm "$W/gm-enc.crt" "$W/gm-enc.key" "$W/gm-sign.crt" "$W/gm-sign.key" | "${C[@]}" -X POST "$B/certificates/gm" -d @-)" "放反"
+r=$(gmreq gm "$W/gm-sign.crt" "$W/gm-sign.key" "$W/gm-enc.crt" "$W/gm-enc.key" | "${C[@]}" -X POST "$B/certificates/gm" -d @-)
+expect "企业版上传国密双证书" "$r" '"kind":"sm2"'
+if [[ "$r" == *PRIVATE* ]]; then bad "国密证书响应中出现私钥"; else ok "国密证书响应中没有私钥"; fi
+gid=$(echo "$r" | j "d['id']")
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 -subj /CN=gm.example.com \
+  -addext subjectAltName=DNS:gm.example.com -keyout "$W/gs.key" -out "$W/gs.crt" 2>/dev/null
+sid=$(python3 -c "import json,sys;print(json.dumps({'name':'gm-std','cert_pem':open(sys.argv[1]).read(),'key_pem':open(sys.argv[2]).read()}))" "$W/gs.crt" "$W/gs.key" \
+  | "${C[@]}" -X POST "$B/certificates" -d @- | j "d['id']")
+r=$("${C[@]}" -X POST "$B/sites" -d "{\"group_id\":1,\"spec\":{\"name\":\"gm\",\"domains\":[\"gm.example.com\"],\"https\":{\"cert_id\":$sid,\"gm_cert_id\":$gid},\"routes\":[{\"path\":\"/\",\"match\":\"prefix\",\"mode\":\"deny\"}]}}")
+expect "创建国密站点（标准证书 + 国密双证书）" "$r" "\"gm_cert_id\":$gid"
+p=$("${C[@]}" "$B/node-groups/1/preview")
+expect "预览包含国密双证书文件" "$p" "certs/site-gm.sm2-enc.key"
+expect "预览包含国密指令" "$p" "Enable_ntls"
+if [[ "$p" == *"BEGIN PRIVATE KEY"* ]]; then bad "预览中出现私钥"; else ok "预览中没有私钥"; fi
+expect "有国密站点的节点组不能升级到标准版" "$("${C[@]}" -X POST "$B/node-groups/1/upgrade" -d '{"version":"9.9.1","variant":"standard"}')" "国密"
+expect "国密证书被引用时不能删除" "$("${C[@]}" -X DELETE "$B/certificates/$gid")" "正被站点使用"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

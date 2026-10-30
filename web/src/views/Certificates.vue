@@ -150,6 +150,55 @@ async function submit() {
   }
 }
 
+// 国密 TLCP 双证书：签名证书 + 加密证书各带私钥（需要企业版 gm_tls 授权；续期在任何授权状态下可用）
+const gmLicensed = computed(() => !!session.license?.features?.includes('gm_tls'))
+const gmOpen = ref(false)
+const gmRenewing = ref<any>(null)
+const gmForm = reactive({ name: '', sign_cert_pem: '', sign_key_pem: '', enc_cert_pem: '', enc_key_pem: '' })
+const gmFields = [
+  { key: 'sign_cert_pem', label: '签名证书（PEM，可包含中间证书）', ph: '-----BEGIN CERTIFICATE-----' },
+  { key: 'sign_key_pem', label: '签名私钥（PEM，不能带密码）', ph: '-----BEGIN PRIVATE KEY-----' },
+  { key: 'enc_cert_pem', label: '加密证书（PEM，可包含中间证书）', ph: '-----BEGIN CERTIFICATE-----' },
+  { key: 'enc_key_pem', label: '加密私钥（PEM，不能带密码）', ph: '-----BEGIN PRIVATE KEY-----' },
+] as const
+type GMField = (typeof gmFields)[number]['key']
+function openGM(c?: any) {
+  gmRenewing.value = c || null
+  Object.assign(gmForm, { name: c?.name || '', sign_cert_pem: '', sign_key_pem: '', enc_cert_pem: '', enc_key_pem: '' })
+  error.value = ''
+  gmOpen.value = true
+}
+function readGMFile(field: GMField) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.pem,.crt,.cer,.key,.txt'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (file) gmForm[field] = await file.text()
+  }
+  input.click()
+}
+async function submitGM() {
+  error.value = ''
+  saving.value = true
+  try {
+    const { name, ...pair } = gmForm
+    if (gmRenewing.value) {
+      const r = await api.put(`/certificates/${gmRenewing.value.id}/gm`, pair)
+      message.success(`国密证书已更新。${describeDeploys(r.deployments)}`, 6)
+    } else {
+      await api.post('/certificates/gm', { name, ...pair })
+      message.success('国密双证书已上传，可在站点的 HTTPS 设置中作为“国密证书”选择')
+    }
+    gmOpen.value = false
+    load()
+  } catch (e) {
+    error.value = errMsg(e)
+  } finally {
+    saving.value = false
+  }
+}
+
 async function redeploy(c: any) {
   try {
     const r = await api.post(`/certificates/${c.id}/deploy`)
@@ -193,6 +242,9 @@ const columns = [
       </div>
       <a-space v-if="session.can('operator')">
         <a-button :disabled="!session.writable" @click="openUpload">上传证书</a-button>
+        <a-tooltip :title="gmLicensed ? '' : '国密 TLCP 需要企业版授权'">
+          <a-button :disabled="!session.writable || !gmLicensed" @click="openGM()">上传国密证书</a-button>
+        </a-tooltip>
         <a-button type="primary" :disabled="!session.writable || pending" @click="openIssue">自动申请证书</a-button>
       </a-space>
     </div>
@@ -207,6 +259,7 @@ const columns = [
             <div class="nm">{{ record.name }}</div>
             <div class="sub">签发者 {{ record.issuer || '—' }}<span v-if="record.source === 'migrated'"> · 由旧版本站点迁移</span></div>
             <a-tag v-if="record.source === 'acme'" color="blue" class="src">ACME{{ record.auto_renew ? ' · 自动续期' : '' }}</a-tag>
+            <a-tag v-if="record.kind === 'sm2'" color="red" class="src">国密 SM2 · 签名 + 加密</a-tag>
           </template>
           <template v-else-if="column.key === 'domains'">
             <span v-for="d in record.domains" :key="d" class="dm code">{{ d }}</span>
@@ -222,6 +275,7 @@ const columns = [
           <template v-else-if="column.key === 'ops'">
             <a-space v-if="session.can('operator')" :size="0">
               <a-button v-if="record.source === 'acme'" type="link" size="small" :disabled="pending" @click="acmeRenew(record)">立即续期</a-button>
+              <a-button v-else-if="record.kind === 'sm2'" type="link" size="small" @click="openGM(record)">续期</a-button>
               <a-button v-else type="link" size="small" @click="openRenew(record)">续期</a-button>
               <a-button v-if="record.sites" type="link" size="small" @click="redeploy(record)">重新下发</a-button>
               <a-popconfirm v-if="!record.sites" :title="`删除证书 ${record.name}？`" ok-text="删除" @confirm="remove(record)">
@@ -287,6 +341,25 @@ const columns = [
           <template #extra><a @click="readFile('key_pem')">从文件读取</a></template>
           <a-textarea v-model:value="form.key_pem" :rows="5" class="code" placeholder="-----BEGIN PRIVATE KEY-----" />
         </a-form-item>
+      </a-form>
+      <a-alert v-if="error" type="error" :message="error" show-icon />
+    </a-modal>
+
+    <a-modal v-model:open="gmOpen" :title="gmRenewing ? `续期国密证书 ${gmRenewing.name}` : '上传国密双证书'" :ok-text="gmRenewing ? '续期并下发' : '上传'" :confirm-loading="saving" width="720px" @ok="submitGM">
+      <a-alert type="info" show-icon style="margin-bottom: 16px"
+        :message="gmRenewing ? '签名证书必须仍包含站点使用的全部域名。续期后只替换国密证书文件，生成新版本下发。' : '国密 TLCP 使用两张 SM2 证书：签名证书（digitalSignature）与加密证书（keyEncipherment）。站点仍需一张标准证书服务不支持国密的客户端；国密证书只能下发到国密版 syapp 节点。'" />
+      <a-form layout="vertical">
+        <a-form-item v-if="!gmRenewing" label="名称" extra="小写字母、数字、连字符，例如 gov-example-sm2">
+          <a-input v-model:value="gmForm.name" placeholder="gov-example-sm2" />
+        </a-form-item>
+        <a-row :gutter="16">
+          <a-col v-for="f in gmFields" :key="f.key" :xs="24" :md="12">
+            <a-form-item :label="f.label">
+              <template #extra><a @click="readGMFile(f.key)">从文件读取</a></template>
+              <a-textarea v-model:value="gmForm[f.key]" :rows="4" class="code" :placeholder="f.ph" />
+            </a-form-item>
+          </a-col>
+        </a-row>
       </a-form>
       <a-alert v-if="error" type="error" :message="error" show-icon />
     </a-modal>

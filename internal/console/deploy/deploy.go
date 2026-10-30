@@ -157,7 +157,50 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		sp.Name = st.Name
 		in.Streams = append(in.Streams, sp)
 	}
+	if in.HasGM() {
+		if err := d.CheckGM(groupID); err != nil {
+			return in, err
+		}
+	}
 	return in, nil
+}
+
+// ErrGMNotLicensed 表示站点启用了国密双证书，但授权不包含 gm_tls（企业版）。
+var ErrGMNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含国密 TLCP（gm_tls），请去掉站点的国密证书")
+
+// CheckGM：国密双证书只能下发到国密变体（铜锁构建）的节点，标准版 syapp -t 会拒绝这些指令。
+func (d *Service) CheckGM(groupID uint) error {
+	if d.Feature != nil && !d.Feature("gm_tls") {
+		return ErrGMNotLicensed
+	}
+	nd := d.q().Node
+	nodes, err := nd.WithContext(bg).Where(nd.GroupID.Eq(groupID), nd.Status.Neq("revoked")).Order(nd.Name).Find()
+	if err != nil {
+		return err
+	}
+	var std []string
+	for _, n := range nodes {
+		if !n.GM() {
+			std = append(std, n.Name)
+		}
+	}
+	if len(std) > 0 {
+		return fmt.Errorf("GM_VARIANT_REQUIRED: 站点启用了国密双证书，但节点 %s 运行的不是国密版 syapp；请先在“数据面升级”中把节点组升级到国密版", strings.Join(std, "、"))
+	}
+	return nil
+}
+
+// HasGMSites 报告节点组是否有启用国密双证书的站点（升级到非国密变体前检查）。
+func (d *Service) HasGMSites(groupID uint) bool {
+	q := d.q().Site
+	sites, _ := q.WithContext(bg).Where(q.GroupID.Eq(groupID), q.Enabled.Is(true)).Find()
+	for _, s := range sites {
+		var rs render.Site
+		if json.Unmarshal([]byte(s.Spec), &rs) == nil && rs.HTTPS != nil && rs.HTTPS.GMCertID != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrStreamNotLicensed 表示节点组配置了四层代理，但授权不包含 stream 功能（规格书 6.5）。
@@ -331,7 +374,28 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		return nil, err
 	}
 	var changed []string
-	if certID != 0 {
+	if certID != 0 && d.Certs.Kind(certID) == store.KindSM2 {
+		g, err := d.Certs.ResolveGM(certID)
+		if err != nil {
+			lk.Unlock()
+			return nil, err
+		}
+		for _, name := range d.Certs.SitesUsing(certID, groupID) {
+			if _, ok := files["certs/site-"+name+".sm2-sign.crt"]; !ok { // 尚未发布过国密证书
+				continue
+			}
+			diff := false
+			for suffix, pem := range render.GMFiles(g) {
+				n := "certs/site-" + name + suffix
+				if string(files[n]) != pem {
+					files[n], diff = []byte(pem), true
+				}
+			}
+			if diff {
+				changed = append(changed, name)
+			}
+		}
+	} else if certID != 0 {
 		crt, key, err := d.Certs.Resolve(certID)
 		if err != nil {
 			lk.Unlock()
@@ -380,7 +444,8 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 			return err
 		}
 		r.ID = fmt.Sprintf("r%06d", r.Seq)
-		b := render.Repack(r.ID, files)
+		// 国密指令引用本版本目录的绝对路径，随新版本号改写（agent 只容许这一处改写）
+		b := render.Repack(r.ID, render.RebaseRevision(files, cur.ID, r.ID))
 		tgz, err := b.TarGz()
 		if err != nil {
 			return err

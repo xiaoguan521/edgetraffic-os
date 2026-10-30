@@ -161,7 +161,7 @@ function mb(b: number) {
             <a-tag v-if="group?.current_revision_id && record.applied_revision !== group.current_revision_id && record.status === 'online'" color="gold" style="margin-left: 6px">落后</a-tag>
           </template>
           <template v-else-if="column.key === 'syapp'">
-            <div>{{ (record.syapp_version || '').replace('syapp version: ', '') || '—' }}</div>
+            <div>{{ (record.syapp_version || '').replace('syapp version: ', '') || '—' }}<a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag></div>
             <div class="sub">agent {{ record.agent_version }}</div>
           </template>
           <template v-else-if="column.key === 'load'">
@@ -233,6 +233,11 @@ function mb(b: number) {
 </template>
 
 <style scoped>
+.gm {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 16px;
+}
 .gsum {
   display: flex;
   flex-wrap: wrap;

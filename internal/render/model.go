@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/pem"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -47,6 +48,44 @@ type TLS struct {
 	CertID  uint   `json:"cert_id,omitempty"`
 	CertPEM string `json:"cert_pem,omitempty"`
 	KeyPEM  string `json:"key_pem,omitempty"`
+	// GMCertID 引用证书库中的国密 SM2 双证书（签名 + 加密，TLCP）。只能下发到国密变体（铜锁构建）的节点；
+	// 标准证书仍然保留，服务不支持国密的客户端。渲染前由控制台解析为 GM。
+	GMCertID uint    `json:"gm_cert_id,omitempty"`
+	GM       *GMPair `json:"-"`
+}
+
+// GMPair 是国密 TLCP 双证书的 PEM 原文（只在渲染时存在，不落库）。
+type GMPair struct {
+	SignCertPEM, SignKeyPEM string
+	EncCertPEM, EncKeyPEM   string
+}
+
+// pemOnly 报告 s 是否只由 PEM 块组成：证书文件为一个或多个 CERTIFICATE，私钥文件恰好一个 *PRIVATE KEY（不带口令）。
+func pemOnly(s string, cert bool) bool {
+	rest := []byte(strings.TrimSpace(s))
+	n := 0
+	for len(rest) > 0 {
+		var b *pem.Block
+		if b, rest = pem.Decode(rest); b == nil {
+			return false
+		}
+		rest = []byte(strings.TrimSpace(string(rest)))
+		n++
+		if cert && b.Type != "CERTIFICATE" || !cert && (!strings.HasSuffix(b.Type, "PRIVATE KEY") || strings.Contains(b.Type, "ENCRYPTED")) {
+			return false
+		}
+	}
+	return n > 0 && (cert || n == 1)
+}
+
+// HasGM 报告是否有站点启用了国密双证书。
+func (in Input) HasGM() bool {
+	for _, s := range in.Sites {
+		if s.HTTPS != nil && s.HTTPS.GM != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Route 是站点内的一条路由。
@@ -185,6 +224,13 @@ func (in *Input) Validate() error {
 		if s.HTTPS != nil {
 			if !strings.Contains(s.HTTPS.CertPEM, "BEGIN CERTIFICATE") || !strings.Contains(s.HTTPS.KeyPEM, "PRIVATE KEY") {
 				return fmt.Errorf("site %q: invalid certificate or key PEM", s.Name)
+			}
+			if g := s.HTTPS.GM; g != nil {
+				if !pemOnly(g.SignCertPEM, true) || !pemOnly(g.SignKeyPEM, false) || !pemOnly(g.EncCertPEM, true) || !pemOnly(g.EncKeyPEM, false) {
+					return fmt.Errorf("site %q: invalid GM certificate or key PEM", s.Name)
+				}
+			} else if s.HTTPS.GMCertID != 0 {
+				return fmt.Errorf("site %q: GM certificate %d not resolved", s.Name, s.HTTPS.GMCertID)
 			}
 		} else if s.ForceHTTPS || s.HTTP2 {
 			return fmt.Errorf("site %q: force_https / http2 require https", s.Name)

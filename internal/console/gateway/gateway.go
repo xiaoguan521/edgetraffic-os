@@ -96,6 +96,15 @@ var errStandby = status.Error(codes.Unavailable, "standby console: connect to th
 
 func (s *Server) standby() bool { return s.Ready != nil && !s.Ready() }
 
+// TLSLib 从 syapp -V 输出判断数据面的 TLS 库：国密变体由 build-syapp.sh -t tongsuo 构建，
+// 配置参数中带 enable-ntls（铜锁的版本文本与 OpenSSL 相同，不能用来区分）。
+func TLSLib(versionOutput string) string {
+	if strings.Contains(versionOutput, "enable-ntls") {
+		return "tongsuo"
+	}
+	return "openssl"
+}
+
 // DisconnectAll 断开全部节点（失去主身份时调用）。
 func (s *Server) DisconnectAll() {
 	s.mu.Lock()
@@ -289,7 +298,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		agentVer, arch := ParseAgentVersion(b.Hello.AgentVersion)
 		nd := s.q().Node
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(agentVer), nd.Arch.Value(arch),
-			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
+			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.TLSLib.Value(TLSLib(b.Hello.SyappVersionOutput)), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
 			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
 		go func() {

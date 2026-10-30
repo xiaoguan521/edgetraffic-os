@@ -5,10 +5,13 @@
 #   dataplane/build-syapp.sh [-s <上游源码目录>] [-o <输出目录>] [-t openssl|tongsuo] [-S]
 #
 # 不指定 -s 时按 dataplane/UPSTREAM 从官方 GitHub 镜像拉取发布标签，并校验提交哈希。
+# -t tongsuo：国密变体。铜锁按 dataplane/UPSTREAM 拉取发布标签并校验提交哈希，开启 NTLS 后静态链接（隐含 -S）；
+#     configure 带 --build=gmssl，syapp -V 显示 "(gmssl)" 与 enable-ntls，控制台据此识别国密节点。
+#     KEEP_TLS_CLI=<路径> 时把铜锁的命令行工具复制出来（CI 用它做国密握手测试，不进安装包）。
 # -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
 #     在 glibc 2.17 的构建环境（manylinux2014）中执行，即可覆盖 CentOS 7、麒麟 V10、统信 UOS、openEuler 与较新的发行版。
 #     DEPS_CACHE 指向已下载源码包的目录时优先使用缓存；MAX_GLIBC 设置后校验二进制不依赖更高版本的 glibc 符号。
-# 产物：<输出目录>/syapp-<版本>-<架构>.tar.gz，解压到 / 即得到 /opt/syapp 目录树。
+# 产物：<输出目录>/syapp-<版本>-<架构>.tar.gz（国密变体为 syapp-<版本>-gmssl-<架构>.tar.gz），解压到 / 即得到 /opt/syapp 目录树。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -25,7 +28,11 @@ while getopts "s:o:t:S" opt; do
   esac
 done
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"   # 转成绝对路径：后面会 cd 进临时目录
-[[ "$TLS_LIB" == "openssl" ]] || { echo "TLS_LIB=$TLS_LIB not supported yet (国密构建在二期实现)" >&2; exit 2; }
+case "$TLS_LIB" in
+  openssl) ;;
+  tongsuo) STATIC=1 ;;
+  *) echo "TLS_LIB must be openssl or tongsuo" >&2; exit 2 ;;
+esac
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 if [[ -z "$SRC" ]]; then
@@ -61,11 +68,19 @@ if [[ $STATIC -eq 1 ]]; then
     tar -C "$WORK/deps" -xzf "$file"
     echo "$WORK/deps/$(tar -tzf "$file" | head -1 | cut -d/ -f1)"
   }
-  OPENSSL_DIR=$(fetch_dep openssl "$OPENSSL_URL" "$OPENSSL_SHA256")
   PCRE2_DIR=$(fetch_dep pcre2 "$PCRE2_URL" "$PCRE2_SHA256")
   ZLIB_DIR=$(fetch_dep zlib "$ZLIB_URL" "$ZLIB_SHA256")
-  DEP_OPTS=(--with-openssl="$OPENSSL_DIR" --with-openssl-opt="no-shared no-tests no-docs"
-            --with-pcre="$PCRE2_DIR" --with-pcre-jit --with-zlib="$ZLIB_DIR")
+  if [[ "$TLS_LIB" == "tongsuo" ]]; then
+    TLS_DIR="$WORK/deps/Tongsuo"
+    git -c advice.detachedHead=false clone -q --depth 1 --branch "$TONGSUO_TAG" "$TONGSUO_GIT" "$TLS_DIR"
+    got="$(git -C "$TLS_DIR" rev-parse HEAD)"
+    [[ "$got" == "$TONGSUO_COMMIT" ]] || { echo "Tongsuo commit mismatch: $got != $TONGSUO_COMMIT" >&2; exit 3; }
+    DEP_OPTS=(--with-openssl="$TLS_DIR" --with-openssl-opt="enable-ntls no-shared no-tests" --build=gmssl)
+  else
+    TLS_DIR=$(fetch_dep openssl "$OPENSSL_URL" "$OPENSSL_SHA256")
+    DEP_OPTS=(--with-openssl="$TLS_DIR" --with-openssl-opt="no-shared no-tests no-docs")
+  fi
+  DEP_OPTS+=(--with-pcre="$PCRE2_DIR" --with-pcre-jit --with-zlib="$ZLIB_DIR")
 fi
 
 # 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
@@ -128,6 +143,17 @@ if [[ $STATIC -eq 1 ]]; then
   fi
 fi
 
-PKG="$OUT/syapp-$UPSTREAM_VERSION-$(uname -m).tar.gz"
+VARIANT=""
+if [[ "$TLS_LIB" == "tongsuo" ]]; then
+  VARIANT="gmssl-"
+  "$O/sbin/syapp" -V 2>&1 | grep -q "enable-ntls" || { echo "GM build: enable-ntls missing from syapp -V" >&2; exit 4; }
+  "$O/sbin/syapp" -v 2>&1 | grep -q "(gmssl)" || { echo "GM build: (gmssl) missing from syapp -v" >&2; exit 4; }
+  if [[ -n "${KEEP_TLS_CLI:-}" ]]; then
+    cli=$(find "$TLS_DIR" -path '*/apps/openssl' -type f -perm -u+x | head -1)
+    [[ -n "$cli" ]] && cp "$cli" "$KEEP_TLS_CLI" && echo "Tongsuo CLI -> $KEEP_TLS_CLI"
+  fi
+fi
+
+PKG="$OUT/syapp-$UPSTREAM_VERSION-$VARIANT$(uname -m).tar.gz"
 tar -C "$ROOT" -czf "$PKG" opt
 echo "BUILD OK: $PKG"

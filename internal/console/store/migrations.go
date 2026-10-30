@@ -29,6 +29,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300009_streams", Migrate: migrateStreams},
 		{ID: "202610300010_canary", Migrate: migrateCanary},
 		{ID: "202610300011_static_bundles", Migrate: migrateStaticBundles},
+		{ID: "202610310001_gm_tls", Migrate: migrateGMTLS},
 	}
 }
 
@@ -511,4 +512,22 @@ func migrateStaticBundles(tx *gorm.DB) error {
 		CreatedAt  time.Time
 	}
 	return tx.AutoMigrate(&StaticBundle{})
+}
+
+// ---- 202610310001_gm_tls：国密 TLCP 双证书（P8 国密变体）----
+
+func migrateGMTLS(tx *gorm.DB) error {
+	type Certificate struct {
+		Kind           string `gorm:"size:8"`
+		EncCertPEM     string
+		EncKeyEnc      string
+		EncFingerprint string `gorm:"size:64"`
+	}
+	type Node struct {
+		TLSLib string `gorm:"size:16"`
+	}
+	if err := tx.AutoMigrate(&Certificate{}); err != nil {
+		return err
+	}
+	return tx.AutoMigrate(&Node{})
 }

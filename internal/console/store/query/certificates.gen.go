@@ -40,6 +40,10 @@ func newCertificate(db *gorm.DB, opts ...gen.DOOption) certificate {
 	_certificate.KeyEnc = field.NewString(tableName, "key_enc")
 	_certificate.Source = field.NewString(tableName, "source")
 	_certificate.AutoRenew = field.NewBool(tableName, "auto_renew")
+	_certificate.Kind = field.NewString(tableName, "kind")
+	_certificate.EncCertPEM = field.NewString(tableName, "enc_cert_pem")
+	_certificate.EncKeyEnc = field.NewString(tableName, "enc_key_enc")
+	_certificate.EncFingerprint = field.NewString(tableName, "enc_fingerprint")
 	_certificate.UpdatedBy = field.NewString(tableName, "updated_by")
 	_certificate.CreatedAt = field.NewTime(tableName, "created_at")
 	_certificate.UpdatedAt = field.NewTime(tableName, "updated_at")
@@ -52,23 +56,27 @@ func newCertificate(db *gorm.DB, opts ...gen.DOOption) certificate {
 type certificate struct {
 	certificateDo certificateDo
 
-	ALL         field.Asterisk
-	ID          field.Uint
-	Name        field.String
-	Domains     field.String
-	Subject     field.String
-	Issuer      field.String
-	Serial      field.String
-	NotBefore   field.Time
-	NotAfter    field.Time
-	Fingerprint field.String
-	CertPEM     field.String
-	KeyEnc      field.String
-	Source      field.String
-	AutoRenew   field.Bool
-	UpdatedBy   field.String
-	CreatedAt   field.Time
-	UpdatedAt   field.Time
+	ALL            field.Asterisk
+	ID             field.Uint
+	Name           field.String
+	Domains        field.String
+	Subject        field.String
+	Issuer         field.String
+	Serial         field.String
+	NotBefore      field.Time
+	NotAfter       field.Time
+	Fingerprint    field.String
+	CertPEM        field.String
+	KeyEnc         field.String
+	Source         field.String
+	AutoRenew      field.Bool
+	Kind           field.String
+	EncCertPEM     field.String
+	EncKeyEnc      field.String
+	EncFingerprint field.String
+	UpdatedBy      field.String
+	CreatedAt      field.Time
+	UpdatedAt      field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -98,6 +106,10 @@ func (c *certificate) updateTableName(table string) *certificate {
 	c.KeyEnc = field.NewString(table, "key_enc")
 	c.Source = field.NewString(table, "source")
 	c.AutoRenew = field.NewBool(table, "auto_renew")
+	c.Kind = field.NewString(table, "kind")
+	c.EncCertPEM = field.NewString(table, "enc_cert_pem")
+	c.EncKeyEnc = field.NewString(table, "enc_key_enc")
+	c.EncFingerprint = field.NewString(table, "enc_fingerprint")
 	c.UpdatedBy = field.NewString(table, "updated_by")
 	c.CreatedAt = field.NewTime(table, "created_at")
 	c.UpdatedAt = field.NewTime(table, "updated_at")
@@ -127,7 +139,7 @@ func (c *certificate) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *certificate) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 16)
+	c.fieldMap = make(map[string]field.Expr, 20)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["name"] = c.Name
 	c.fieldMap["domains"] = c.Domains
@@ -141,6 +153,10 @@ func (c *certificate) fillFieldMap() {
 	c.fieldMap["key_enc"] = c.KeyEnc
 	c.fieldMap["source"] = c.Source
 	c.fieldMap["auto_renew"] = c.AutoRenew
+	c.fieldMap["kind"] = c.Kind
+	c.fieldMap["enc_cert_pem"] = c.EncCertPEM
+	c.fieldMap["enc_key_enc"] = c.EncKeyEnc
+	c.fieldMap["enc_fingerprint"] = c.EncFingerprint
 	c.fieldMap["updated_by"] = c.UpdatedBy
 	c.fieldMap["created_at"] = c.CreatedAt
 	c.fieldMap["updated_at"] = c.UpdatedAt
