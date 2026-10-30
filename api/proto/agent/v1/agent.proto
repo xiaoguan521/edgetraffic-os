@@ -14,6 +14,9 @@ service AgentGateway {
   rpc Connect(stream AgentMessage) returns (stream ServerMessage);
   // 配置包分片下载。
   rpc FetchBundle(FetchBundleRequest) returns (stream BundleChunk);
+  // 升级包分片下载（规格书 12.6）：只能下载控制台版本库中已验签的包；签名随 UpgradeDataplane / UpgradeAgent 下发，
+  // 由 wrapper（数据面）或 agent（自身）在使用前校验。
+  rpc FetchPackage(FetchPackageRequest) returns (stream BundleChunk);
 }
 
 message EnrollRequest {
@@ -38,6 +41,7 @@ message AgentMessage {
     Heartbeat heartbeat = 11;
     CommandResult result = 12;
     LogChunk log = 13;
+    DriftReport drift = 14;
   }
 }
 
@@ -105,6 +109,8 @@ message ServerMessage {
     TailLog tail = 13;
     Signal signal = 14;
     LicenseUpdate license = 15;
+    UpgradeDataplane upgrade = 16;
+    UpgradeAgent upgrade_agent = 17;
   }
 }
 
@@ -136,6 +142,51 @@ message Signal {
   Kind kind = 1;
 }
 message LicenseUpdate { string raw = 1; }
+
+// 漂移 diff 上报（规格书 12.7 路径 B，CLAUDE.md“agent 与安全”）：agent 发现当前版本目录被手工改动时主动上报。
+// 只限受管版本目录 /opt/syapp/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
+// 协议中没有任何“读取文件”的请求：控制台不能让 agent 读取指定路径。
+message DriftReport {
+  string revision_id = 1;
+  string tree_hash = 2;
+  repeated DriftFile files = 3;
+}
+
+message DriftFile {
+  enum Change { CHANGE_UNSPECIFIED = 0; MODIFIED = 1; ADDED = 2; REMOVED = 3; }
+  string path = 1;            // 相对版本目录，不含 ..
+  Change change = 2;
+  string sha256 = 3;          // 现在的内容哈希（REMOVED 时为空）
+  int64 size = 4;
+  bytes content = 5;          // 现在的内容；私钥或超过上限时为空
+  bool content_omitted = 6;
+}
+
+// 数据面二进制热升级（规格书 12.6）。START：agent 下载升级包与签名到投放目录，经 wrapper upgrade-start 验签、
+// 切换并发 USR2 / WINCH，然后按 post_checks 探活，结果在 CommandResult 中返回；COMMIT / ABORT 对应 wrapper 子命令。
+message UpgradeDataplane {
+  enum Action { ACTION_UNSPECIFIED = 0; START = 1; COMMIT = 2; ABORT = 3; }
+  Action action = 1;
+  string version = 2;                 // ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$
+  string package_sha256 = 3;
+  bytes signature_json = 4;           // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
+  repeated PostCheck post_checks = 5;
+  int32 timeout_seconds = 6;
+}
+
+// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
+message UpgradeAgent {
+  string version = 1;
+  string package_sha256 = 2;
+  bytes signature_json = 3;
+}
+
+message FetchPackageRequest {
+  string name = 1;      // syapp | syapp-agent
+  string version = 2;
+  string arch = 3;      // amd64 | arm64
+  string variant = 4;   // standard | gmssl | lua
+}
 
 message FetchBundleRequest { string revision_id = 1; }
 message BundleChunk { bytes data = 1; int64 offset = 2; bool last = 3; }
