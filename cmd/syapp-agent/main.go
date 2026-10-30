@@ -15,12 +15,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/apply"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/conn"
+	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
@@ -102,6 +105,8 @@ func main() {
 			log.Info("re-enrolled: previous identity replaced; a running agent picks it up on its next reconnect")
 		}
 	case "run":
+		// agent 自升级：已安装且签名、哈希校验通过的新版本优先（只 exec 一次）
+		selfupdate.MaybeExec(*stateDir, version.Version, runtime.GOARCH, pkgsig.Keys())
 		a := conn.New(cfg, log)
 		if cfg.Server == "" {
 			cfg.Server = serverFromState(*stateDir)

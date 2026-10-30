@@ -35,8 +35,19 @@ onMounted(async () => {
 onUnmounted(() => clearInterval(timer))
 watch(gid, load)
 
+const agentVer = ref<string>()
+const agentVersions = computed(() => [...new Set(packages.value.filter((p) => p.name === 'syapp-agent').map((p) => p.version))])
+async function startAgent() {
+  try {
+    await api.post(`/node-groups/${gid.value}/agent-upgrade`, { version: agentVer.value })
+    message.success('已开始分批升级 agent（只重启 agent 进程，不影响流量）')
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 const versions = computed(() => [...new Set(packages.value.filter((p) => p.name === 'syapp' && p.variant === variant.value).map((p) => p.version))])
-const variantName: Record<string, string> = { standard: '标准版', gmssl: '国密版', lua: 'Lua 版' }
+const variantName: Record<string, string> = { standard: '标准版', gmssl: '国密版', lua: 'Lua 版', agent: 'agent' }
 const nodeStatus: Record<string, { t: string; c: string }> = {
   pending: { t: '等待', c: 'default' },
   upgrading: { t: '升级中', c: 'processing' },
@@ -113,12 +124,17 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
         <a-popconfirm :title="`把 ${groups.find((g) => g.id === gid)?.name} 的 ${nodes.length} 台节点升级到 ${ver}？`" @confirm="start">
           <a-button type="primary" :loading="starting" :disabled="!ver || running || !session.writable">开始分批升级</a-button>
         </a-popconfirm>
+        <span class="gap" />
+        <a-select v-model:value="agentVer" style="width: 200px" placeholder="agent 目标版本" :options="agentVersions.map((v) => ({ value: v, label: 'agent ' + v }))" />
+        <a-popconfirm :title="`把 ${nodes.length} 台节点的 agent 升级到 ${agentVer}？syapp 不受影响`" @confirm="startAgent">
+          <a-button :disabled="!agentVer || running || !session.writable">升级 agent</a-button>
+        </a-popconfirm>
       </div>
     </section>
 
     <section class="panel" v-for="u in upgrades.slice(0, 5)" :key="u.id">
       <div class="phead">
-        <h2>升级 #{{ u.id }} → {{ u.version }} <span class="sub">{{ variantName[u.variant] }}</span></h2>
+        <h2>{{ u.variant === 'agent' ? 'agent 升级' : '升级' }} #{{ u.id }} → {{ u.version }} <span class="sub">{{ variantName[u.variant] }}</span></h2>
         <span class="sub">
           <a-tag :color="u.status === 'done' ? 'green' : u.status === 'running' ? 'processing' : 'red'">{{ { done: '完成', running: '进行中', failed: '已停止' }[u.status as string] }}</a-tag>
           {{ u.created_by }} · {{ dayjs(u.created_at).format('MM-DD HH:mm') }}
@@ -152,6 +168,9 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
 </template>
 
 <style scoped>
+.gap {
+  width: 16px;
+}
 .up {
   display: flex;
   gap: 10px;

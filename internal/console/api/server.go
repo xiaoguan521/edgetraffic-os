@@ -128,6 +128,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/packages", role(store.RoleOperator), s.listPackages)
 	a.POST("/packages", role(store.RoleAdmin), s.writable, s.importPackage)
 	a.POST("/node-groups/:id/upgrade", role(store.RoleOperator), s.writable, s.startUpgrade)
+	a.POST("/node-groups/:id/agent-upgrade", role(store.RoleOperator), s.writable, s.startAgentUpgrade)
 	a.GET("/upgrades", s.listUpgrades)
 	a.GET("/upgrades/:id", s.getUpgrade)
 

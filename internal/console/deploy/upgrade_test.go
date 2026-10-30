@@ -137,3 +137,49 @@ func TestUpgradeBatchesAndStopOnFailure(t *testing.T) {
 		t.Fatalf("second run %s", v.Status)
 	}
 }
+
+type fakeAgentRestarts struct {
+	fakeAgents
+	d *Service
+}
+
+func (f *fakeAgentRestarts) Send(_ context.Context, id uint, m *agentv1.ServerMessage, _ time.Duration) (*agentv1.CommandResult, error) {
+	u := m.GetUpgradeAgent()
+	q := query.Use(f.d.Store.DB)
+	_, _ = q.Node.WithContext(context.Background()).Where(q.Node.ID.Eq(id)).Update(q.Node.AgentVersion, u.Version) // 模拟重启后以新版本上线
+	return &agentv1.CommandResult{Status: agentv1.CommandResult_APPLIED}, nil
+}
+
+func TestAgentUpgrade(t *testing.T) {
+	d, g := newTestService(t)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	d.PackageKeys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	data := []byte("agent-pkg")
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-agent", "2.0.0", "amd64", "standard", data)
+	sb, _ := json.Marshal(sig)
+	if _, err := d.ImportPackage(data, sb, "admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	ids := addNodes(t, d, g, 3)
+	fa := &fakeAgentRestarts{fakeAgents: fakeAgents{online: map[uint]bool{}}, d: d}
+	for _, id := range ids {
+		fa.online[id] = true
+	}
+	d.Agents = fa
+	AgentRestartWait = 5 * time.Second
+	up, err := d.StartAgentUpgrade(g.ID, "2.0.0", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v *UpgradeView
+	for i := 0; i < 300; i++ {
+		v, _ = d.GetUpgrade(up.ID)
+		if v.Status != "running" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if v.Status != "done" {
+		t.Fatalf("agent upgrade %+v", v.Nodes)
+	}
+}

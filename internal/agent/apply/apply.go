@@ -727,4 +727,6 @@ func (a *Applier) Bootstrap(rev string, bundle []byte, digest string) error {
 }
 
 // PostChecks 执行探活（数据面热升级后使用，规格书 12.6）。
-func (a *Applier) PostChecks(ctx context.Context, checks []PostCheck) error { return a.postChecks(ctx, checks) }
+func (a *Applier) PostChecks(ctx context.Context, checks []PostCheck) error {
+	return a.postChecks(ctx, checks)
+}

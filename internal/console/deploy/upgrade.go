@@ -306,3 +306,134 @@ func (d *Service) ListUpgrades(groupID uint) ([]*UpgradeView, error) {
 	}
 	return out, nil
 }
+
+// AgentRestartWait 是 agent 自升级后等待节点以新版本重新上线的上限。
+var AgentRestartWait = 90 * time.Second
+
+// StartAgentUpgrade 分批升级节点组内的 agent（只重启 agent 进程，syapp 不受影响）。记录中 Variant 为 "agent"。
+func (d *Service) StartAgentUpgrade(groupID uint, version, user, ip string) (*store.DataplaneUpgrade, error) {
+	if !pkgsig.VersionRe.MatchString(version) {
+		return nil, errors.New("版本号无效")
+	}
+	q := d.q()
+	nodes, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(groupID), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("该节点组没有节点")
+	}
+	p := q.DataplanePackage
+	for _, n := range nodes {
+		if n.Arch == "" {
+			return nil, fmt.Errorf("节点 %s 的 agent 版本过旧（未上报架构），请通过安装包升级", n.Name)
+		}
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq("syapp-agent"), p.Version.Eq(version), p.Arch.Eq(n.Arch)).Count(); c == 0 {
+			return nil, fmt.Errorf("版本库中没有 syapp-agent %s %s 的升级包", version, n.Arch)
+		}
+	}
+	mu, _ := upgradeLocks.LoadOrStore(groupID, &sync.Mutex{})
+	lk := mu.(*sync.Mutex)
+	if !lk.TryLock() {
+		return nil, ErrUpgradeRunning
+	}
+	ids := make([]uint, len(nodes))
+	names := map[uint]string{}
+	for i, n := range nodes {
+		ids[i], names[n.ID] = n.ID, n.Name
+	}
+	var plan []UpgradeNode
+	for bi, b := range planBatches(ids) {
+		for _, id := range b {
+			plan = append(plan, UpgradeNode{NodeID: id, Name: names[id], Batch: bi + 1, Status: "pending"})
+		}
+	}
+	pj, _ := json.Marshal(plan)
+	up := &store.DataplaneUpgrade{GroupID: groupID, Version: version, Variant: "agent", Status: "running", Nodes: string(pj), CreatedBy: user}
+	if err := q.DataplaneUpgrade.WithContext(bg).Create(up); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "agent.upgrade_start", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
+		Detail: map[string]any{"upgrade": up.ID, "version": version, "nodes": len(plan)}})
+	go func() {
+		defer lk.Unlock()
+		d.runAgentUpgrade(up, plan)
+	}()
+	return up, nil
+}
+
+func (d *Service) runAgentUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
+	q := d.q()
+	ag := d.agents()
+	failed := false
+	save := func(status string, done bool) {
+		pj, _ := json.Marshal(plan)
+		u := q.DataplaneUpgrade
+		set := u.WithContext(bg).Where(u.ID.Eq(up.ID))
+		if done {
+			_, _ = set.UpdateSimple(u.Nodes.Value(string(pj)), u.Status.Value(status), u.FinishedAt.Value(time.Now()))
+		} else {
+			_, _ = set.UpdateSimple(u.Nodes.Value(string(pj)), u.Status.Value(status))
+		}
+	}
+	for i := range plan {
+		n := &plan[i]
+		if failed {
+			n.Status, n.Message = "skipped", "前面的节点失败，已停止"
+			continue
+		}
+		node, err := store.First[store.Node](d.Store, n.NodeID)
+		if err != nil || !ag.Online(n.NodeID) {
+			n.Status, n.Message, failed = "offline", "节点离线，未升级", true
+			continue
+		}
+		if node.AgentVersion == up.Version {
+			n.Status, n.Message = "upgraded", "已是该版本"
+			continue
+		}
+		n.Status = "upgrading"
+		save("running", false)
+		p := q.DataplanePackage
+		pkg, err := p.WithContext(bg).Select(p.Sig, p.SHA256).Where(p.Name.Eq("syapp-agent"), p.Version.Eq(up.Version), p.Arch.Eq(node.Arch)).First()
+		if err != nil {
+			n.Status, n.Message, failed = "failed", "版本库中没有对应的包", true
+			continue
+		}
+		res, err := ag.Send(context.Background(), n.NodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_UpgradeAgent{UpgradeAgent: &agentv1.UpgradeAgent{
+			Version: up.Version, PackageSha256: pkg.SHA256, SignatureJson: []byte(pkg.Sig)}}}, 2*time.Minute)
+		if err != nil || res.Status != agentv1.CommandResult_APPLIED {
+			msg := "agent 拒绝升级"
+			if err != nil {
+				msg = err.Error()
+			} else {
+				msg += "：" + res.Message
+			}
+			n.Status, n.Message, failed = "failed", msg, true
+			save("running", false)
+			continue
+		}
+		back := false
+		deadline := time.Now().Add(AgentRestartWait)
+		for time.Now().Before(deadline) {
+			time.Sleep(time.Second)
+			if nd, err := store.First[store.Node](d.Store, n.NodeID); err == nil && nd.AgentVersion == up.Version && ag.Online(n.NodeID) {
+				back = true
+				break
+			}
+		}
+		if back {
+			n.Status, n.Message = "upgraded", "已以新版本重新上线"
+		} else {
+			n.Status, n.Message, failed = "failed", "agent 未在规定时间内以新版本重新上线（syapp 不受影响）", true
+		}
+		save("running", false)
+	}
+	status := "done"
+	if failed {
+		status = "failed"
+	}
+	save(status, true)
+	_ = d.Audit.Write(audit.Entry{Username: up.CreatedBy, Action: "agent.upgrade_result", ObjectType: "node_group", ObjectID: fmt.Sprint(up.GroupID),
+		Result: status, Detail: map[string]any{"upgrade": up.ID, "version": up.Version, "nodes": plan}})
+}

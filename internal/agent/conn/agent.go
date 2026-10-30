@@ -71,7 +71,8 @@ type Agent struct {
 	verifier *cmdsig.Verifier
 	licRaw   string
 
-	lastDrift string // 最近一次上报的漂移文件状态指纹（heartbeat goroutine 独占）
+	lastDrift string
+	exit      func(code int) // 自升级后退出（测试可替换），默认 os.Exit // 最近一次上报的漂移文件状态指纹（heartbeat goroutine 独占）
 }
 
 // New 创建 agent。
@@ -79,7 +80,7 @@ func New(c Config, log *slog.Logger) *Agent {
 	if c.Heartbeat == 0 {
 		c.Heartbeat = 15 * time.Second
 	}
-	return &Agent{C: c, applier: &apply.Applier{C: c.Apply}, log: log}
+	return &Agent{C: c, applier: &apply.Applier{C: c.Apply}, log: log, exit: os.Exit}
 }
 
 func (a *Agent) path(n string) string { return filepath.Join(a.C.StateDir, n) }
@@ -482,6 +483,8 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		reply(agentv1.CommandResult_APPLIED, sig+" done", "")
 	case *agentv1.ServerMessage_Upgrade:
 		a.handleUpgrade(ctx, client, b.Upgrade, reply, send)
+	case *agentv1.ServerMessage_UpgradeAgent:
+		a.handleAgentUpgrade(ctx, client, b.UpgradeAgent, reply)
 	default:
 		reply(agentv1.CommandResult_REJECTED, "command not supported by this agent", "")
 	}

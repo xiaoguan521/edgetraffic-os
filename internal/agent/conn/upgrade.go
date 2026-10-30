@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
@@ -140,4 +141,32 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 		return
 	}
 	reply(agentv1.CommandResult_APPLIED, "new version is serving; waiting for commit", out)
+}
+
+// handleAgentUpgrade 下载并校验 agent 升级包，安装后退出，由 systemd 重启到新版本（syapp 不受影响）。
+func (a *Agent) handleAgentUpgrade(ctx context.Context, client agentv1.AgentGatewayClient, u *agentv1.UpgradeAgent, reply func(agentv1.CommandResult_Status, string, string)) {
+	if !upgradeVersionRe.MatchString(u.Version) {
+		reply(agentv1.CommandResult_REJECTED, "invalid version", "")
+		return
+	}
+	sig, err := pkgsig.Parse(u.SignatureJson)
+	if err != nil || sig.Name != "syapp-agent" || sig.Version != u.Version || sig.Arch != runtime.GOARCH {
+		reply(agentv1.CommandResult_REJECTED, "signature file does not match this upgrade", "")
+		return
+	}
+	data, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: "syapp-agent", Version: u.Version, Arch: runtime.GOARCH, Variant: sig.Variant})
+	if err != nil {
+		reply(agentv1.CommandResult_REJECTED, "fetch package: "+err.Error(), "")
+		return
+	}
+	if _, err := selfupdate.Install(a.C.StateDir, data, u.SignatureJson, runtime.GOARCH, pkgsig.Keys()); err != nil {
+		reply(agentv1.CommandResult_REJECTED, err.Error(), "")
+		return
+	}
+	reply(agentv1.CommandResult_APPLIED, "agent "+u.Version+" installed; restarting the agent process", "")
+	a.log.Info("agent self-upgrade installed, exiting for restart", "version", u.Version)
+	go func() {
+		time.Sleep(2 * time.Second)
+		a.exit(0)
+	}()
 }

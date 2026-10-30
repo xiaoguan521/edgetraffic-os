@@ -24,6 +24,9 @@
 #       数据面升级包（规格书 12.6）：sbin/syapp + VERSION，产物 syapp-<ver>-<goarch>.tar.gz（未签名；
 #       正式发布前在离线签名机上 syapp-license-signer sign-package 生成 .sig，与包一起导入控制台版本库）
 #
+#   scripts/release/package.sh agent-upgrade <goarch>
+#       agent 自升级包：bin/syapp-agent，产物 syapp-agent-<ver>-<goarch>.tar.gz（未签名）
+#
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
@@ -101,6 +104,15 @@ case "${1:-}" in
     cp docs/NOTICE "$WORK/up/NOTICE"
     tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/syapp-$up_ver-$arch.tar.gz" sbin/syapp VERSION NOTICE
     echo "$OUT/syapp-$up_ver-$arch.tar.gz"
+    ;;
+  agent-upgrade)
+    # agent 自升级包：bin/syapp-agent（未签名，离线签名后导入控制台版本库）
+    arch=${2:?goarch}
+    mkdir -p "$WORK/ag/bin"
+    gobuild linux "$arch" "$WORK/ag/bin" ./cmd/syapp-agent
+    cp docs/NOTICE "$WORK/ag/NOTICE"
+    tar -C "$WORK/ag" --owner=0 --group=0 -czf "$OUT/syapp-agent-$VERSION-$arch.tar.gz" bin/syapp-agent NOTICE
+    echo "$OUT/syapp-agent-$VERSION-$arch.tar.gz"
     ;;
   license-portal)
     arch=${2:?goarch}
