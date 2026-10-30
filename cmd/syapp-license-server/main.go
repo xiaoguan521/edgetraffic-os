@@ -1,12 +1,20 @@
 // syapp-license-server：厂商授权工具（规格书 8.8）。部署在厂商内网，不交付给客户。
 //
-// MVP 提供命令行签发；授权后台 Web 界面在 P4 实现。
+// 这里的 keygen / issue 使用明文私钥文件，只用于演示（etos-demo-*）与 CI 临时密钥（etos-ci-*）。
+// 正式 License 一律由离线签名机上的 syapp-license-signer 签名（规格书 8.8.1，docs/license-ops.md）。
 //
-//	syapp-license-server keygen -kid etos-prod-2027 -out keys/
+//	syapp-license-server keygen -kid etos-demo-2027 -out keys/
 //	syapp-license-server issue  -key keys/etos-demo-2026.key -kid etos-demo-2026 \
 //	    -request activation-request.json -customer "某某公司" -edition professional \
 //	    -nodes 50 -sites 2000 -days 365 [-binding installation_only] -out customer.lic
 //	syapp-license-server inspect customer.lic
+//
+// 正式签发（不接触私钥，授权后台上线前的命令行流程，规格书 8.8.1）：
+//
+//	syapp-license-server request     -batch B0001 -kid etos-prod-2027 -request activation-request.json -customer "某某公司" ... -out sign-request-B0001.json
+//	syapp-license-server crl-request -batch B0002 -kid etos-prod-2027 -serial 1 -revoke LIC-...,LIC-... [-base current.crl] -out sign-request-B0002.json
+//	（U 盘拷到离线签名机：syapp-license-signer sign ...，再拷回）
+//	syapp-license-server import      -request sign-request-B0001.json -signed signed-B0001.json -out licenses/
 package main
 
 import (
@@ -27,13 +35,6 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
 
-var editionFeatures = map[license.Edition][]license.Feature{
-	license.EditionTrial:        {license.FeatureCore},
-	license.EditionStandard:     {license.FeatureCore, license.FeatureAPIToken},
-	license.EditionProfessional: {license.FeatureCore, license.FeatureAPIToken, license.FeatureBatchRelease, license.FeatureReleaseApproval, license.FeatureSSO, license.FeatureAuditExport, license.FeatureAlertIM, license.FeatureStream, license.FeatureHA},
-	license.EditionEnterprise:   {license.FeatureCore, license.FeatureAPIToken, license.FeatureBatchRelease, license.FeatureReleaseApproval, license.FeatureSSO, license.FeatureAuditExport, license.FeatureAlertIM, license.FeatureStream, license.FeatureHA, license.FeatureCanary, license.FeatureGMTLS},
-}
-
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -45,6 +46,12 @@ func main() {
 		issue(os.Args[2:])
 	case "inspect":
 		inspect(os.Args[2:])
+	case "request":
+		check(cmdRequest(os.Args[2:], os.Stdout))
+	case "crl-request":
+		check(cmdCRLRequest(os.Args[2:], os.Stdout, license.BuiltinKeyRing()))
+	case "import":
+		check(cmdImport(os.Args[2:], os.Stdout, license.BuiltinKeyRing()))
 	case "version", "-version":
 		fmt.Println(version.String("license-server"))
 	default:
@@ -59,6 +66,9 @@ func keygen(args []string) {
 	_ = fs.Parse(args)
 	if *kid == "" {
 		die("-kid is required")
+	}
+	if !demoKID(*kid) {
+		die("syapp-license-server keygen 只生成演示 / CI 密钥（etos-demo-* / etos-ci-*）；正式密钥请在离线签名机上用 syapp-license-signer keygen 生成")
 	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	check(err)
@@ -95,15 +105,11 @@ func issue(args []string) {
 	if *reqPath == "" && *binding != "installation_only" {
 		die("-installation-id requires -binding installation_only (host fingerprint comes from the activation request)")
 	}
-	feats, ok := editionFeatures[license.Edition(*edition)]
-	if !ok {
-		die("unknown edition " + *edition)
+	if !demoKID(*kid) {
+		die("syapp-license-server issue 只能用演示 / CI 密钥签发；正式 License 由离线签名机上的 syapp-license-signer 签名（docs/license-ops.md）")
 	}
 	priv := loadKey(*keyPath)
-	var req struct {
-		InstallationID string   `json:"installation_id"`
-		FPHashes       []string `json:"fp_hashes"`
-	}
+	var req license.ActivationRequest
 	if *reqPath != "" {
 		b, err := os.ReadFile(*reqPath)
 		check(err)
@@ -111,41 +117,21 @@ func issue(args []string) {
 	} else {
 		req.InstallationID = *instID
 	}
-	if !strings.HasPrefix(req.InstallationID, "inst_") {
-		die("activation request has no installation_id")
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	exp := now.Add(time.Duration(*days) * 24 * time.Hour)
+	o := license.IssueOptions{KID: *kid, LicenseID: *licID, CustomerID: *customerID, CustomerName: *customer,
+		Edition: license.Edition(*edition), Nodes: *nodes, Sites: *sites, Days: *days, GraceDays: *grace,
+		Binding: *binding, Request: req, ProductName: version.Product, Now: time.Now()}
 	if *expires != "" {
 		t, err := time.Parse("2006-01-02", *expires)
 		check(err)
-		exp = t.UTC()
+		o.ExpiresAt = t
 	}
-	maintUntil := exp
 	if *maint != "" {
 		t, err := time.Parse("2006-01-02", *maint)
 		check(err)
-		maintUntil = t.UTC()
+		o.Maintenance = t
 	}
-	if *licID == "" {
-		*licID = fmt.Sprintf("LIC-%s-%04d", now.Format("20060102"), now.Unix()%10000)
-	}
-	notBefore := now
-	if exp.Before(now) {
-		notBefore = exp.Add(-30 * 24 * time.Hour)
-	}
-	p := &license.Payload{
-		V: 1, KID: *kid, LicenseID: *licID,
-		Customer: license.Customer{ID: *customerID, Name: *customer},
-		Edition:  license.Edition(*edition), Features: feats,
-		Limits:   license.Limits{Nodes: *nodes, Sites: *sites, AuditDays: 365},
-		IssuedAt: now, NotBefore: notBefore, ExpiresAt: exp, MaintenanceUntil: maintUntil, GraceDays: *grace,
-		Binding: license.Binding{Type: *binding, InstallationID: req.InstallationID},
-		Product: license.Product{Name: version.Product, MinVersion: "0.0.0", MaxVersion: "1.*"},
-	}
-	if *binding == "installation" {
-		p.Binding.FPHashes = req.FPHashes
-	}
+	p, err := license.BuildPayload(o)
+	check(err)
 	raw, err := license.Sign(p, priv)
 	check(err)
 	if *out == "" {
@@ -153,7 +139,7 @@ func issue(args []string) {
 		return
 	}
 	check(os.WriteFile(*out, []byte(raw+"\n"), 0o644))
-	fmt.Printf("issued %s for %s (%s, %d nodes, expires %s) -> %s\n", *licID, *customer, *edition, *nodes, exp.Format("2006-01-02"), *out)
+	fmt.Printf("issued %s for %s (%s, %d nodes, expires %s) -> %s\n", p.LicenseID, *customer, *edition, *nodes, p.ExpiresAt.Format("2006-01-02"), *out)
 }
 
 func inspect(args []string) {
@@ -170,6 +156,11 @@ func inspect(args []string) {
 	j, _ := json.MarshalIndent(p, "", "  ")
 	fmt.Println("signature: OK")
 	fmt.Println(string(j))
+}
+
+// demoKID 报告是否为演示或 CI 临时密钥。
+func demoKID(kid string) bool {
+	return strings.HasPrefix(kid, "etos-demo-") || kid == license.CIKeyID || strings.HasPrefix(kid, "etos-ci-")
 }
 
 func loadKey(path string) ed25519.PrivateKey {

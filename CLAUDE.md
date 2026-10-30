@@ -38,7 +38,10 @@
 ## 授权
 - 业务代码只通过 license.Evaluate 产出的 Snapshot 读取授权，不得自行解析 .lic。
 - 需授权的 API 必须挂 RequireFeature / RequireQuota / RequireWritable 中间件；前端置灰不算约束。
-- EXPIRED/INVALID 状态下回滚、证书续期、导入 License 必须仍可用。
+- EXPIRED/INVALID 状态下回滚、证书续期、导入 License、导入吊销列表必须仍可用。
+- 正式 License 与吊销列表只由离线签名机上的 syapp-license-signer 签名（规格书 8.8.1，docs/license-ops.md）：
+  该程序不得引入任何网络代码（TestNoNetworkCode）；私钥只以口令加密文件存在；在线侧（授权后台）只持有公钥。
+  syapp-license-server 的明文私钥命令（keygen / issue）只允许 etos-demo-* / etos-ci-*；v* 正式版本用 -tags release 构建，不含演示公钥。
 
 ## 品牌
 - 产品代码、界面文案、日志、打包脚本中不得出现 "nginx"（范围见 scripts/brand-check.sh；/opt/syapp/modules/ 下的 Lua 模块是唯一例外，见“数据面”）。

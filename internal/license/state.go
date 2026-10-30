@@ -33,6 +33,8 @@ type Env struct {
 	FingerprintMatch bool
 	// BuildDate 是控制台构建日期，用于 maintenance_until 校验。
 	BuildDate time.Time
+	// CRL 是当前生效的吊销列表（内置与导入中序号较大的一份），可为 nil。
+	CRL *CRL
 }
 
 // Snapshot 是业务代码可见的唯一授权视图。
@@ -73,6 +75,12 @@ func Evaluate(raw string, keys KeyRing, env Env) Snapshot {
 	}
 	inv := func(reason string) Snapshot {
 		return Snapshot{State: StateInvalid, Reason: reason, Payload: p, ExpiresAt: p.ExpiresAt}
+	}
+	if env.CRL.KIDRevoked(p.KID) {
+		return inv("signing key revoked")
+	}
+	if env.CRL.LicenseRevoked(p.LicenseID) {
+		return inv("license revoked")
 	}
 	if p.Binding.InstallationID == "" || p.Binding.InstallationID != env.InstallationID {
 		return inv("installation_id mismatch")

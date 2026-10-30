@@ -154,7 +154,59 @@ func (s *Service) env(now time.Time) license.Env {
 	if bd.Year() < 2000 {
 		bd = time.Time{} // 开发构建不做维保校验
 	}
-	return license.Env{Now: now, InstallationID: s.installationID, MaxSeenTime: maxSeen, BuildDate: bd}
+	return license.Env{Now: now, InstallationID: s.installationID, MaxSeenTime: maxSeen, BuildDate: bd, CRL: s.crl()}
+}
+
+const crlKV = "license_crl"
+
+// crl 返回当前生效的吊销列表：内置与已导入中序号较大的一份（CRL 是累积的）。
+func (s *Service) crl() *license.CRL {
+	var imported *license.CRL
+	if raw, err := s.Store.GetKV(crlKV); err == nil && raw != "" {
+		imported, _ = license.VerifyCRL(raw, s.Keys)
+	}
+	return license.NewerCRL(license.BuiltinCRL(s.Keys), imported)
+}
+
+// CRLInfo 描述当前生效的吊销列表（授权页展示）。
+type CRLInfo struct {
+	Serial   uint64    `json:"serial"`
+	IssuedAt time.Time `json:"issued_at"`
+	Revoked  int       `json:"revoked"`
+}
+
+// CRLInfo 返回当前吊销列表的摘要；没有吊销列表时返回 nil。
+func (s *Service) CRLInfo() *CRLInfo {
+	c := s.crl()
+	if c == nil {
+		return nil
+	}
+	return &CRLInfo{Serial: c.Serial, IssuedAt: c.IssuedAt, Revoked: len(c.RevokedLicenses)}
+}
+
+// ErrCRLNotNewer 表示导入的吊销列表不比当前的新。
+var ErrCRLNotNewer = errors.New("吊销列表不比当前的新（序号未增加）")
+
+// ImportCRL 校验并保存吊销列表；只接受序号更大的列表，防止用旧列表“撤销吊销”。
+func (s *Service) ImportCRL(raw string) (*license.CRL, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.importCRL(raw)
+}
+
+func (s *Service) importCRL(raw string) (*license.CRL, error) {
+	raw = strings.TrimSpace(raw)
+	c, err := license.VerifyCRL(raw, s.Keys)
+	if err != nil {
+		return nil, err
+	}
+	if cur := s.crl(); cur != nil && c.Serial <= cur.Serial {
+		return nil, fmt.Errorf("%w：当前序号 %d，导入的序号 %d", ErrCRLNotNewer, cur.Serial, c.Serial)
+	}
+	if err := s.Store.SetKV(crlKV, raw); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Service) evaluate(raw string, now time.Time) license.Snapshot {
@@ -189,10 +241,19 @@ func (s *Service) Tick(now time.Time) {
 }
 
 // Import 校验并保存新的 License；INVALID 的 License 不会被保存。
-func (s *Service) Import(raw, user string) (license.Snapshot, error) {
-	raw = strings.TrimSpace(raw)
+// 授权文件中可以附带吊销列表（每行一项），会先于 License 导入，因此已吊销的 License 导入不进来。
+func (s *Service) Import(bundle, user string) (license.Snapshot, error) {
+	raw, crls := license.SplitBundle(bundle)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, c := range crls {
+		if _, err := s.importCRL(c); err != nil && !errors.Is(err, ErrCRLNotNewer) {
+			return license.Snapshot{State: license.StateInvalid, Reason: err.Error()}, fmt.Errorf("revocation list rejected: %w", err)
+		}
+	}
+	if raw == "" {
+		return s.evaluate(s.raw(), time.Now()), nil // 只导入了吊销列表
+	}
 	snap := s.evaluate(raw, time.Now())
 	if snap.State == license.StateInvalid || snap.State == license.StateUnlicensed {
 		return snap, errors.New("license rejected: " + snap.Reason)

@@ -96,6 +96,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/license", s.licenseGet)
 	a.GET("/license/request", role(store.RoleAdmin), s.licenseRequest)
 	a.POST("/license/import", role(store.RoleAdmin), s.licenseImport) // 过期状态下仍可用
+	a.POST("/license/crl", role(store.RoleAdmin), s.licenseCRL)       // 过期状态下仍可用
 
 	a.GET("/node-groups", s.listGroups)
 	a.POST("/node-groups", role(store.RoleAdmin), s.writable, s.createGroup)

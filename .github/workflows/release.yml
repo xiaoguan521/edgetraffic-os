@@ -41,10 +41,14 @@ jobs:
       image_tag: ${{ steps.v.outputs.image_tag }}
       release: ${{ steps.v.outputs.release }}
       stable: ${{ steps.v.outputs.stable }}
+      gotags: ${{ steps.v.outputs.gotags }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
       - id: v
         name: compute version
         run: |
@@ -55,6 +59,8 @@ jobs:
             echo "image_tag=$version" >> "$GITHUB_OUTPUT"
             echo "release=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             [[ "$version" == *-* ]] && echo "stable=false" >> "$GITHUB_OUTPUT" || echo "stable=true" >> "$GITHUB_OUTPUT"
+            # 正式版本：不含演示签名密钥（规格书 8.8.1）
+            echo "gotags=release" >> "$GITHUB_OUTPUT"
           else
             branch=${GITHUB_REF_NAME//\//-}
             if d=$(git describe --tags --match 'v[0-9]*' --abbrev=7 2>/dev/null); then version=${d#v}; else version=0.0.0-$branch.$short; fi
@@ -62,8 +68,14 @@ jobs:
             echo "image_tag=$branch" >> "$GITHUB_OUTPUT"
             echo "release=dev-$branch" >> "$GITHUB_OUTPUT"
             echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "gotags=" >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
+      - name: release key gate (v* tags)
+        if: github.ref_type == 'tag'
+        run: |
+          # 正式版本必须内置正式签名公钥、且不含演示密钥；否则在建草稿之前就失败
+          go test -mod=vendor -tags release -count=1 -run 'TestReleaseKeyRing|TestProductionKeyTable' ./internal/license/
       - name: prepare release
         env:
           RELEASE: ${{ steps.v.outputs.release }}
@@ -99,6 +111,7 @@ jobs:
       VERSION: ${{ needs.meta.outputs.version }}
       TAG: ${{ needs.meta.outputs.image_tag }}
       RELEASE: ${{ needs.meta.outputs.release }}
+      GOTAGS: ${{ needs.meta.outputs.gotags }}
       OUT: ${{ github.workspace }}/dist/release
     steps:
       - uses: actions/checkout@v5
@@ -126,6 +139,10 @@ jobs:
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
           scripts/release/package.sh backend ${{ matrix.arch }}
+          scripts/release/package.sh vendor-tools linux ${{ matrix.arch }}
+          if [[ ${{ matrix.arch }} == amd64 ]]; then
+            for t in windows/amd64 darwin/arm64; do scripts/release/package.sh vendor-tools ${t%/*} ${t#*/}; done
+          fi
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
           ls -l "$OUT"
@@ -158,6 +175,18 @@ jobs:
           done
           "$d"/edgetraffic-os-console-*/syapp-console -version | tee /dev/stderr | grep -q "$VERSION"
           "$d"/edgetraffic-os-node-*/rootfs/usr/bin/syapp-agent version | grep -q "$VERSION"
+          # 正式版本：控制台不含演示签名公钥，也不带演示用的 syapp-license-server
+          if [[ "$GOTAGS" == *release* ]]; then
+            if strings "$d"/edgetraffic-os-console-*/syapp-console | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
+              echo "::error::release console contains the demo signing key"; exit 1
+            fi
+            if ls "$d"/edgetraffic-os-console-*/syapp-license-server >/dev/null 2>&1; then
+              echo "::error::release console package ships syapp-license-server"; exit 1
+            fi
+          fi
+          # 离线签名工具不含网络代码
+          vt=$(mktemp -d); tar -C "$vt" -xzf "$OUT"/edgetraffic-os-vendor-tools-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          "$vt"/*/syapp-license-signer version | grep -q "$VERSION"
 
       - name: upload release assets
         run: |
@@ -178,7 +207,7 @@ jobs:
           S=$(mktemp -d)
           mkdir -p "$S/console" "$S/node" "$S/backend"
           tar -C "$S" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          mv "$S"/edgetraffic-os-console-*/syapp-console "$S"/edgetraffic-os-console-*/syapp-license-server "$S/console/"
+          mv "$S"/edgetraffic-os-console-*/syapp-* "$S/console/"   # 开发构建另含演示用的 syapp-license-server
           tar -C "$S" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
           mv "$S"/edgetraffic-os-node-*/rootfs "$S/node/rootfs"
           cp demo/node/entrypoint.sh demo/node/systemctl "$S/node/"

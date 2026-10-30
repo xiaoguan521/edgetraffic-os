@@ -83,6 +83,9 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
           </dd>
           <dt>安装 ID</dt>
           <dd class="code">{{ lic.installation_id }}</dd>
+          <dt>吊销列表</dt>
+          <dd v-if="lic.crl">序号 {{ lic.crl.serial }}<span class="sub">（{{ dayjs(lic.crl.issued_at).format('YYYY-MM-DD') }}，{{ lic.crl.revoked }} 项）</span></dd>
+          <dd v-else class="sub">无</dd>
         </dl>
         <template v-else>
           <dl>

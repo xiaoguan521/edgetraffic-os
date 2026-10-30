@@ -20,6 +20,12 @@ jobs:
         run: make gen-check
       - name: vet and test
         run: make test
+      - name: release-tag build (no demo signing key)
+        run: |
+          go vet -mod=vendor -tags release ./...
+          go build -mod=vendor -tags release ./...
+          # 除“必须内置正式公钥”的门禁外，release 构建下 license 包的其余测试都要通过
+          go test -mod=vendor -tags release -count=1 -skip TestReleaseKeyRing ./internal/license/...
       - name: build
         run: make build
       - name: wrapper is static

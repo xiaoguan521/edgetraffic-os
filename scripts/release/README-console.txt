@@ -3,7 +3,7 @@ EdgeTraffic OS 控制台
 
 本包包含：
   syapp-console          控制台（Web 管理界面已内置）
-  syapp-license-server   授权签发工具（仅授权方使用，需要签名私钥）
+  syapp-license-server   演示授权签发工具（只在开发 / 演示构建中提供；正式版本不包含）
 
 快速试用（数据保存在 ./data，SQLite）：
 
