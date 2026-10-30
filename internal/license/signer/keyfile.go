@@ -46,13 +46,20 @@ type KeyFile struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// 离线签名机上运行，参数取得较高：3 轮、256 MiB。
-var defaultKDF = KDF{Alg: "argon2id", Time: 3, MemoryKiB: 256 * 1024, Threads: 4}
+// ProductionKDF 是生成私钥文件时使用的口令派生参数。离线签名机上运行，参数取得较高：3 轮、256 MiB。
+var ProductionKDF = KDF{Alg: "argon2id", Time: 3, MemoryKiB: 256 * 1024, Threads: 4}
+
+// 生成与打开私钥文件时使用的参数和下限。只有本包的测试会临时调低它们（见 TestMain），
+// 生产代码没有任何开关可以改变它们。
+var (
+	kdfParams    = ProductionKDF
+	minMemoryKiB = uint32(64 * 1024)
+)
 
 func (k *KeyFile) aad() []byte { return []byte(k.Format + "\n" + k.KID + "\n" + k.PublicKey) }
 
 func deriveKey(pass []byte, kdf KDF) ([]byte, error) {
-	if kdf.Alg != "argon2id" || kdf.Time == 0 || kdf.MemoryKiB < 64*1024 || kdf.Threads == 0 {
+	if kdf.Alg != "argon2id" || kdf.Time == 0 || kdf.MemoryKiB < minMemoryKiB || kdf.Threads == 0 {
 		return nil, errors.New("私钥文件的口令派生参数不合法")
 	}
 	salt, err := base64.StdEncoding.DecodeString(kdf.Salt)
@@ -85,7 +92,7 @@ func Generate(kid string, pass []byte, now time.Time) (*KeyFile, ed25519.PublicK
 	seed := priv.Seed()
 	defer wipe(seed)
 	defer wipe(priv)
-	kdf := defaultKDF
+	kdf := kdfParams
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, nil, err

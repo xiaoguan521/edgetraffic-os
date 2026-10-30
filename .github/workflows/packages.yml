@@ -1,5 +1,6 @@
-# 软件包校验（不发布）：静态构建 syapp → 生成 RPM / DEB → 在 9 个发行版容器中安装冒烟。
-# 改动数据面构建、软件包定义或发布脚本的 PR 自动运行；正式发布由 release.yml 完成。
+# 软件包校验（不发布）：静态构建 syapp → 生成 RPM / DEB → 在发行版容器中并行安装冒烟。
+# 改动数据面构建、软件包定义或发布脚本的 PR 自动运行，使用代表性子集（CentOS 7、Rocky 9、Ubuntu 24.04 与两个独立模式场景）；
+# 合并到 main 与正式发布由 release.yml 运行完整的 9 个发行版，并且总是重新构建 syapp（不使用缓存）。
 name: packages
 
 on:
@@ -38,8 +39,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # syapp 的产物只取决于数据面源码、补丁、依赖清单与构建脚本（不含产品版本号与日期），按这些文件的哈希缓存；
+      # 任何一项改动都会重新构建。release.yml 不使用这个缓存。
+      - name: cache static syapp
+        id: syapp-cache
+        uses: actions/cache@v4
+        with:
+          path: dist/syapp
+          key: syapp-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syapp-static.sh') }}
       - name: static syapp (glibc 2.17)
+        if: steps.syapp-cache.outputs.cache-hit != 'true'
         run: scripts/release/build-syapp-static.sh dist/syapp
+      - name: static syapp from cache
+        if: steps.syapp-cache.outputs.cache-hit == 'true'
+        run: ls -l dist/syapp && tar -tzf dist/syapp/syapp-*.tar.gz opt/syapp/sbin/syapp
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: rpm / deb
@@ -48,5 +61,7 @@ jobs:
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           export PATH="$(go env GOPATH)/bin:$PATH"
           scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
-      - name: install on 9 distributions
+      - name: install smoke (PR subset, parallel)
+        env:
+          SMOKE_SET: pr
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}

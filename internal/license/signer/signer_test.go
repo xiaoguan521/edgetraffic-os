@@ -17,6 +17,38 @@ import (
 
 var now = time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 
+// 本包的大多数测试关注格式与流程，用轻量的口令派生参数加快运行（-race 下 256 MiB 很慢）；
+// 生产参数由 TestProductionKDF 单独覆盖。
+func TestMain(m *testing.M) {
+	kdfParams = KDF{Alg: "argon2id", Time: 1, MemoryKiB: 8 * 1024, Threads: 1}
+	minMemoryKiB = 8 * 1024
+	os.Exit(m.Run())
+}
+
+// 用生产参数完整走一遍：生成的文件记录的就是生产参数，并且能用口令打开。
+func TestProductionKDF(t *testing.T) {
+	savedParams, savedMin := kdfParams, minMemoryKiB
+	kdfParams, minMemoryKiB = ProductionKDF, 64*1024
+	defer func() { kdfParams, minMemoryKiB = savedParams, savedMin }()
+	kf, pub, err := Generate("etos-prod-2027", []byte(pass), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kf.KDF.Time != 3 || kf.KDF.MemoryKiB != 256*1024 || kf.KDF.Threads != 4 || kf.KDF.Alg != "argon2id" {
+		t.Fatalf("key file not written with production parameters: %+v", kf.KDF)
+	}
+	priv, err := kf.Open([]byte(pass))
+	if err != nil || !pub.Equal(priv.Public()) {
+		t.Fatalf("open with production parameters: %v", err)
+	}
+	// 生产下限：低于 64 MiB 的文件拒绝打开（防止被替换成弱参数的文件）
+	weak := *kf
+	weak.KDF.MemoryKiB = 8 * 1024
+	if _, err := weak.Open([]byte(pass)); err == nil {
+		t.Fatal("weak KDF parameters accepted under the production minimum")
+	}
+}
+
 const pass = "correct horse battery staple"
 
 func TestKeyFileRoundTrip(t *testing.T) {
