@@ -91,6 +91,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	v1.POST("/setup", s.setup)
 	v1.POST("/auth/login", s.login)
 	v1.POST("/auth/logout", s.logout)
+	v1.GET("/auth/oidc/start", s.oidcStart)
+	v1.GET("/auth/oidc/callback", s.oidcCallback)
 
 	a := v1.Group("", s.auth)
 	a.GET("/auth/me", s.me)
@@ -195,6 +197,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/audit/export", role(store.RoleAdmin), s.feature(license.FeatureAuditExport), s.exportAudit)
 
 	a.PUT("/auth/password", s.changePassword)
+	a.GET("/sso/oidc", role(store.RoleAdmin), s.getOIDC)
+	a.PUT("/sso/oidc", role(store.RoleAdmin), s.putOIDC)
 	a.GET("/sso/ldap", role(store.RoleAdmin), s.getLDAP)
 	a.PUT("/sso/ldap", role(store.RoleAdmin), s.putLDAP)
 	a.POST("/sso/ldap/test", role(store.RoleAdmin), s.testLDAP)

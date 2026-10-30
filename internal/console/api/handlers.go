@@ -74,7 +74,7 @@ func (s *Server) userCount() int64 {
 }
 
 func (s *Server) setupStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"initialized": s.userCount() > 0, "license": s.licView()})
+	c.JSON(http.StatusOK, gin.H{"initialized": s.userCount() > 0, "license": s.licView(), "oidc": s.oidcEnabled()})
 }
 
 type credentials struct {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuthFrame from '../components/AuthFrame.vue'
 import { api, errMsg } from '../api/client'
@@ -10,7 +10,11 @@ const route = useRoute()
 const session = useSession()
 const form = reactive({ username: '', password: '' })
 const loading = ref(false)
-const error = ref('')
+const error = ref((route.query.sso_error as string) || '')
+const sso = ref(false)
+onMounted(async () => {
+  sso.value = !!(await api.get('/setup/status').catch(() => ({}))).oidc
+})
 
 async function submit() {
   error.value = ''
@@ -43,6 +47,7 @@ async function submit() {
       </a-form-item>
       <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 16px" />
       <a-button type="primary" html-type="submit" size="large" block :loading="loading">登录</a-button>
+      <a-button v-if="sso" size="large" block style="margin-top: 12px" href="/api/v1/auth/oidc/start">使用单点登录</a-button>
     </a-form>
   </AuthFrame>
 </template>

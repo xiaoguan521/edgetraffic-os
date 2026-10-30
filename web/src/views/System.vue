@@ -123,6 +123,22 @@ async function savePolicy() {
     message.error(errMsg(e))
   }
 }
+const oidcCfg = ref<any>(null)
+const origin = window.location.origin
+onMounted(async () => {
+  if (!session.can('admin')) return
+  oidcCfg.value = await api.get('/sso/oidc')
+  oidcCfg.value.config.role_map ||= []
+})
+async function saveOIDC() {
+  try {
+    oidcCfg.value = await api.put('/sso/oidc', oidcCfg.value.config)
+    oidcCfg.value.config.role_map ||= []
+    message.success('已保存')
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 async function saveLDAP() {
   try {
     ldap.value = await api.put('/sso/ldap', ldap.value.config)
@@ -296,6 +312,31 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <label>会话空闲超时（分钟）<a-input-number v-model:value="pol.idle_minutes" :min="5" :max="480" /></label>
         <label>会话最长有效期（小时）<a-input-number v-model:value="pol.max_hours" :min="1" :max="24" /></label>
       </div>
+    </section>
+
+    <section class="panel" v-if="session.can('admin') && oidcCfg">
+      <div class="uhead">
+        <h2>OIDC 单点登录</h2>
+        <a-button size="small" type="primary" :disabled="!session.writable" @click="saveOIDC">保存</a-button>
+      </div>
+      <p class="muted">授权码 + PKCE。登录页出现“使用单点登录”按钮；首次登录自动创建账号，角色按声明映射并每次刷新。<template v-if="!oidcCfg.licensed">当前授权不包含单点登录（专业版及以上）。</template></p>
+      <div class="pol">
+        <label class="wide">启用<a-switch v-model:checked="oidcCfg.config.enabled" :disabled="!oidcCfg.licensed" /></label>
+        <label class="wide">Issuer<a-input v-model:value="oidcCfg.config.issuer" placeholder="https://sso.example.com/realms/corp" /></label>
+        <label>Client ID<a-input v-model:value="oidcCfg.config.client_id" /></label>
+        <label>Client Secret<a-input-password v-model:value="oidcCfg.config.client_secret" :placeholder="oidcCfg.config.has_client_secret ? '已保存，留空不改' : ''" autocomplete="new-password" /></label>
+        <label class="wide">回调地址（在身份提供方登记）<a-input v-model:value="oidcCfg.config.redirect_url" :placeholder="`${origin}/api/v1/auth/oidc/callback`" /></label>
+        <label>用户名声明<a-input v-model:value="oidcCfg.config.username_claim" /></label>
+        <label>角色声明<a-input v-model:value="oidcCfg.config.role_claim" /></label>
+        <label>默认角色<a-select v-model:value="oidcCfg.config.default_role" :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" /></label>
+      </div>
+      <div class="sub" style="margin: 8px 0 4px">角色映射（声明中的值 → 角色，取最高）</div>
+      <div v-for="(m, i) in oidcCfg.config.role_map" :key="i" class="rm">
+        <a-input v-model:value="m.group" placeholder="edge-admins" />
+        <a-select v-model:value="m.role" style="width: 120px" :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" />
+        <a class="danger" @click="oidcCfg.config.role_map.splice(i, 1)">移除</a>
+      </div>
+      <a @click="(oidcCfg.config.role_map ||= []).push({ group: '', role: 'viewer' })">添加映射</a>
     </section>
 
     <section class="panel" v-if="session.can('admin') && ldap">

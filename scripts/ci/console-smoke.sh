@@ -172,6 +172,10 @@ expect "停用前会话可用" "$("${C4[@]}" "$B/auth/me")" '"username":"lk1"'
 "${C[@]}" -X PUT "$B/users/$lid" -d '{"disabled":true}' >/dev/null
 expect "停用立即生效（已有会话失效）" "$("${C4[@]}" "$B/auth/me")" "UNAUTHORIZED"
 expect "不能删除自己" "$("${C[@]}" -X DELETE "$B/users/1")" "SELF"
+expect "OIDC 设置要求 https" "$("${C[@]}" -X PUT "$B/sso/oidc" -d '{"enabled":true,"issuer":"http://sso.example.com","client_id":"c","redirect_url":"https://x/api/v1/auth/oidc/callback"}')" "BAD_OIDC"
+expect "保存 OIDC 设置（密钥不回显）" "$("${C[@]}" -X PUT "$B/sso/oidc" -d '{"enabled":true,"issuer":"https://sso.invalid","client_id":"console","client_secret":"oidc-secret-x","redirect_url":"https://console.invalid/api/v1/auth/oidc/callback"}')" '"has_client_secret":true'
+expect "登录页显示单点登录" "$("${C[@]}" "$B/setup/status")" '"oidc":true'
+"${C[@]}" -X PUT "$B/sso/oidc" -d '{"enabled":false,"issuer":"https://sso.invalid","client_id":"console","redirect_url":"https://console.invalid/api/v1/auth/oidc/callback"}' >/dev/null
 expect "LDAP 设置（需 ldaps 或 StartTLS）" "$("${C[@]}" -X PUT "$B/sso/ldap" -d '{"enabled":true,"url":"http://x","base_dn":"dc=x","user_filter":"(uid=%s)"}')" "BAD_LDAP"
 
 echo "== 审计"
