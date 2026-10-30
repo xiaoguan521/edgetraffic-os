@@ -129,6 +129,15 @@ jobs:
 
       - name: build syapp (static, glibc 2.17)
         run: scripts/release/build-syapp-static.sh dist/syapp
+      # 发布构建总是重新编译 syapp（从不读取缓存）；main 上把这次的新产物写入缓存，
+      # 供拉取请求的 packages 工作流复用（PR 只能读取自己分支与 main 的缓存）。
+      - name: save static syapp for pull requests
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true   # 同一 key 已存在（例如重跑）时保存会失败，不影响发布
+        uses: actions/cache/save@v4
+        with:
+          path: dist/syapp
+          key: syapp-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syapp-static.sh') }}
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: package
@@ -146,7 +155,9 @@ jobs:
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
           ls -l "$OUT"
-      - name: smoke test rpm / deb on 9 distributions
+      - name: smoke test rpm / deb on 9 distributions + standalone (full, parallel)
+        env:
+          SMOKE_SET: full
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
 
       - name: smoke test node package (systemd install + enroll + publish)
