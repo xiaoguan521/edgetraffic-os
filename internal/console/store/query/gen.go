@@ -25,6 +25,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AlertEvent:       newAlertEvent(db, opts...),
 		AlertRule:        newAlertRule(db, opts...),
 		AuditLog:         newAuditLog(db, opts...),
+		CanaryRelease:    newCanaryRelease(db, opts...),
 		Certificate:      newCertificate(db, opts...),
 		ConfigImport:     newConfigImport(db, opts...),
 		DataplanePackage: newDataplanePackage(db, opts...),
@@ -58,6 +59,7 @@ type Query struct {
 	AlertEvent       alertEvent
 	AlertRule        alertRule
 	AuditLog         auditLog
+	CanaryRelease    canaryRelease
 	Certificate      certificate
 	ConfigImport     configImport
 	DataplanePackage dataplanePackage
@@ -94,6 +96,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AlertEvent:       q.AlertEvent.clone(db),
 		AlertRule:        q.AlertRule.clone(db),
 		AuditLog:         q.AuditLog.clone(db),
+		CanaryRelease:    q.CanaryRelease.clone(db),
 		Certificate:      q.Certificate.clone(db),
 		ConfigImport:     q.ConfigImport.clone(db),
 		DataplanePackage: q.DataplanePackage.clone(db),
@@ -135,6 +138,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AlertEvent:       q.AlertEvent.replaceDB(db),
 		AlertRule:        q.AlertRule.replaceDB(db),
 		AuditLog:         q.AuditLog.replaceDB(db),
+		CanaryRelease:    q.CanaryRelease.replaceDB(db),
 		Certificate:      q.Certificate.replaceDB(db),
 		ConfigImport:     q.ConfigImport.replaceDB(db),
 		DataplanePackage: q.DataplanePackage.replaceDB(db),
@@ -166,6 +170,7 @@ type queryCtx struct {
 	AlertEvent       IAlertEventDo
 	AlertRule        IAlertRuleDo
 	AuditLog         IAuditLogDo
+	CanaryRelease    ICanaryReleaseDo
 	Certificate      ICertificateDo
 	ConfigImport     IConfigImportDo
 	DataplanePackage IDataplanePackageDo
@@ -197,6 +202,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AlertEvent:       q.AlertEvent.WithContext(ctx),
 		AlertRule:        q.AlertRule.WithContext(ctx),
 		AuditLog:         q.AuditLog.WithContext(ctx),
+		CanaryRelease:    q.CanaryRelease.WithContext(ctx),
 		Certificate:      q.Certificate.WithContext(ctx),
 		ConfigImport:     q.ConfigImport.WithContext(ctx),
 		DataplanePackage: q.DataplanePackage.WithContext(ctx),

@@ -178,6 +178,10 @@ expect "登录页显示单点登录" "$("${C[@]}" "$B/setup/status")" '"oidc":tr
 "${C[@]}" -X PUT "$B/sso/oidc" -d '{"enabled":false,"issuer":"https://sso.invalid","client_id":"console","redirect_url":"https://console.invalid/api/v1/auth/oidc/callback"}' >/dev/null
 expect "LDAP 设置（需 ldaps 或 StartTLS）" "$("${C[@]}" -X PUT "$B/sso/ldap" -d '{"enabled":true,"url":"http://x","base_dn":"dc=x","user_filter":"(uid=%s)"}')" "BAD_LDAP"
 
+echo "== 批量与灰度发布（P9）"
+expect "批量发布逐组返回结果" "$("${C[@]}" -X POST "$B/releases/batch" -d '{"group_ids":[1],"note":"batch"}')" '"results":[{"group_id":1'
+expect "专业版不含灰度发布" "$("${C[@]}" -X POST "$B/node-groups/1/canary" -d '{}')" "LICENSE_FEATURE_DENIED"
+
 echo "== 四层代理（P9）"
 expect "保留端口被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":443,"servers":[{"addr":"10.0.0.41:3306"}]}}')" "INVALID_STREAM"
 expect "回源网段之外被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":3306,"servers":[{"addr":"169.254.169.254:80"}]}}')" "INVALID_STREAM"

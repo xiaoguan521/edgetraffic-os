@@ -291,6 +291,22 @@ type StreamService struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// CanaryRelease 是一次灰度发布（P9，授权功能 canary）：按批次发布并观察 5xx 率，超阈值自动回滚。
+type CanaryRelease struct {
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	GroupID        uint       `gorm:"index" json:"group_id"`
+	RevisionID     string     `gorm:"size:16" json:"revision_id"`
+	BaseRevisionID string     `gorm:"size:16" json:"base_revision_id"`
+	Status         string     `gorm:"size:16" json:"status"` // running | done | rolled_back | failed
+	Options        string     `json:"-"`                     // JSON
+	Batches        string     `json:"-"`                     // JSON：每批节点、发布记录与观察结果
+	Note           string     `json:"note"`
+	Message        string     `json:"message"`
+	CreatedBy      string     `gorm:"size:64" json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+	FinishedAt     *time.Time `json:"finished_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -390,5 +406,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &CanaryRelease{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

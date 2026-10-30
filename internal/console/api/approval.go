@@ -2,9 +2,11 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 )
@@ -127,4 +129,89 @@ func (s *Server) cancelRelease(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// batchPublish 一次发布多个节点组（授权功能 batch_release）：逐组触发发布；开启发布审批时逐组提交申请。
+// 某个组没有变更或正忙不影响其他组，结果逐组返回。
+func (s *Server) batchPublish(c *gin.Context) {
+	var req struct {
+		GroupIDs []uint `json:"group_ids"`
+		Note     string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	if len(req.GroupIDs) == 0 || len(req.GroupIDs) > 100 {
+		fail(c, http.StatusBadRequest, "BAD_REQUEST", "请选择 1–100 个节点组")
+		return
+	}
+	type result struct {
+		GroupID      uint   `json:"group_id"`
+		DeploymentID uint   `json:"deployment_id,omitempty"`
+		RequestID    uint   `json:"request_id,omitempty"`
+		Error        string `json:"error,omitempty"`
+	}
+	approval := s.Deploy.ApprovalEnabled()
+	var out []result
+	for _, gid := range req.GroupIDs {
+		r := result{GroupID: gid}
+		if approval {
+			rr, err := s.Deploy.RequestRelease(gid, req.Note, c.GetString("user"), c.ClientIP())
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.RequestID = rr.ID
+			}
+		} else {
+			dep, err := s.Deploy.Publish(gid, req.Note, c.GetString("user"), c.ClientIP())
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.DeploymentID = dep.ID
+			}
+		}
+		out = append(out, r)
+	}
+	s.audit(c, "release.batch", "node_group", "batch", map[string]any{"groups": req.GroupIDs, "approval": approval, "results": out})
+	c.JSON(http.StatusOK, gin.H{"approval": approval, "results": out})
+}
+
+// startCanary 灰度发布（授权功能 canary）。
+func (s *Server) startCanary(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Note           string  `json:"note"`
+		Percents       []int   `json:"percents"`
+		ObserveMinutes int     `json:"observe_minutes"`
+		Max5xxPercent  float64 `json:"max_5xx_percent"`
+		MinRequests    uint64  `json:"min_requests"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	if req.ObserveMinutes < 0 || req.ObserveMinutes > 120 {
+		fail(c, http.StatusBadRequest, "BAD_REQUEST", "观察时长 0–120 分钟")
+		return
+	}
+	cr, err := s.Deploy.StartCanary(id, req.Note, c.GetString("user"), c.ClientIP(), deploy.CanaryOptions{Percents: req.Percents,
+		Observe: time.Duration(req.ObserveMinutes) * time.Minute, Max5xxPercent: req.Max5xxPercent, MinRequests: req.MinRequests})
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, cr)
+}
+
+func (s *Server) listCanaries(c *gin.Context) {
+	v, err := s.Deploy.ListCanaries(queryGroup(c))
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
 }

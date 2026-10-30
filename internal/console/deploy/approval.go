@@ -192,6 +192,9 @@ func (d *Service) Approve(id uint, comment, user, ip string) (*store.Deployment,
 	if req.RequestedBy == user {
 		return nil, ErrSelfApproval
 	}
+	if d.canaryRunning(req.GroupID) {
+		return nil, ErrCanaryRunning
+	}
 	lk := d.groupLock(req.GroupID)
 	if !lk.TryLock() {
 		return nil, ErrBusy

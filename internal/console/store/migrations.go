@@ -27,6 +27,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300007_dataplane_upgrades", Migrate: migrateDataplaneUpgrades},
 		{ID: "202610300008_account_security", Migrate: migrateAccountSecurity},
 		{ID: "202610300009_streams", Migrate: migrateStreams},
+		{ID: "202610300010_canary", Migrate: migrateCanary},
 	}
 }
 
@@ -472,4 +473,24 @@ func migrateStreams(tx *gorm.DB) error {
 		UpdatedAt time.Time
 	}
 	return tx.AutoMigrate(&StreamService{})
+}
+
+// ---- 202610300010_canary：灰度发布（P9）----
+
+func migrateCanary(tx *gorm.DB) error {
+	type CanaryRelease struct {
+		ID             uint   `gorm:"primaryKey"`
+		GroupID        uint   `gorm:"index"`
+		RevisionID     string `gorm:"size:16"`
+		BaseRevisionID string `gorm:"size:16"`
+		Status         string `gorm:"size:16"`
+		Options        string
+		Batches        string
+		Note           string
+		Message        string
+		CreatedBy      string `gorm:"size:64"`
+		CreatedAt      time.Time
+		FinishedAt     *time.Time
+	}
+	return tx.AutoMigrate(&CanaryRelease{})
 }

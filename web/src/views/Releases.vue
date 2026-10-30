@@ -28,6 +28,46 @@ const reqFiles = ref<string[]>([])
 const reviewComment = ref('')
 const reviewing = ref(false)
 const recentReqs = ref<any[]>([])
+const canaries = ref<any[]>([])
+const canaryOpen = ref(false)
+const canaryForm = ref({ percents: '10,50,100', observe_minutes: 5, max_5xx_percent: 5, min_requests: 50 })
+const batchOpen = ref(false)
+const batchGroups = ref<number[]>([])
+const hasFeature = (f: string) => !!session.license?.features?.includes(f)
+async function loadCanaries() {
+  canaries.value = hasFeature('canary') ? await api.get('/canaries', { group_id: gid.value }) : []
+}
+async function startCanary() {
+  try {
+    await api.post(`/node-groups/${gid.value}/canary`, {
+      note: note.value, percents: canaryForm.value.percents.split(',').map((x) => Number(x.trim())).filter(Boolean),
+      observe_minutes: canaryForm.value.observe_minutes, max_5xx_percent: canaryForm.value.max_5xx_percent, min_requests: canaryForm.value.min_requests,
+    })
+    canaryOpen.value = false
+    note.value = ''
+    message.success('已开始灰度发布')
+    await loadCanaries()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function batchPublish() {
+  try {
+    const r = await api.post('/releases/batch', { group_ids: batchGroups.value, note: note.value })
+    batchOpen.value = false
+    const ok = r.results.filter((x: any) => !x.error).length
+    message.success(`${r.approval ? '已提交审批' : '已开始发布'}：${ok} / ${r.results.length} 个节点组`)
+    r.results.filter((x: any) => x.error).forEach((x: any) => message.warning(`${groups.value.find((g) => g.id === x.group_id)?.name}：${x.error}`))
+    await loadAll()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+let canaryPoll: number | undefined
+const canaryStatus: Record<string, { t: string; c: string }> = {
+  running: { t: '进行中', c: 'processing' }, done: { t: '已完成', c: 'green' }, rolled_back: { t: '已自动回滚', c: 'orange' }, failed: { t: '失败', c: 'red' },
+}
+const batchStatus: Record<string, string> = { pending: '等待', deploying: '发布中', observing: '观察中', passed: '通过', failed: '失败', rolled_back: '已回滚', skipped: '未执行' }
 
 async function loadGroups() {
   groups.value = await api.get('/node-groups')
@@ -60,7 +100,7 @@ async function loadApproval() {
 }
 async function loadAll() {
   await loadGroups()
-  await Promise.all([loadPreview(), loadHistory(), loadApproval()])
+  await Promise.all([loadPreview(), loadHistory(), loadApproval(), loadCanaries()])
 }
 
 let poll: number | undefined
@@ -149,12 +189,19 @@ onMounted(async () => {
   const running = deployments.value.find((d) => d.status === 'APPLYING')
   if (running) watchDeployment(running.id)
 })
-onUnmounted(() => clearInterval(poll))
+onUnmounted(() => {
+  clearInterval(poll)
+  clearInterval(canaryPoll)
+})
+canaryPoll = window.setInterval(() => {
+  if (canaries.value.some((c) => c.status === 'running')) loadCanaries().then(loadHistory)
+}, 2000)
 watch(gid, () => {
   active.value = null
   loadPreview()
   loadHistory()
   loadApproval()
+  loadCanaries()
 })
 
 const changeText: Record<string, string> = { added: '新增', removed: '删除', modified: '修改' }
@@ -231,6 +278,13 @@ function lastDeploy(rev: string) {
               {{ approval.enabled ? '提交发布申请' : `发布到 ${group?.name}` }}
             </a-button>
           </div>
+          <div class="more" v-if="session.can('releaser') && !approval.enabled">
+            <a v-if="hasFeature('canary')" @click="canaryOpen = true">灰度发布…</a>
+            <a v-if="hasFeature('batch_release') && groups.length > 1" @click="batchGroups = [gid]; batchOpen = true">批量发布到多个节点组…</a>
+          </div>
+          <div class="more" v-else-if="session.can('releaser') && hasFeature('batch_release') && groups.length > 1">
+            <a @click="batchGroups = [gid]; batchOpen = true">批量提交多个节点组的发布申请…</a>
+          </div>
           <div v-if="approval.enabled" class="hint">已开启发布审批：提交后由另一位发布员审批，批准后才下发。{{ pendingReq ? '当前已有待审批的申请。' : '' }}</div>
           <div v-if="!session.writable" class="ro">授权已失效，暂不能发布新版本；回滚不受影响。</div>
         </template>
@@ -280,6 +334,43 @@ function lastDeploy(rev: string) {
         </template>
       </a-table>
     </section>
+
+    <section class="panel" v-for="cy in canaries.slice(0, 3)" :key="'c' + cy.id">
+      <div class="phead">
+        <h2>灰度 #{{ cy.id }} <span class="num">{{ cy.revision_id }}</span></h2>
+        <span class="cur"><a-tag :color="canaryStatus[cy.status]?.c">{{ canaryStatus[cy.status]?.t }}</a-tag>{{ cy.created_by }}，{{ dayjs(cy.created_at).format('MM-DD HH:mm') }}</span>
+      </div>
+      <p class="hint">{{ cy.message || `每批观察 ${Math.round(cy.options.observe / 6e10)} 分钟，5xx 占比超过 ${cy.options.max_5xx_percent}% 自动回滚到 ${cy.base_revision_id || '原版本'}` }}</p>
+      <a-table :data-source="cy.batches" :row-key="(r: any) => r.nodes.join(',')" :pagination="false" size="small"
+        :columns="[{ title: '批次', key: 'i', width: 70 }, { title: '节点数', key: 'n', width: 80 }, { title: '状态', key: 'st', width: 100 }, { title: '观察结果', key: 'r' }]">
+        <template #bodyCell="{ column, record, index }">
+          <template v-if="column.key === 'i'">{{ index + 1 }}</template>
+          <template v-else-if="column.key === 'n'">{{ record.nodes.length }}</template>
+          <template v-else-if="column.key === 'st'">{{ batchStatus[record.status] }}</template>
+          <template v-else-if="column.key === 'r'">
+            <span v-if="record.requests">{{ record.requests }} 请求，5xx {{ record.errors_5xx }}（{{ record.rate.toFixed(1) }}%）</span>
+            <span class="sub"> {{ record.message }}</span>
+          </template>
+        </template>
+      </a-table>
+    </section>
+
+    <a-modal v-model:open="canaryOpen" title="灰度发布" ok-text="开始灰度" @ok="startCanary">
+      <p class="hint">新版本按批次下发，每批观察后比较这些节点的 5xx 占比；超过阈值自动回滚已灰度的节点并停止，线上版本保持不变。</p>
+      <a-form layout="vertical">
+        <a-form-item label="批次（累计百分比）"><a-input v-model:value="canaryForm.percents" placeholder="10,50,100" /></a-form-item>
+        <a-space>
+          <a-form-item label="每批观察（分钟）"><a-input-number v-model:value="canaryForm.observe_minutes" :min="1" :max="120" /></a-form-item>
+          <a-form-item label="5xx 阈值（%）"><a-input-number v-model:value="canaryForm.max_5xx_percent" :min="0.1" :max="100" /></a-form-item>
+          <a-form-item label="最少请求数"><a-input-number v-model:value="canaryForm.min_requests" :min="1" /></a-form-item>
+        </a-space>
+        <a-form-item label="发布说明"><a-input v-model:value="note" /></a-form-item>
+      </a-form>
+    </a-modal>
+    <a-modal v-model:open="batchOpen" title="批量发布" :ok-text="approval.enabled ? '逐组提交申请' : '逐组发布'" @ok="batchPublish">
+      <a-checkbox-group v-model:value="batchGroups" :options="groups.map((g) => ({ value: g.id, label: g.name }))" />
+      <a-input v-model:value="note" placeholder="发布说明" style="margin-top: 12px" />
+    </a-modal>
 
     <section class="panel" v-if="recentReqs.length">
       <h2>发布申请记录</h2>
@@ -358,6 +449,12 @@ function lastDeploy(rev: string) {
   margin: 8px 0 0;
   font-size: 13px;
   color: #6b7c80;
+}
+.more {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 13px;
 }
 .req {
   border-color: #e3c56b;

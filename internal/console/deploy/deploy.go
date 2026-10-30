@@ -233,6 +233,9 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 	if d.ApprovalEnabled() {
 		return nil, ErrApprovalRequired
 	}
+	if d.canaryRunning(groupID) {
+		return nil, ErrCanaryRunning
+	}
 	lk := d.groupLock(groupID)
 	if !lk.TryLock() {
 		return nil, ErrBusy
@@ -516,6 +519,7 @@ func (d *Service) start(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision,
 
 func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deployment, nodes []store.Node) {
 	checks := d.postChecks(rev)
+	ag := d.agents()
 	var wg sync.WaitGroup
 	results := make([]string, len(nodes))
 	for i := range nodes {
@@ -534,7 +538,7 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 				_, _ = dnq.WithContext(bg).Where(dnq.ID.Eq(dn.ID)).UpdateSimple(set...)
 				results[i] = status
 			}
-			if !d.GW.Online(n.ID) {
+			if !ag.Online(n.ID) {
 				upd("OFFLINE", "节点离线，上线后自动对齐", "", true)
 				return
 			}
@@ -547,13 +551,13 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			var res *agentv1.CommandResult
 			if dep.Kind == "rollback" {
 				// 回滚优先切换节点本地已有的版本：不依赖授权状态，过期时也可用（规格书 8.6）
-				res, err = d.GW.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: rev.ID}}}, ApplyTimeout)
+				res, err = ag.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: rev.ID}}}, ApplyTimeout)
 				if err == nil && res.Status == agentv1.CommandResult_REJECTED && strings.Contains(res.Message, "not present") {
 					res = nil // 本地没有该版本：退回到重新下发
 				}
 			}
 			if res == nil && err == nil {
-				res, err = d.GW.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
+				res, err = ag.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
 					RevisionId: rev.ID, ParentRevisionId: cur.AppliedRevision, BundleSha256: rev.Digest, PostChecks: checks, TimeoutSeconds: int32(ApplyTimeout / time.Second),
 				}}}, ApplyTimeout)
 			}
@@ -597,7 +601,7 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 	q := d.q()
 	dp, ng := q.Deployment, q.NodeGroup
 	_, _ = dp.WithContext(bg).Where(dp.ID.Eq(dep.ID)).UpdateSimple(dp.Status.Value(status), dp.FinishedAt.Value(time.Now()))
-	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" && dep.Kind != "restore" {
+	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" && dep.Kind != "restore" && dep.Kind != "canary" {
 		_, _ = ng.WithContext(bg).Where(ng.ID.Eq(g.ID)).Update(ng.CurrentRevisionID, rev.ID)
 	}
 	d.Log.Info("deployment finished", "id", dep.ID, "kind", dep.Kind, "revision", rev.ID, "status", status, "applied", applied, "failed", failed)
