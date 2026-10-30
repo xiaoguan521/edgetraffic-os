@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
+	"github.com/xiaoguan521/edgetraffic-os/internal/license/signer"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
 // 离线签名工具不得链接任何网络代码。
@@ -153,5 +156,46 @@ func TestOfflineCheck(t *testing.T) {
 	}
 	if err := a.offlineCheck(false); err != nil || !strings.Contains(h.err.String(), "警告") {
 		t.Fatalf("warning mode: %v %s", err, h.err.String())
+	}
+}
+
+// 升级包签名（规格书 12.6）：只接受 etos-pkg-* 密钥，签名文件能被 pkgsig 校验；License 密钥不能签升级包。
+func TestSignPackage(t *testing.T) {
+	h := newHarness(t)
+	pf := h.path("pass.txt")
+	if err := os.WriteFile(pf, []byte("correct horse battery staple"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys := h.path("keys")
+	if rc := h.run("", "keygen", "-kid", "etos-pkg-2027", "-out", keys, "-passphrase-file", pf); rc != 0 {
+		t.Fatalf("keygen pkg: %s", h.err.String())
+	}
+	if rc := h.run("", "keygen", "-kid", "etos-prod-2027", "-out", keys, "-passphrase-file", pf); rc != 0 {
+		t.Fatalf("keygen prod: %s", h.err.String())
+	}
+	pkg := h.path("syapp-1.30.7-1-amd64.tar.gz")
+	_ = os.WriteFile(pkg, []byte("fake package"), 0o644)
+	if rc := h.run("", "sign-package", "-key", filepath.Join(keys, "etos-prod-2027.key.json"), "-in", pkg, "-version", "1.30.7-1", "-arch", "amd64", "-passphrase-file", pf, "-yes"); rc == 0 {
+		t.Fatal("license key accepted for packages")
+	}
+	if rc := h.run("1.30.7-0\n", "sign-package", "-key", filepath.Join(keys, "etos-pkg-2027.key.json"), "-in", pkg, "-version", "1.30.7-1", "-arch", "amd64", "-passphrase-file", pf); rc == 0 {
+		t.Fatal("wrong confirmation accepted")
+	}
+	if rc := h.run("1.30.7-1\n", "sign-package", "-key", filepath.Join(keys, "etos-pkg-2027.key.json"), "-in", pkg, "-version", "1.30.7-1", "-arch", "amd64", "-passphrase-file", pf); rc != 0 {
+		t.Fatalf("sign-package: %s", h.err.String())
+	}
+	sb, err := os.ReadFile(pkg + ".sig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := pkgsig.Parse(sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kfb, _ := os.ReadFile(filepath.Join(keys, "etos-pkg-2027.key.json"))
+	kf, _ := signer.ParseKeyFile(kfb)
+	pub, _ := kf.Public()
+	if err := pkgsig.Verify(sig, []byte("fake package"), map[string]ed25519.PublicKey{"etos-pkg-2027": pub}); err != nil {
+		t.Fatal(err)
 	}
 }

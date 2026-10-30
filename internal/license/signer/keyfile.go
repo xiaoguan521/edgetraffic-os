@@ -82,8 +82,8 @@ func Generate(kid string, pass []byte, now time.Time) (*KeyFile, ed25519.PublicK
 	if err := CheckPassphrase(pass); err != nil {
 		return nil, nil, err
 	}
-	if !strings.HasPrefix(kid, "etos-prod-") {
-		return nil, nil, errors.New("正式密钥编号必须形如 etos-prod-<年份>，例如 etos-prod-2027")
+	if !strings.HasPrefix(kid, "etos-prod-") && !strings.HasPrefix(kid, "etos-pkg-") {
+		return nil, nil, errors.New("密钥编号必须形如 etos-prod-<年份>（License 签名）或 etos-pkg-<年份>（升级包签名，与 License 密钥分开）")
 	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

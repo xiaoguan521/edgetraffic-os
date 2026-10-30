@@ -14,8 +14,9 @@ RestartSec=5
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-# 经 sudo 调用的 syapp-wrapper（syapp -t / -s reload）与本服务共享挂载命名空间，需要写日志与缓存目录
-ReadWritePaths=/opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent -/run/syapp /var/log/syapp /var/cache/syapp -/run/sudo
+# 经 sudo 调用的 syapp-wrapper（syapp -t / -s reload / 热升级）与本服务共享挂载命名空间，需要写日志、缓存目录，
+# 以及热升级时的 /opt/syapp/versions 与 /opt/syapp/sbin（目录仍为 root 所有，agent 用户本身没有写权限）
+ReadWritePaths=/opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent -/run/syapp /var/log/syapp /var/cache/syapp -/run/sudo -/opt/syapp/versions /opt/syapp/sbin
 RuntimeDirectory=syapp-agent
 StateDirectory=syapp-agent
 

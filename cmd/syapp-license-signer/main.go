@@ -7,10 +7,12 @@
 //	syapp-license-signer inspect -in sign-request-B0012.json
 //	syapp-license-signer sign    -key etos-prod-2027.key.json -in sign-request-B0012.json [-out signed-B0012.json] [-log signer-log.jsonl] [-two-person]
 //	syapp-license-signer verify  -key etos-prod-2027.key.json -request sign-request-B0012.json -signed signed-B0012.json
+//	syapp-license-signer sign-package -key etos-pkg-2027.key.json -in syapp-1.30.7-1-amd64.tar.gz -name syapp -version 1.30.7-1 -arch amd64 [-variant standard]
 package main
 
 import (
 	"bufio"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license/signer"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
 
@@ -69,6 +72,8 @@ func (a *app) run(args []string) int {
 		err = a.sign(args[1:])
 	case "verify":
 		err = a.verify(args[1:])
+	case "sign-package":
+		err = a.signPackage(args[1:])
 	case "version", "-version":
 		fmt.Fprintln(a.out, version.String("license-signer"))
 	default:
@@ -83,7 +88,7 @@ func (a *app) run(args []string) int {
 }
 
 func (a *app) usage() {
-	fmt.Fprintln(a.errw, `用法：syapp-license-signer keygen|pubkey|inspect|sign|verify [参数]   （-h 查看各子命令参数）`)
+	fmt.Fprintln(a.errw, `用法：syapp-license-signer keygen|pubkey|inspect|sign|verify|sign-package [参数]   （-h 查看各子命令参数）`)
 }
 
 // offlineCheck 在 Linux 上检查是否有处于连接状态的网卡（只读 /sys，不使用网络库）。
@@ -371,4 +376,67 @@ func writeNew(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	return f.Close()
+}
+
+// signPackage 为数据面 / agent 升级包签名（规格书 12.6）。只接受 etos-pkg-* 密钥，与 License 签名密钥分开。
+func (a *app) signPackage(args []string) error {
+	fs := flag.NewFlagSet("sign-package", flag.ContinueOnError)
+	keyPath := fs.String("key", "", "升级包签名私钥文件（etos-pkg-*）")
+	in := fs.String("in", "", "升级包（tar.gz）")
+	name := fs.String("name", "syapp", "syapp | syapp-agent")
+	ver := fs.String("version", "", "版本号，如 1.30.7-1")
+	arch := fs.String("arch", "", "amd64 | arm64")
+	variant := fs.String("variant", "standard", "standard | gmssl | lua")
+	twoPerson := fs.Bool("two-person", false, "双人规则")
+	passFile := fs.String("passphrase-file", "", "从文件读取口令（仅用于演练与测试）")
+	yes := fs.Bool("yes", false, "跳过确认（仅用于演练与测试）")
+	requireOffline := fs.Bool("require-offline", false, "检测到联网时拒绝运行")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := a.offlineCheck(*requireOffline); err != nil {
+		return err
+	}
+	kf, err := a.loadKey(*keyPath)
+	if err != nil {
+		return err
+	}
+	if !pkgsig.KIDRe.MatchString(kf.KID) {
+		return fmt.Errorf("升级包只能用 etos-pkg-* 密钥签名（当前 %s）；License 签名密钥不能用于升级包", kf.KID)
+	}
+	data, err := os.ReadFile(*in)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.out, "升级包：%s\n名称：%s  版本：%s  架构：%s  变体：%s\n大小：%d 字节\n", filepath.Base(*in), *name, *ver, *arch, *variant, len(data))
+	if !*yes {
+		fmt.Fprintf(a.out, "\n核对构建记录（版本与 SHA-256 见 inspect 输出）后，输入版本号 %s 确认签名：", *ver)
+		line, _ := a.in.ReadString('\n')
+		if strings.TrimSpace(line) != *ver {
+			return errors.New("未确认，已取消")
+		}
+	}
+	pass, err := a.passphrase(*passFile, *twoPerson, false)
+	if err != nil {
+		return err
+	}
+	priv, err := kf.Open(pass)
+	if err != nil {
+		return err
+	}
+	defer signer.Wipe(priv)
+	sig, err := pkgsig.Sign(priv, kf.KID, *name, *ver, *arch, *variant, data)
+	if err != nil {
+		return err
+	}
+	pub, _ := kf.Public()
+	if err := pkgsig.Verify(sig, data, map[string]ed25519.PublicKey{kf.KID: pub}); err != nil {
+		return err
+	}
+	b, _ := json.MarshalIndent(sig, "", "  ")
+	if err := writeNew(*in+".sig", append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.out, "SHA-256：%s\n签名 → %s.sig\n", sig.SHA256, *in)
+	return nil
 }

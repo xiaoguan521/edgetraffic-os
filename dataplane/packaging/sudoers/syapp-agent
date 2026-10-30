@@ -1,6 +1,10 @@
-# /etc/sudoers.d/syapp-agent —— 只有这 4 行（规格书 5.5）
-# 参数安全由 syapp-wrapper 保证：test 只接受 ^r[0-9]{6,12}$。
+# /etc/sudoers.d/syapp-agent —— 只有这 7 行（规格书 5.5、12.8）
+# 参数安全由 syapp-wrapper 保证：test 只接受 ^r[0-9]{6,12}$，upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$，
+# 升级包必须带厂商升级包签名，由 wrapper 以 root 验签后才使用。
 syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper test *
 syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper reload
 syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper reopen
 syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper quit
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper upgrade-start *
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper upgrade-commit
+syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper upgrade-abort

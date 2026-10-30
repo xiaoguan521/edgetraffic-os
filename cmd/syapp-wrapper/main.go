@@ -16,6 +16,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(wrapper.ExitUsage)
 	}
+	if cmd.Upgrade != "" {
+		var err error
+		switch cmd.Upgrade {
+		case "start":
+			err = wrapper.UpgradeStart(wrapper.DefaultPaths(), cmd.Version)
+		case "commit":
+			err = wrapper.UpgradeCommit(wrapper.DefaultPaths())
+		case "abort":
+			err = wrapper.UpgradeAbort(wrapper.DefaultPaths())
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("ok")
+		return
+	}
 	c := exec.Command(cmd.Path, cmd.Args...) // 切片执行，不经过 shell
 	c.Env = cmd.Env
 	c.Stdout = os.Stdout

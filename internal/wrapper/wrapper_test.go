@@ -3,6 +3,7 @@ package wrapper
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,20 @@ func TestBuildAllowed(t *testing.T) {
 	}
 }
 
+func TestBuildUpgradeAllowed(t *testing.T) {
+	for argv, want := range map[string]Command{
+		"upgrade-start 1.30.6":   {Upgrade: "start", Version: "1.30.6"},
+		"upgrade-start 1.31.0-2": {Upgrade: "start", Version: "1.31.0-2"},
+		"upgrade-commit":         {Upgrade: "commit"},
+		"upgrade-abort":          {Upgrade: "abort"},
+	} {
+		got, err := Build(strings.Fields(argv))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: %+v %v", argv, got, err)
+		}
+	}
+}
+
 // 规格书 5.5 / 12.1 P2：wrapper 注入用例必须全部拒绝。
 func TestBuildRejected(t *testing.T) {
 	bad := [][]string{
@@ -57,6 +72,23 @@ func TestBuildRejected(t *testing.T) {
 		{"-c", "/tmp/x.conf"},
 		{"-p", "/tmp"},
 		{"sh", "-c", "id"},
+		// 升级子命令（规格书 12.8）
+		{"upgrade-start"},
+		{"upgrade-start", "1.30"},
+		{"upgrade-start", "1.30.6-"},
+		{"upgrade-start", "v1.30.6"},
+		{"upgrade-start", "1.30.6-1-2"},
+		{"upgrade-start", "1.30.6;id"},
+		{"upgrade-start", "1.30.6 "},
+		{"upgrade-start", "1.30.6\n"},
+		{"upgrade-start", "../../1.30.6"},
+		{"upgrade-start", "1.30.6/../../etc"},
+		{"upgrade-start", "1.30.6", "extra"},
+		{"upgrade-start", "-c"},
+		{"upgrade-commit", "now"},
+		{"upgrade-abort", "1.30.6"},
+		{"upgrade-restart"},
+		{"upgrade"},
 	}
 	for _, argv := range bad {
 		if _, err := Build(argv); !errors.Is(err, ErrUsage) {
