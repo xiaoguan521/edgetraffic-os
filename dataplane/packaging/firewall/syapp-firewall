@@ -36,7 +36,7 @@ case "$cmd" in
     command -v "$NFT" >/dev/null || die "未找到 nft（dnf install nftables / apt install nftables）"
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    "$AGENT" firewall render -ssh-from "$from" -ssh-port "$port" -allow-tcp "$tcp" -allow-udp "$udp" "${anyssh[@]}" > "$tmp" \
+    "$AGENT" firewall render -ssh-from "$from" -ssh-port "$port" -allow-tcp "$tcp" -allow-udp "$udp" ${anyssh[@]+"${anyssh[@]}"} > "$tmp" \
       || die "参数无效（见上）"
     # 防止把自己锁在外面：当前 SSH 会话的来源必须在 --ssh-from 中
     client=${SSH_CONNECTION:-}; client=${client%% *}

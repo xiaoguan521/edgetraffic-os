@@ -64,6 +64,7 @@ case "${1:-}" in
     mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syapp" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
     tar -C "$r" -xzf "$syapp_tgz"
     [[ -x "$r/opt/syapp/sbin/syapp" ]] || { echo "$syapp_tgz 中没有 opt/syapp/sbin/syapp" >&2; exit 2; }
+    go run -trimpath ./cmd/syapp-agent package-defaults -out "$r/opt/syapp"   # 初始版本与独立模式示例
     gobuild linux "$arch" "$r/usr/bin" ./cmd/syapp-agent
     gobuild linux "$arch" "$r/usr/libexec/syapp" ./cmd/syapp-wrapper
     cp dataplane/packaging/sudoers/syapp-agent "$r/etc/sudoers.d/syapp-agent"
@@ -71,6 +72,7 @@ case "${1:-}" in
        dataplane/packaging/systemd/syapp-firewall.service "$r/etc/systemd/system/"
     install -m 0755 dataplane/packaging/firewall/syapp-firewall "$r/usr/sbin/syapp-firewall"
     cp dataplane/packaging/logrotate/syapp "$r/etc/logrotate.d/syapp"
+    mkdir -p "$r/etc/tmpfiles.d" && cp dataplane/packaging/tmpfiles/syapp.conf "$r/etc/tmpfiles.d/syapp.conf"
     cp deploy/node/install.sh "$d/install.sh"
     cp docs/NOTICE "$d/NOTICE"
     cp scripts/release/README-node.txt "$d/README.txt"
@@ -85,8 +87,10 @@ case "${1:-}" in
     st="$WORK/stage"
     mkdir -p "$st/syapp" "$st/agent" "$st/console" "$st/scripts"
     tar -C "$st/syapp" -xzf "$syapp_tgz"
+    go run -trimpath ./cmd/syapp-agent package-defaults -out "$st/syapp/opt/syapp"   # syapp 软件包可独立使用
     cp dataplane/packaging/systemd/syapp.service "$st/syapp/syapp.service"
     cp dataplane/packaging/logrotate/syapp "$st/syapp/logrotate"
+    cp dataplane/packaging/tmpfiles/syapp.conf "$st/syapp/tmpfiles.conf"
     gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper
     cp dataplane/packaging/sudoers/syapp-agent "$st/agent/sudoers"
     cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"

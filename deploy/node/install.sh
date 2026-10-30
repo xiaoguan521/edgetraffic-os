@@ -4,20 +4,22 @@
 #   sudo ./install.sh                                   安装并以基线配置启动 syapp
 #   sudo ./install.sh --server H:P --token T --ca-fingerprint F
 #                                                       同时注册到控制台并启动 syapp-agent
+#   sudo ./install.sh ... --replace-local-config         本机原为独立模式且有自定义配置时，备份后由控制台接管
 #   sudo ./install.sh --firewall-ssh-from 10.0.0.0/8[,IP...]
 #                                                       同时启用节点防火墙（可选，见 syapp-firewall）
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""
+SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; REPLACE_LOCAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
     --token)          TOKEN="$2";  shift 2 ;;
     --ca-fingerprint) CAFP="$2";   shift 2 ;;
     --firewall-ssh-from) FW_FROM="$2"; shift 2 ;;
-    -h|--help)        sed -n '2,10p' "$0"; exit 0 ;;
+    --replace-local-config) REPLACE_LOCAL=(-replace-local-config); shift ;;
+    -h|--help)        sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -57,6 +59,7 @@ put "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrap
 put "$HERE/rootfs/usr/sbin/syapp-firewall" /usr/sbin/syapp-firewall
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syapp" /etc/logrotate.d/syapp
+install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syapp.conf" /etc/tmpfiles.d/syapp.conf
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syapp-agent" /etc/sudoers.d/syapp-agent.new
 visudo -cf /etc/sudoers.d/syapp-agent.new >/dev/null || { rm -f /etc/sudoers.d/syapp-agent.new; die "sudoers 校验失败"; }
 mv /etc/sudoers.d/syapp-agent.new /etc/sudoers.d/syapp-agent
@@ -87,7 +90,7 @@ echo "$(/opt/syapp/sbin/syapp -v 2>&1)，systemd 单元 syapp.service 已启动"
 if [[ -n "$SERVER$TOKEN$CAFP" ]]; then
   [[ -n "$SERVER" && -n "$TOKEN" && -n "$CAFP" ]] || die "--server、--token、--ca-fingerprint 需同时提供"
   echo "== 注册到控制台 $SERVER"
-  syapp-agent enroll -server "$SERVER" -token "$TOKEN" -ca-fingerprint "$CAFP"
+  syapp-agent enroll -server "$SERVER" -token "$TOKEN" -ca-fingerprint "$CAFP" ${REPLACE_LOCAL[@]+"${REPLACE_LOCAL[@]}"}
   chown -R syapp-agent:syapp /var/lib/syapp-agent
   systemctl enable --now syapp-agent.service
   echo "syapp-agent 已启动，几秒后节点会出现在控制台。"
