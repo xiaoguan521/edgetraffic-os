@@ -11,6 +11,12 @@ on:
       - "scripts/release/**"
       - ".github/workflows/packages.yml"
   workflow_dispatch:
+    inputs:
+      smoke_set:
+        description: "安装测试的场景集合：pr（代表性子集）或 full（9 个发行版 + 独立模式）"
+        type: choice
+        options: [pr, full]
+        default: pr
 
 permissions:
   contents: read
@@ -61,7 +67,7 @@ jobs:
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           export PATH="$(go env GOPATH)/bin:$PATH"
           scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
-      - name: install smoke (PR subset, parallel)
+      - name: install smoke (parallel; PR subset unless dispatched with full)
         env:
-          SMOKE_SET: pr
+          SMOKE_SET: ${{ inputs.smoke_set || 'pr' }}
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
