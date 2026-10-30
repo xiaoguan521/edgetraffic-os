@@ -22,6 +22,7 @@ type Input struct {
 
 	HTTPSnippets []NamedSnippet // 已审批的 http 层自定义片段（12.7）
 	Streams      []StreamProxy  // 四层代理（P9，授权功能 stream）
+	IPSets       []IPSet        // 节点组的 IP 集 / 地域库（P10，被规则的 ip_set 条件引用）
 }
 
 // AcmeChallenge 是一个 HTTP-01 挑战：节点对 /.well-known/acme-challenge/<Token> 返回 KeyAuth。
@@ -38,6 +39,7 @@ type Site struct {
 	ForceHTTPS bool     `json:"force_https"`
 	HTTP2      bool     `json:"http2"`
 	Routes     []Route  `json:"routes"`
+	Rules      []Rule   `json:"rules,omitempty"` // 访问规则（P10 规则积木，rules.go）
 
 	ServerSnippet string `json:"-"` // 已审批的 server 层自定义片段（不随站点表单保存，由控制台按审批状态填入）
 }
@@ -199,6 +201,15 @@ func (in *Input) Validate() error {
 		}
 	}
 
+	if err := validateIPSets(in); err != nil {
+		return err
+	}
+	for i := range in.Sites {
+		if err := validateRules(in, &in.Sites[i]); err != nil {
+			return err
+		}
+	}
+
 	names := map[string]bool{}
 	domains := map[string]string{}
 	for _, s := range in.Sites {
@@ -242,6 +253,9 @@ func (in *Input) Validate() error {
 		for _, r := range s.Routes {
 			if err := ValidatePath(r.Path); err != nil {
 				return fmt.Errorf("site %q: %w", s.Name, err)
+			}
+			if strings.HasPrefix(r.Path, reservedPrefix) {
+				return fmt.Errorf("site %q: path prefix %s is reserved", s.Name, reservedPrefix)
 			}
 			if r.Match != "prefix" && r.Match != "exact" {
 				return fmt.Errorf("site %q route %q: match must be prefix or exact", s.Name, r.Path)

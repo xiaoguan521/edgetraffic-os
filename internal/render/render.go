@@ -27,6 +27,8 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"routeDir": routeDir,
 	"indent":   indentSnippet,
 	"ident":    func(s string) string { return strings.ReplaceAll(s, "-", "_") }, // 变量名不能含 -
+	"luaHTTP":  renderLuaHTTP,
+	"luaLoad":  func() string { return luaLoadModules },
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
 // routeDir 为静态路由生成稳定的目录名，与路由在列表中的位置无关。
@@ -106,6 +108,13 @@ func Render(in Input) (*Bundle, error) {
 		}
 	}
 
+	if sets := usedIPSets(in); len(sets) > 0 {
+		files["conf.d/00-ipsets.conf"] = []byte(renderIPSets(sets))
+	}
+	for n, b := range luaFiles(in) {
+		files[n] = b
+	}
+
 	if len(in.Streams) > 0 {
 		if files["stream.d/streams.conf"], err = exec("stream.conf.tmpl", in); err != nil {
 			return nil, err
@@ -130,10 +139,13 @@ func Render(in Input) (*Bundle, error) {
 			return a.Path < b.Path
 		})
 		if files["conf.d/site-"+s.Name+".conf"], err = exec("site.conf.tmpl", struct {
-			Revision string
-			Site     Site
-			Routes   []Route
-		}{in.Revision, s, routes}); err != nil {
+			Revision    string
+			Site        Site
+			Routes      []Route
+			RulesHTTP   string
+			RulesServer string
+			AuthLoc     string
+		}{in.Revision, s, routes, renderRulesHTTP(s), renderRulesServer(s), renderAuthLocation(s)}); err != nil {
 			return nil, err
 		}
 		if s.HTTPS != nil {
@@ -190,6 +202,28 @@ func Repack(rev string, src map[string][]byte) *Bundle {
 	mj, _ := json.MarshalIndent(m, "", "  ")
 	files[ManifestName] = append(mj, '\n')
 	return &Bundle{Revision: rev, Files: files, Manifest: m}
+}
+
+// usedIPSets 返回被规则引用的 IP 集（未被引用的地域库不渲染，避免占用内存）。
+func usedIPSets(in Input) []IPSet {
+	used := map[string]bool{}
+	for _, s := range in.Sites {
+		for _, r := range s.Rules {
+			for _, c := range r.Conditions {
+				if c.Kind == "ip_set" {
+					used[c.Set] = true
+				}
+			}
+		}
+	}
+	var out []IPSet
+	for _, st := range in.IPSets {
+		if used[st.Name] {
+			out = append(out, st)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // GMFiles 返回国密双证书在 certs/ 下的文件名后缀与内容（续期替换文件时与渲染保持一致）。

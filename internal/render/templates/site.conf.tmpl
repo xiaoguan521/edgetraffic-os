@@ -1,5 +1,8 @@
 # site: {{ .Site.Name }}  （渲染器生成，禁止手改）
 {{- $s := .Site }}
+{{- if .RulesHTTP }}
+{{ .RulesHTTP }}
+{{- end }}
 {{- if and $s.HTTPS $s.ForceHTTPS }}
 
 server {
@@ -44,6 +47,12 @@ server {
     include  snippets/security.conf;
 {{- if not (and $s.HTTPS $s.ForceHTTPS) }}
     include  snippets/acme-challenge.conf;
+{{- end }}
+{{- if .RulesServer }}
+{{ .RulesServer }}
+{{- end }}
+{{- if .AuthLoc }}
+{{ .AuthLoc }}
 {{- end }}
 {{- range $i, $r := .Routes }}
 

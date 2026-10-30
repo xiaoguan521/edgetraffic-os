@@ -1,0 +1,18 @@
+# syapp-lua 附加包依赖（P10）：全部按发布标签 + 完整提交哈希锁定，克隆后校验提交哈希
+# （提交哈希是整个源码树内容的密码学摘要）。升级任一依赖时同时更新标签与提交哈希，并重新跑 CI 的 lua 验收。
+# 版本配套：lua-resty-core v0.1.32R1 要求 lua 模块 0.10.29（ngx_lua_version 10029）。许可：LuaJIT MIT，其余 BSD-2-Clause。
+LUAJIT_GIT=https://github.com/openresty/luajit2.git
+LUAJIT_TAG=v2.1-20261023
+LUAJIT_COMMIT=5d8d0a27bfa4595b24b8ed36123555fcd2bb2f8c
+NDK_GIT=https://github.com/vision5/ngx_devel_kit.git
+NDK_TAG=v0.3.4
+NDK_COMMIT=bd44d16302273052d6005d7bdb55f74e23813de3
+LUA_MODULE_GIT=https://github.com/openresty/lua-nginx-module.git
+LUA_MODULE_TAG=v0.10.29R2
+LUA_MODULE_COMMIT=16612cb0a2eb71273fc5b50a4d98e3c05559178a
+RESTY_CORE_GIT=https://github.com/openresty/lua-resty-core.git
+RESTY_CORE_TAG=v0.1.32R1
+RESTY_CORE_COMMIT=3ad8ab4b01758c0a03b534026c31cbfa9fc203a5
+LRUCACHE_GIT=https://github.com/openresty/lua-resty-lrucache.git
+LRUCACHE_TAG=v0.15
+LRUCACHE_COMMIT=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b

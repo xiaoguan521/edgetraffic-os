@@ -8,6 +8,9 @@
 # -t tongsuo：国密变体。铜锁按 dataplane/UPSTREAM 拉取发布标签并校验提交哈希，开启 NTLS 后静态链接（隐含 -S）；
 #     configure 带 --build=gmssl，syapp -V 显示 "(gmssl)" 与 enable-ntls，控制台据此识别国密节点。
 #     KEEP_TLS_CLI=<路径> 时把铜锁的命令行工具复制出来（CI 用它做国密握手测试，不进安装包）。
+# LUA_MODULES_OUT=<目录>：基础包打包后，用完全相同的 configure 参数再编译 Lua 附加包的两个动态模块
+#     （ngx_devel_kit、lua 模块，需要 NDK_SRC / LUA_MODULE_SRC / LUAJIT_INC / LUAJIT_LIB），只输出 .so，
+#     并核对模块需要的每个 OpenSSL 符号都由基础包导出（见 dataplane/lua/openssl-exports.txt）。由 build-syapp-lua.sh 调用。
 # -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
 #     在 glibc 2.17 的构建环境（manylinux2014）中执行，即可覆盖 CentOS 7、麒麟 V10、统信 UOS、openEuler 与较新的发行版。
 #     DEPS_CACHE 指向已下载源码包的目录时优先使用缓存；MAX_GLIBC 设置后校验二进制不依赖更高版本的 glibc 符号。
@@ -81,10 +84,23 @@ if [[ $STATIC -eq 1 ]]; then
     DEP_OPTS=(--with-openssl="$TLS_DIR" --with-openssl-opt="no-shared no-tests no-docs")
   fi
   DEP_OPTS+=(--with-pcre="$PCRE2_DIR" --with-pcre-jit --with-zlib="$ZLIB_DIR")
+  # 静态 OpenSSL 只链入核心用到的目标文件：固定导出 Lua 附加包需要的函数（不影响任何行为）
+  u=""
+  while read -r sym; do
+    [[ -z "$sym" || "$sym" == \#* ]] && continue
+    u+=" -Wl,-u,$sym"
+  done < "$HERE/lua/openssl-exports.txt"
+  DEP_OPTS+=(--with-ld-opt="${u# }")
 fi
 
+ci_fail() { # <日志> <行数>：在 GitHub Actions 中把失败日志的末尾写成注解（原始日志不一定能下载）
+  tail -"$2" "$1" >&2
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then tail -"$2" "$1" | sed 's/^/::error title=build-syapp::/'; fi
+}
+
 # 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
-./auto/configure \
+# auth_request：规则积木的外部鉴权（P10）
+CONF=(\
   --prefix=/opt/syapp \
   --sbin-path=/opt/syapp/sbin/syapp \
   --conf-path=/opt/syapp/conf/current/syapp.conf \
@@ -103,11 +119,12 @@ fi
   --with-http_realip_module --with-http_stub_status_module \
   --with-http_gzip_static_module --with-http_sub_module \
   --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module \
+  --with-http_auth_request_module \
   --without-http_auth_basic_module \
-  "${DEP_OPTS[@]}" \
-  > "$WORK/configure.log" || { tail -30 "$WORK/configure.log" >&2; exit 5; }
+  "${DEP_OPTS[@]}")
+./auto/configure "${CONF[@]}" > "$WORK/configure.log" 2>&1 || { ci_fail "$WORK/configure.log" 15; exit 5; }
 
-make -j"$(nproc)" > "$WORK/make.log" 2>&1 || { tail -40 "$WORK/make.log" >&2; exit 5; }
+make -j"$(nproc)" > "$WORK/make.log" 2>&1 || { ci_fail "$WORK/make.log" 20; exit 5; }
 ROOT="$WORK/rootfs"
 make install DESTDIR="$ROOT" > /dev/null
 
@@ -157,3 +174,27 @@ fi
 PKG="$OUT/syapp-$UPSTREAM_VERSION-$VARIANT$(uname -m).tar.gz"
 tar -C "$ROOT" -czf "$PKG" opt
 echo "BUILD OK: $PKG"
+
+if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
+  : "${NDK_SRC:?}" "${LUA_MODULE_SRC:?}" "${LUAJIT_INC:?}" "${LUAJIT_LIB:?}"
+  export LUAJIT_INC LUAJIT_LIB
+  ./auto/configure "${CONF[@]}" --add-dynamic-module="$NDK_SRC" --add-dynamic-module="$LUA_MODULE_SRC" \
+    > "$WORK/configure-lua.log" 2>&1 || { ci_fail "$WORK/configure-lua.log" 15; exit 6; }
+  make -j"$(nproc)" modules > "$WORK/make-lua.log" 2>&1 || { ci_fail "$WORK/make-lua.log" 20; exit 6; }
+  mkdir -p "$LUA_MODULES_OUT"
+  for m in ndk_http_module ngx_http_lua_module; do
+    install -m 0644 "objs/$m.so" "$LUA_MODULES_OUT/$m.so"
+    strip --strip-unneeded "$LUA_MODULES_OUT/$m.so"
+  done
+  # 模块未定义的 OpenSSL 符号必须全部由基础包导出，否则 load_module 会失败
+  nm -D --defined-only "$O/sbin/syapp" | awk '{print $NF}' | sort -u > "$WORK/exports"
+  missing=$(nm -D -u "$LUA_MODULES_OUT"/*.so | awk '{print $NF}' | sed 's/@.*//' \
+    | grep -E '^(SSL|SSL_CTX|SSL_SESSION|SSL_CIPHER|X509|EVP|PEM|BIO|d2i|i2d|OCSP|ERR|ASN1|OPENSSL|CRYPTO|OBJ|EC|RSA|BN|DH|HMAC)_' \
+    | sort -u | comm -23 - "$WORK/exports" || true)
+  if [[ -n "$missing" ]]; then
+    echo "Lua modules need OpenSSL symbols the base binary does not export: $missing" >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=openssl exports::add to dataplane/lua/openssl-exports.txt: $(echo $missing)"
+    exit 7
+  fi
+  echo "LUA MODULES OK: $LUA_MODULES_OUT"
+fi
