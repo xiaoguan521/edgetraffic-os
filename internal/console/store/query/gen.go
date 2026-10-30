@@ -33,6 +33,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		Deployment:       newDeployment(db, opts...),
 		DeploymentNode:   newDeploymentNode(db, opts...),
 		EnrollToken:      newEnrollToken(db, opts...),
+		IPSet:            newIPSet(db, opts...),
 		LicenseStore:     newLicenseStore(db, opts...),
 		MetricMinute:     newMetricMinute(db, opts...),
 		Node:             newNode(db, opts...),
@@ -68,6 +69,7 @@ type Query struct {
 	Deployment       deployment
 	DeploymentNode   deploymentNode
 	EnrollToken      enrollToken
+	IPSet            iPSet
 	LicenseStore     licenseStore
 	MetricMinute     metricMinute
 	Node             node
@@ -106,6 +108,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		Deployment:       q.Deployment.clone(db),
 		DeploymentNode:   q.DeploymentNode.clone(db),
 		EnrollToken:      q.EnrollToken.clone(db),
+		IPSet:            q.IPSet.clone(db),
 		LicenseStore:     q.LicenseStore.clone(db),
 		MetricMinute:     q.MetricMinute.clone(db),
 		Node:             q.Node.clone(db),
@@ -149,6 +152,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		Deployment:       q.Deployment.replaceDB(db),
 		DeploymentNode:   q.DeploymentNode.replaceDB(db),
 		EnrollToken:      q.EnrollToken.replaceDB(db),
+		IPSet:            q.IPSet.replaceDB(db),
 		LicenseStore:     q.LicenseStore.replaceDB(db),
 		MetricMinute:     q.MetricMinute.replaceDB(db),
 		Node:             q.Node.replaceDB(db),
@@ -182,6 +186,7 @@ type queryCtx struct {
 	Deployment       IDeploymentDo
 	DeploymentNode   IDeploymentNodeDo
 	EnrollToken      IEnrollTokenDo
+	IPSet            IIPSetDo
 	LicenseStore     ILicenseStoreDo
 	MetricMinute     IMetricMinuteDo
 	Node             INodeDo
@@ -215,6 +220,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		Deployment:       q.Deployment.WithContext(ctx),
 		DeploymentNode:   q.DeploymentNode.WithContext(ctx),
 		EnrollToken:      q.EnrollToken.WithContext(ctx),
+		IPSet:            q.IPSet.WithContext(ctx),
 		LicenseStore:     q.LicenseStore.WithContext(ctx),
 		MetricMinute:     q.MetricMinute.WithContext(ctx),
 		Node:             q.Node.WithContext(ctx),

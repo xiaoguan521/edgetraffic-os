@@ -19,6 +19,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/crypto"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
@@ -471,6 +472,19 @@ func stripPEM(site *render.Site) {
 	}
 }
 
+// prepareRules 检查 Lua 规则授权并加密 JWT 密钥（失败时已写入响应）。
+func (s *Server) prepareRules(c *gin.Context, spec *render.Site, old *render.Site) error {
+	if (render.Input{Sites: []render.Site{*spec}}).HasLua() && !s.Lic.Snapshot().Feature(license.FeatureLua) {
+		fail(c, http.StatusPaymentRequired, "LICENSE_FEATURE_DENIED", "当前授权不包含 Lua 规则（lua），JWT 规则需要专业版或企业版")
+		return errors.New("denied")
+	}
+	if err := s.Deploy.SealRules(spec, old); err != nil {
+		failErr(c, err)
+		return err
+	}
+	return nil
+}
+
 func toSiteView(st store.Site) siteView {
 	v := siteView{Site: st}
 	_ = json.Unmarshal([]byte(st.Spec), &v.Spec)
@@ -478,6 +492,7 @@ func toSiteView(st store.Site) siteView {
 	if v.Spec.HTTPS != nil { // 私钥不回显（规格书 9.3）
 		v.Spec.HTTPS.KeyPEM = ""
 	}
+	deploy.RedactRules(&v.Spec) // JWT 密钥（明文与密文）不回显
 	return v
 }
 
@@ -546,7 +561,15 @@ func (s *Server) validateWith(groupID uint, site *render.Site, upstream *render.
 					return err
 				}
 			}
+			if err := s.Deploy.OpenRules(&sc); err != nil {
+				return err
+			}
 			keep = append(keep, sc)
+			if (render.Input{Sites: []render.Site{sc}}).HasLua() {
+				if err := s.Deploy.CheckLua(groupID); err != nil {
+					return err
+				}
+			}
 		}
 		in.Sites = keep
 	}
@@ -589,6 +612,9 @@ func (s *Server) createSite(c *gin.Context) {
 		}
 	}
 	stripPEM(&req.Spec)
+	if err := s.prepareRules(c, &req.Spec, nil); err != nil {
+		return
+	}
 	if err := s.validateWith(req.GroupID, &req.Spec, nil, "", ""); err != nil {
 		fail(c, http.StatusBadRequest, "INVALID_SITE", err.Error())
 		return
@@ -624,6 +650,11 @@ func (s *Server) updateSite(c *gin.Context) {
 	}
 	req.Spec.Name = st.Name
 	stripPEM(&req.Spec)
+	var old render.Site
+	_ = json.Unmarshal([]byte(st.Spec), &old)
+	if err := s.prepareRules(c, &req.Spec, &old); err != nil {
+		return
+	}
 	enabled := st.Enabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled

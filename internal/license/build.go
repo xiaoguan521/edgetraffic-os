@@ -11,8 +11,8 @@ import (
 var EditionFeatures = map[Edition][]Feature{
 	EditionTrial:        {FeatureCore},
 	EditionStandard:     {FeatureCore, FeatureAPIToken},
-	EditionProfessional: {FeatureCore, FeatureAPIToken, FeatureBatchRelease, FeatureReleaseApproval, FeatureSSO, FeatureAuditExport, FeatureAlertIM, FeatureStream, FeatureHA},
-	EditionEnterprise:   {FeatureCore, FeatureAPIToken, FeatureBatchRelease, FeatureReleaseApproval, FeatureSSO, FeatureAuditExport, FeatureAlertIM, FeatureStream, FeatureHA, FeatureCanary, FeatureGMTLS},
+	EditionProfessional: {FeatureCore, FeatureAPIToken, FeatureBatchRelease, FeatureReleaseApproval, FeatureSSO, FeatureAuditExport, FeatureAlertIM, FeatureStream, FeatureHA, FeatureLua},
+	EditionEnterprise:   {FeatureCore, FeatureAPIToken, FeatureBatchRelease, FeatureReleaseApproval, FeatureSSO, FeatureAuditExport, FeatureAlertIM, FeatureStream, FeatureHA, FeatureCanary, FeatureGMTLS, FeatureLua},
 }
 
 // ActivationRequest 是客户控制台导出的离线激活申请（activation-request.json）中签发需要的部分。

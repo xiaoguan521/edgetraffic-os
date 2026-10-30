@@ -149,6 +149,12 @@ func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) 
 			return nil, fmt.Errorf("版本库中没有 syapp %s %s %s 的升级包", version, n.Arch, variant)
 		}
 	}
+	// 装有 syapp-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
+	for _, n := range luaNodes(nodes) {
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq("syapp-lua"), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
+			return nil, fmt.Errorf("节点 %s 装有 syapp-lua 附加包：版本库中还需要 syapp-lua %s %s 的附加包", n.Name, version, n.Arch)
+		}
+	}
 	mu, _ := upgradeLocks.LoadOrStore(groupID, &sync.Mutex{})
 	lk := mu.(*sync.Mutex)
 	if !lk.TryLock() {
@@ -193,14 +199,15 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 			_, _ = sel.UpdateSimple(u.Nodes.Value(string(pj)), u.Status.Value(status))
 		}
 	}
-	sigFor := func(arch string) []byte {
+	sigOf := func(name, arch, variant string) []byte {
 		p := q.DataplanePackage
-		pkg, err := p.WithContext(bg).Select(p.Sig, p.SHA256).Where(p.Name.Eq("syapp"), p.Version.Eq(up.Version), p.Arch.Eq(arch), p.Variant.Eq(up.Variant)).First()
+		pkg, err := p.WithContext(bg).Select(p.Sig, p.SHA256).Where(p.Name.Eq(name), p.Version.Eq(up.Version), p.Arch.Eq(arch), p.Variant.Eq(variant)).First()
 		if err != nil {
 			return nil
 		}
 		return []byte(pkg.Sig)
 	}
+	sigFor := func(arch string) []byte { return sigOf("syapp", arch, up.Variant) }
 	ag := d.agents()
 	failed := false
 	for i := range plan {
@@ -224,6 +231,9 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 		msg := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Upgrade{Upgrade: &agentv1.UpgradeDataplane{
 			Action: agentv1.UpgradeDataplane_START, Version: up.Version, PackageSha256: ps.SHA256, SignatureJson: sig,
 			PostChecks: d.groupPostChecks(up.GroupID), TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
+		if node.LuaAddon != "" {
+			msg.GetUpgrade().LuaSignatureJson = sigOf("syapp-lua", node.Arch, "lua")
+		}
 		res, err := ag.Send(context.Background(), n.NodeID, msg, UpgradeTimeout)
 		switch {
 		case err != nil:

@@ -501,3 +501,6 @@ func (in Input) HasRules() bool {
 	}
 	return false
 }
+
+// NormalizeCIDRs 校验并规范化网段列表（控制台保存 IP 集时使用）。
+func NormalizeCIDRs(cidrs []string, max int) ([]string, error) { return validateCIDRs(cidrs, max) }

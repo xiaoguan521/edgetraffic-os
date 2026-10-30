@@ -180,6 +180,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.PUT("/sites/:id", role(store.RoleOperator), s.writable, s.updateSite)
 	a.DELETE("/sites/:id", role(store.RoleOperator), s.writable, s.deleteSite)
 
+	a.GET("/ip-sets", s.listIPSets)
+	a.GET("/ip-sets/:id", s.getIPSet)
+	a.POST("/ip-sets", role(store.RoleOperator), s.writable, s.createIPSet)
+	a.POST("/ip-sets/import", role(store.RoleOperator), s.writable, s.importIPSet)
+	a.PUT("/ip-sets/:id", role(store.RoleOperator), s.writable, s.updateIPSet)
+	a.DELETE("/ip-sets/:id", role(store.RoleOperator), s.writable, s.deleteIPSet)
+
 	a.GET("/certificates", s.listCerts)
 	a.POST("/certificates", role(store.RoleOperator), s.writable, s.createCert)
 	a.PUT("/certificates/:id", role(store.RoleOperator), s.renewCert)          // 证书续期：任何授权状态下可用（规格书 8.6）

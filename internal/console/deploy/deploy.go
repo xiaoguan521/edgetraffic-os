@@ -21,6 +21,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"gorm.io/gen/field"
 )
@@ -40,6 +41,7 @@ type Service struct {
 	Feature     func(name string) bool       // 授权功能检查（为空表示不检查）
 	Agents      Agents                       // 数据面升级用；为空时使用 GW
 	PackageKeys map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
+	Box         *secretbox.Box               // JWT 规则密钥的加解密（P10）
 
 	mu    sync.Mutex
 	locks map[uint]*sync.Mutex
@@ -122,6 +124,9 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 				return in, fmt.Errorf("site %s: %w", s.Name, err)
 			}
 		}
+		if err := d.OpenRules(&rs); err != nil {
+			return in, fmt.Errorf("site %s: %w", s.Name, err)
+		}
 		in.Sites = append(in.Sites, rs)
 	}
 	if in.AcmeChallenges, err = d.challenges(); err != nil {
@@ -157,8 +162,16 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		sp.Name = st.Name
 		in.Streams = append(in.Streams, sp)
 	}
+	if in.IPSets, err = d.IPSets(groupID); err != nil {
+		return in, fmt.Errorf("load ip sets: %w", err)
+	}
 	if in.HasGM() {
 		if err := d.CheckGM(groupID); err != nil {
+			return in, err
+		}
+	}
+	if in.HasLua() {
+		if err := d.CheckLua(groupID); err != nil {
 			return in, err
 		}
 	}

@@ -105,6 +105,16 @@ func TLSLib(versionOutput string) string {
 	return "openssl"
 }
 
+var luaAddonRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?/(standard|gmssl)$`)
+
+// LuaAddon 校验 agent 上报的 syapp-lua 附加包（<包版本>/<基础变体>），格式不对时视为未安装。
+func LuaAddon(v string) string {
+	if luaAddonRe.MatchString(v) {
+		return v
+	}
+	return ""
+}
+
 // DisconnectAll 断开全部节点（失去主身份时调用）。
 func (s *Server) DisconnectAll() {
 	s.mu.Lock()
@@ -298,7 +308,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		agentVer, arch := ParseAgentVersion(b.Hello.AgentVersion)
 		nd := s.q().Node
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(agentVer), nd.Arch.Value(arch),
-			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.TLSLib.Value(TLSLib(b.Hello.SyappVersionOutput)), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
+			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.TLSLib.Value(TLSLib(b.Hello.SyappVersionOutput)), nd.LuaAddon.Value(LuaAddon(b.Hello.LuaAddon)), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
 			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
 		go func() {
@@ -319,7 +329,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 				drifted = true
 			}
 		}
-		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.CPUPercent.Value(hb.CpuPercent),
+		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.LuaAddon.Value(LuaAddon(hb.LuaAddon)), nd.CPUPercent.Value(hb.CpuPercent),
 			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
 			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now))
 		if !drifted {

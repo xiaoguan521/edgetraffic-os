@@ -226,6 +226,26 @@ if [[ "$p" == *"BEGIN PRIVATE KEY"* ]]; then bad "预览中出现私钥"; else o
 expect "有国密站点的节点组不能升级到标准版" "$("${C[@]}" -X POST "$B/node-groups/1/upgrade" -d '{"version":"9.9.1","variant":"standard"}')" "国密"
 expect "国密证书被引用时不能删除" "$("${C[@]}" -X DELETE "$B/certificates/$gid")" "正被站点使用"
 
+echo "== 规则积木与 Lua 规则（P10）"
+expect "创建 IP 集" "$("${C[@]}" -X POST "$B/ip-sets" -d '{"group_id":1,"name":"office","label":"办公网","cidrs":["10.20.0.0/16","192.0.2.7"]}')" '"count":2'
+expect "非法网段被拒绝" "$("${C[@]}" -X POST "$B/ip-sets" -d '{"group_id":1,"name":"bad","cidrs":["10.0.0.0/33"]}')" "INVALID_IP_SET"
+printf 'apnic|CN|ipv4|1.0.1.0|256|20110414|allocated\napnic|CN|ipv4|1.0.2.0|768|20110414|allocated\napnic|JP|ipv4|1.0.16.0|4096|20110412|allocated\n' > "$W/delegated.txt"
+expect "从 RIR 分配文件导入地域库" "$(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR" -H 'X-Requested-With: etos' -F group_id=1 -F name=cn -F country=CN -F file=@"$W/delegated.txt" "$B/ip-sets/import")" '"source":"rir:CN"'
+RULES='[{"name":"block-cn-admin","conditions":[{"kind":"ip_set","set":"cn"},{"kind":"path","op":"prefix","value":"/admin/"}],"action":{"type":"deny","status":403}},{"name":"bots","conditions":[{"kind":"user_agent","op":"contains","value":"BadBot\"; return 200"}],"action":{"type":"deny","status":444}},{"name":"api-limit","conditions":[{"kind":"path","op":"prefix","value":"/api/"}],"action":{"type":"rate_limit","rate":20,"per":"s","burst":40}},{"name":"api-jwt","conditions":[{"kind":"path","op":"prefix","value":"/v1/"}],"action":{"type":"jwt","jwt":{"alg":"HS256","secret":"smoke-secret-0123456789abcdef0123456789","source":"header"}}}]'
+r=$("${C[@]}" -X POST "$B/sites" -d "{\"group_id\":1,\"spec\":{\"name\":\"rules\",\"domains\":[\"rules.example.com\"],\"routes\":[{\"path\":\"/\",\"match\":\"prefix\",\"mode\":\"deny\"}],\"rules\":$RULES}}")
+expect "创建带规则的站点" "$r" '"block-cn-admin"'
+expect "响应中只标明已设置密钥" "$r" '"has_secret":true'
+if [[ "$r" == *smoke-secret* || "$r" == *secret_enc* ]]; then bad "站点响应中出现 JWT 密钥"; else ok "站点响应中没有 JWT 密钥（明文与密文）"; fi
+p=$("${C[@]}" "$B/node-groups/1/preview")
+expect "预览包含地域库" "$p" "conf.d/00-ipsets.conf"
+expect "预览包含规则变量" "$p" "etos_rules_r0"
+expect "预览包含限速" "$p" "limit_req_zone"
+expect "预览包含 Lua 初始化" "$p" "init_by_lua_block"
+expect "预览包含 JWT 密钥文件（内容不显示）" "$p" "lua/jwt-rules-api-jwt.key"
+if [[ "$p" == *smoke-secret* ]]; then bad "预览中出现 JWT 密钥"; else ok "预览中没有 JWT 密钥"; fi
+expect "引用中的 IP 集不能删除" "$("${C[@]}" -X DELETE "$B/ip-sets/$("${C[@]}" "$B/ip-sets?group_id=1" | j "[x['id'] for x in d if x['name']=='cn'][0]")")" "IN_USE"
+expect "非法规则被拒绝" "$("${C[@]}" -X POST "$B/sites" -d '{"group_id":1,"spec":{"name":"bad-rule","domains":["bad.example.com"],"routes":[{"path":"/","match":"prefix","mode":"deny"}],"rules":[{"name":"x","conditions":[],"action":{"type":"redirect","status":302,"to":"https://a.example.com/$host"}}]}}')" "INVALID_SITE"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

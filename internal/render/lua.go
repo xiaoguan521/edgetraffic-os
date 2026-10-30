@@ -23,9 +23,11 @@ const LuaModulesDir = "/opt/syapp/modules/lua"
 
 // JWTAction：校验 JWT（HS256 / RS256）。失败返回 401，并带 WWW-Authenticate。
 type JWTAction struct {
-	Alg           string `json:"alg"`                      // HS256 | RS256
-	Secret        string `json:"-"`                        // HS256 密钥（控制台从 SecretEnc 解密后填入，不落库）
+	Alg string `json:"alg"` // HS256 | RS256
+	// Secret 是 HS256 密钥：控制台 API 只写不读——保存时加密进 SecretEnc 并清空，渲染前解密填回；永不落库、不回显
+	Secret        string `json:"secret,omitempty"`
 	SecretEnc     string `json:"secret_enc,omitempty"`     // 控制台加密保存的 HS256 密钥（渲染器忽略）
+	HasSecret     bool   `json:"has_secret,omitempty"`     // 仅用于 API 响应：已设置密钥
 	PublicKey     string `json:"public_key,omitempty"`     // RS256 公钥（PEM，PUBLIC KEY）
 	Source        string `json:"source"`                   // header（Authorization: Bearer）| cookie
 	Cookie        string `json:"cookie,omitempty"`         // source=cookie 时的 Cookie 名

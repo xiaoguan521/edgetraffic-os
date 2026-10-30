@@ -55,7 +55,8 @@ type Node struct {
 	Arch            string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
 	SyappVersion    string     `json:"syapp_version"`
 	SyappSHA256     string     `json:"syapp_sha256"`
-	TLSLib          string     `gorm:"size:16" json:"tls_lib"` // syapp -V 中的 TLS 库：openssl | tongsuo（国密变体）
+	TLSLib          string     `gorm:"size:16" json:"tls_lib"`   // syapp -V 中的 TLS 库：openssl | tongsuo（国密变体）
+	LuaAddon        string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syapp-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）
 	AppliedRevision string     `gorm:"size:16" json:"applied_revision"`
 	TreeHash        string     `json:"tree_hash"`
 	Drifted         bool       `json:"drifted"`
@@ -371,6 +372,20 @@ type LicenseStore struct {
 // GM 报告节点是否运行国密变体（铜锁构建，支持 TLCP 双证书）。
 func (n *Node) GM() bool { return n.TLSLib == "tongsuo" }
 
+// IPSet 是节点组的命名 IP 集（地域库），被规则积木的 ip_set 条件引用（P10）。
+type IPSet struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	GroupID   uint      `gorm:"uniqueIndex:idx_ipset_group_name" json:"group_id"`
+	Name      string    `gorm:"uniqueIndex:idx_ipset_group_name;size:64" json:"name"`
+	Label     string    `gorm:"size:128" json:"label"`
+	Source    string    `gorm:"size:32" json:"source"` // manual | rir:<国家代码>
+	CIDRs     string    `gorm:"column:cidrs" json:"-"` // JSON 数组
+	Count     int       `json:"count"`
+	UpdatedBy string    `gorm:"size:64" json:"updated_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // KindSM2 是国密双证书的 Kind。
 const KindSM2 = "sm2"
 
@@ -432,5 +447,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &CanaryRelease{}, &StaticBundle{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &CanaryRelease{}, &StaticBundle{}, &IPSet{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

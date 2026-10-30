@@ -30,6 +30,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300010_canary", Migrate: migrateCanary},
 		{ID: "202610300011_static_bundles", Migrate: migrateStaticBundles},
 		{ID: "202610310001_gm_tls", Migrate: migrateGMTLS},
+		{ID: "202610310002_rules_lua", Migrate: migrateRulesLua},
 	}
 }
 
@@ -527,6 +528,30 @@ func migrateGMTLS(tx *gorm.DB) error {
 		TLSLib string `gorm:"size:16"`
 	}
 	if err := tx.AutoMigrate(&Certificate{}); err != nil {
+		return err
+	}
+	return tx.AutoMigrate(&Node{})
+}
+
+// ---- 202610310002_rules_lua：规则积木的 IP 集 / 地域库与 syapp-lua 附加包上报（P10）----
+
+func migrateRulesLua(tx *gorm.DB) error {
+	type IPSet struct {
+		ID        uint   `gorm:"primaryKey"`
+		GroupID   uint   `gorm:"uniqueIndex:idx_ipset_group_name"`
+		Name      string `gorm:"uniqueIndex:idx_ipset_group_name;size:64"`
+		Label     string `gorm:"size:128"`
+		Source    string `gorm:"size:32"`
+		CIDRs     string `gorm:"column:cidrs"`
+		Count     int
+		UpdatedBy string `gorm:"size:64"`
+		CreatedAt time.Time
+		UpdatedAt time.Time
+	}
+	type Node struct {
+		LuaAddon string `gorm:"size:40"`
+	}
+	if err := tx.AutoMigrate(&IPSet{}); err != nil {
 		return err
 	}
 	return tx.AutoMigrate(&Node{})
