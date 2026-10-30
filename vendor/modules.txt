@@ -477,8 +477,8 @@ gorm.io/gorm/utils/tests
 # gorm.io/hints v1.1.0
 ## explicit; go 1.14
 gorm.io/hints
-# gorm.io/plugin/dbresolver v1.5.3
-## explicit; go 1.14
+# gorm.io/plugin/dbresolver v1.6.2
+## explicit; go 1.18
 gorm.io/plugin/dbresolver
 # modernc.org/libc v1.22.5
 ## explicit; go 1.18
