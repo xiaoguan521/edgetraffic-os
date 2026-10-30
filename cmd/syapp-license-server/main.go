@@ -15,6 +15,10 @@
 //	syapp-license-server crl-request -batch B0002 -kid etos-prod-2027 -serial 1 -revoke LIC-...,LIC-... [-base current.crl] -out sign-request-B0002.json
 //	（U 盘拷到离线签名机：syapp-license-signer sign ...，再拷回）
 //	syapp-license-server import      -request sign-request-B0001.json -signed signed-B0001.json -out licenses/
+//
+// 授权后台 Web（客户、订单、审批、签名批次、吊销、审计；只持有公钥）：
+//
+//	syapp-license-server serve -listen 0.0.0.0:8600 -data /var/lib/syapp-license-server -tls-auto
 package main
 
 import (
@@ -50,6 +54,8 @@ func main() {
 		check(cmdRequest(os.Args[2:], os.Stdout))
 	case "crl-request":
 		check(cmdCRLRequest(os.Args[2:], os.Stdout, license.BuiltinKeyRing()))
+	case "serve":
+		check(cmdServe(os.Args[2:]))
 	case "import":
 		check(cmdImport(os.Args[2:], os.Stdout, license.BuiltinKeyRing()))
 	case "version", "-version":
@@ -191,6 +197,6 @@ func die(msg string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: syapp-license-server keygen | issue | inspect | version")
+	fmt.Fprintln(os.Stderr, "usage: syapp-license-server serve | request | crl-request | import | keygen | issue | inspect | version")
 	os.Exit(2)
 }

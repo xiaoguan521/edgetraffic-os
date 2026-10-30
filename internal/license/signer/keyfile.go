@@ -7,9 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 )
 
 // KeyFileFormat 标识私钥文件格式。
@@ -174,16 +174,8 @@ func (k *KeyFile) Open(pass []byte) (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
-// Fingerprint 返回公钥指纹（SHA-256，每 4 位一组），密钥仪式上两人分别核对。
-func Fingerprint(pub ed25519.PublicKey) string {
-	h := sha256.Sum256(pub)
-	s := strings.ToUpper(hex.EncodeToString(h[:]))
-	var groups []string
-	for i := 0; i < len(s); i += 4 {
-		groups = append(groups, s[i:i+4])
-	}
-	return strings.Join(groups, " ")
-}
+// Fingerprint 返回公钥指纹（与授权后台显示的格式相同），密钥仪式上两人分别核对。
+func Fingerprint(pub ed25519.PublicKey) string { return license.KeyFingerprint(pub) }
 
 // Wipe 清零私钥内存（尽力而为）。
 func Wipe(priv ed25519.PrivateKey) { wipe(priv) }

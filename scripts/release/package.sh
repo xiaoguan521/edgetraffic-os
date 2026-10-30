@@ -16,6 +16,10 @@
 #       厂商工具（不交付客户）：离线签名工具 syapp-license-signer + 运维手册
 #       产物 edgetraffic-os-vendor-tools-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
 #
+#   scripts/release/package.sh license-portal <goarch>
+#       厂商授权后台（不交付客户，部署在厂商内网）：syapp-license-server（内嵌 Web）+ systemd 单元 + 运维手册
+#       只持有签名公钥；产物 edgetraffic-os-license-portal-<ver>-linux-<goarch>.tar.gz
+#
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
@@ -79,6 +83,18 @@ case "${1:-}" in
       tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
       echo "$OUT/$name.tar.gz"
     fi
+    ;;
+  license-portal)
+    arch=${2:?goarch}
+    ls web/portal/dist/index.html >/dev/null 2>&1 || { echo "web/portal/dist 未构建：先执行 make web" >&2; exit 2; }
+    name="edgetraffic-os-license-portal-$VERSION-linux-$arch"
+    d="$WORK/$name"; mkdir -p "$d"
+    gobuild linux "$arch" "$d" ./cmd/syapp-license-server
+    cp deploy/systemd/syapp-license-server.service "$d/"
+    cp docs/license-ops.md "$d/license-ops.md"
+    cp docs/NOTICE "$d/NOTICE"
+    tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
+    echo "$OUT/$name.tar.gz"
     ;;
   node)
     arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}

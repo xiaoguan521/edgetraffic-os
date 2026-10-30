@@ -1,0 +1,19 @@
+[Unit]
+Description=EdgeTraffic OS vendor license portal (syapp-license-server serve)
+After=network-online.target postgresql.service
+
+[Service]
+User=syapp-license
+# 只放公钥与业务数据；签名私钥永远不在这台机器上（离线签名机，docs/license-ops.md）
+EnvironmentFile=-/etc/syapp-license-server/portal.env
+ExecStart=/usr/bin/syapp-license-server serve -data /var/lib/syapp-license-server
+Restart=always
+StateDirectory=syapp-license-server
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && vite build && pnpm run build:portal:only",
     "preview": "vite preview",
-    "lint": "eslint src"
+    "lint": "eslint src src-portal",
+    "build:portal": "vue-tsc --noEmit && pnpm run build:portal:only",
+    "build:portal:only": "vite build -c vite.portal.config.ts && node -e \"require('fs').writeFileSync('portal/dist/.gitkeep','')\""
   },
   "dependencies": {
     "@antdv-next/icons": "^1.1.2",

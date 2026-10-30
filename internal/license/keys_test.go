@@ -25,3 +25,19 @@ func TestProductionKeyTable(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePublicKey(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(nil)
+	b64 := base64.StdEncoding.EncodeToString(pub)
+	if _, err := ParsePublicKey("etos-prod-2027", b64); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range [][2]string{{"etos-demo-2026", b64}, {"etos-prod-27", b64}, {"etos-prod-2027", "AAAA"}, {"etos-prod-2027", "not base64!"}} {
+		if _, err := ParsePublicKey(c[0], c[1]); err == nil {
+			t.Errorf("%v accepted", c)
+		}
+	}
+	if fp := KeyFingerprint(pub); len(strings.Split(fp, " ")) != 16 {
+		t.Fatalf("fingerprint %q", fp)
+	}
+}

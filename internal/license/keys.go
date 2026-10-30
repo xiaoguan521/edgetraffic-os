@@ -2,7 +2,12 @@ package license
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -69,4 +74,29 @@ func ProductionKIDs() []string {
 		}
 	}
 	return out
+}
+
+var prodKIDRe = regexp.MustCompile(`^etos-prod-[0-9]{4}(-[0-9a-z]{1,8})?$`)
+
+// ParsePublicKey 校验正式密钥编号与 Base64 公钥（授权后台登记密钥时使用）。
+func ParsePublicKey(kid, b64 string) (ed25519.PublicKey, error) {
+	if !prodKIDRe.MatchString(kid) {
+		return nil, errors.New("密钥编号必须形如 etos-prod-<年份>[-序号]")
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil || len(b) != ed25519.PublicKeySize {
+		return nil, errors.New("公钥必须是 Base64 编码的 32 字节 Ed25519 公钥")
+	}
+	return ed25519.PublicKey(b), nil
+}
+
+// KeyFingerprint 返回公钥指纹（SHA-256，每 4 位一组）。离线签名工具与授权后台显示同一格式，供人工核对。
+func KeyFingerprint(pub ed25519.PublicKey) string {
+	h := sha256.Sum256(pub)
+	s := strings.ToUpper(hex.EncodeToString(h[:]))
+	var groups []string
+	for i := 0; i < len(s); i += 4 {
+		groups = append(groups, s[i:i+4])
+	}
+	return strings.Join(groups, " ")
 }

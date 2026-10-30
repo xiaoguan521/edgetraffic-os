@@ -149,6 +149,7 @@ jobs:
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
           scripts/release/package.sh backend ${{ matrix.arch }}
           scripts/release/package.sh vendor-tools linux ${{ matrix.arch }}
+          scripts/release/package.sh license-portal ${{ matrix.arch }}
           if [[ ${{ matrix.arch }} == amd64 ]]; then
             for t in windows/amd64 darwin/arm64; do scripts/release/package.sh vendor-tools ${t%/*} ${t#*/}; done
           fi
@@ -198,6 +199,17 @@ jobs:
           # 离线签名工具不含网络代码
           vt=$(mktemp -d); tar -C "$vt" -xzf "$OUT"/edgetraffic-os-vendor-tools-$VERSION-linux-${{ matrix.arch }}.tar.gz
           "$vt"/*/syapp-license-signer version | grep -q "$VERSION"
+          # 授权后台：能启动、内嵌 Web；正式版本不含演示签名公钥
+          lp=$(mktemp -d); tar -C "$lp" -xzf "$OUT"/edgetraffic-os-license-portal-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          "$lp"/*/syapp-license-server version | grep -q "$VERSION"
+          if [[ "$GOTAGS" == *release* ]] && strings "$lp"/*/syapp-license-server | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
+            echo "::error::release license portal contains the demo signing key"; exit 1
+          fi
+          "$lp"/*/syapp-license-server serve -listen 127.0.0.1:18600 -data "$lp/data" & lpid=$!
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18600/api/v1/setup/status >/dev/null 2>&1 && break; sleep 0.5; done
+          curl -fsS http://127.0.0.1:18600/api/v1/setup/status | grep -q '"initialized":false'
+          curl -fsS http://127.0.0.1:18600/ | grep -q '<div id="app">'
+          kill $lpid
 
       - name: upload release assets
         run: |

@@ -20,8 +20,10 @@ import (
 // 允许的位置：
 //   - internal/console/store/...      数据层本身（模型、迁移、生成代码、测试库）
 //   - internal/console/backup         逐表导出 / 导入，按模型反射泛型处理所有表，无法用生成查询表达
+//   - internal/portal/store/...       授权后台的数据层（同样只有模型、迁移、生成代码、测试库）
 var allowedPkgs = []string{
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store",
+	"github.com/xiaoguan521/edgetraffic-os/internal/portal/store",
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/backup",
 }
 

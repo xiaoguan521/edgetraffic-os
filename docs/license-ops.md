@@ -14,9 +14,10 @@
 |---|---|---|
 | `syapp-license-signer` | 离线签名机 | 生成密钥（keygen）、核对与签名（inspect / sign）、核对结果（verify）、查看公钥（pubkey） |
 | `syapp-license-server request / crl-request / import` | 厂商内网 | 生成签名请求、导入并核对签名结果、写出 `.lic` / `.crl` |
-| 授权后台 Web（P6-7b） | 厂商内网 | 以上在线侧步骤的界面化，加上客户、订单、审批与审计 |
+| `syapp-license-server serve`（授权后台 Web） | 厂商内网 | 以上在线侧步骤的界面化，加上客户、订单、审批、吊销与审计哈希链 |
 
 `syapp-license-signer` 在发布页的 `edgetraffic-os-vendor-tools-<版本>-<系统>-<架构>` 包中（Linux / Windows / macOS），不包含在任何客户安装包里。程序不含网络代码（CI 用 `TestNoNetworkCode` 检查依赖）。
+授权后台在 `edgetraffic-os-license-portal-<版本>-linux-<架构>` 包中，同样不交付客户。
 
 ## 2. 准备离线签名机（一次性）
 
@@ -72,7 +73,50 @@
 
 ## 4. 签发 License
 
-授权后台上线前使用命令行；上线后同样的步骤在后台界面完成。
+推荐使用授权后台（4.0）；第 4.1–4.3 节的命令行流程与后台完全等价，可在后台不可用时使用。
+
+### 4.0 授权后台
+
+部署（厂商内网的一台 Linux 服务器，**不放任何私钥**）：
+
+```bash
+tar xzf edgetraffic-os-license-portal-<版本>-linux-amd64.tar.gz && cd edgetraffic-os-license-portal-*
+install -m 0755 syapp-license-server /usr/bin/
+useradd -r -s /sbin/nologin syapp-license
+install -m 0644 syapp-license-server.service /etc/systemd/system/
+mkdir -p /etc/syapp-license-server
+# 可选：/etc/syapp-license-server/portal.env
+#   ETOS_PORTAL_LISTEN=0.0.0.0:8600          默认只监听 127.0.0.1:8600
+#   ETOS_PORTAL_DB=postgres://...            默认 SQLite（数据目录下 portal.db）
+# 对内网开放时务必启用 HTTPS：在 ExecStart 追加 -tls-auto（内置 Web CA，浏览器导入 /web-ca.crt）
+# 或 -tls-cert / -tls-key 使用公司证书
+systemctl daemon-reload && systemctl enable --now syapp-license-server
+```
+
+首次打开页面创建管理员，再由管理员创建其他账号。角色：
+
+| 角色 | 能做的事 |
+|---|---|
+| 销售 | 客户、订单；起草 License（粘贴客户的 `activation-request.json`，或容器部署只填安装 ID）、提交审批、续期 |
+| 商务 | 审批 / 驳回；申请吊销 |
+| 签名员 | 导出签名批次（下载 `sign-request-*.json`）、导入签名结果（`signed-*.json`）、取消批次 |
+| 管理员 | 以上全部，以及用户管理、签名公钥登记 / 停用 / 作废 |
+
+职责分离：同一张 License 的审批人不能是起草人或提交人（管理员也不例外）。
+
+一张 License 的流转：**草稿 → 待审批 → 已审批 → 待离线签名 → 已签发**（可被驳回后重新提交；已签发的可续期、可吊销）。
+
+1. 管理员在“签名公钥”登记离线签名机 keygen 输出的 kid 与公钥，两人核对指纹。后台只接受 `etos-prod-*` 编号的公钥，从不接收私钥。
+   “未内置”标记表示该公钥还不在当前控制台版本的 `keys.go` 中：用它签发的 License 要等含此公钥的控制台版本发布后客户才能验证。
+2. 签名员在“签名批次”导出批次：选择启用中的 kid，勾选已审批的 License，若有待发布的吊销可同时签发新吊销列表。浏览器下载 `sign-request-B0001.json`。
+3. 离线签名（同 4.2）。
+4. 签名员“导入签名结果”选择 `signed-B0001.json`。后台按 4.3 的规则逐条验签并与请求核对；通过后 License 变为“已签发”，新吊销列表发布。
+5. 在 License 页“下载”得到 `.lic`（自动附上最新的吊销列表），发给客户导入。
+
+吊销：商务在 License 页申请吊销（填写原因）→ 随下一个签名批次签发新的累积吊销列表 → 在“吊销”页下载最新吊销列表发给客户（或随下一次 `.lic` 一起下发）。
+同一时间只能有一个包含吊销列表的未导入批次，保证吊销列表序号连续；批次签错或丢失可在“签名批次”取消，License 与吊销回到导出前状态。
+
+所有写操作写入带哈希链的审计记录，“审计”页与总览会校验链是否完整。
 
 ### 4.1 在线侧：生成签名请求
 
@@ -131,10 +175,12 @@ syapp-license-server crl-request -batch B0002 -kid etos-prod-2027 \
 ## 6. 记录与审计
 
 - 离线机：`signer-log.jsonl`（时间、批次、kid、请求 SHA-256、License 编号、CRL 序号），定期用传输 U 盘拷出归档。
-- 在线侧：保存每一份 `sign-request-*.json` 与 `signed-*.json`；授权后台上线后由后台的审计哈希链记录每一步。
+- 在线侧：授权后台完整保存每个批次的请求与签名结果，并以审计哈希链记录每一步；使用命令行时自行归档每一份 `sign-request-*.json` 与 `signed-*.json`。
 - 两边按请求 SHA-256 互相印证：每一条签发日志都应能在在线侧找到对应的请求与导入记录。
 - 纸质：密钥仪式记录、口令信封的保管与开启记录。
 
 ## 7. 演练
 
-正式启用前，用一个测试 kid（例如 `etos-prod-2099`，不合入代码）完整演练一遍：keygen → `request -kid etos-prod-2099` → sign → 在离线机上用 `syapp-license-signer verify -key … -request … -signed …` 核对（测试 kid 未内置，在线侧 `import` 会按设计拒绝它）。确认人员熟悉流程后，销毁演练产生的私钥文件。
+正式启用前，用一个测试 kid（例如 `etos-prod-2099`，不合入代码）完整演练一遍：keygen → `request -kid etos-prod-2099` → sign → 在离线机上用 `syapp-license-signer verify -key … -request … -signed …` 核对（测试 kid 未内置，命令行 `import` 会按设计拒绝它）。
+也可以用一套独立的演练授权后台（单独的数据目录）走完整流程：登记测试公钥 → 起草、审批 → 导出批次 → 离线签名 → 导入 → 吊销 → 再签发吊销列表。演练产生的 License 只用于核对流程，客户控制台不会接受（公钥未内置）。
+确认人员熟悉流程后，销毁演练产生的私钥文件与演练后台的数据目录。
