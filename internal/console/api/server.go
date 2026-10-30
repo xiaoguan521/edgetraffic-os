@@ -43,6 +43,7 @@ type Server struct {
 
 	jwtKey []byte
 	fails  sync.Map // ip -> *loginFail
+	routes func() gin.RoutesInfo
 }
 
 type loginFail struct {
@@ -90,6 +91,12 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	a := v1.Group("", s.auth)
 	a.GET("/auth/me", s.me)
+	a.GET("/openapi.json", s.openAPI)
+
+	// 开放 API 令牌（P9）：创建需要授权功能 api_token；撤销任何时候都可以；令牌不能再创建令牌
+	a.GET("/api-tokens", s.listTokens)
+	a.POST("/api-tokens", s.writable, s.feature(license.FeatureAPIToken), s.createToken)
+	a.DELETE("/api-tokens/:id", s.revokeToken)
 	a.GET("/dashboard", s.dashboard)
 	a.GET("/metrics", s.metrics)
 
@@ -184,6 +191,7 @@ func (s *Server) Handler() (http.Handler, error) {
 			files.ServeHTTP(c.Writer, c.Request)
 		})
 	}
+	s.routes = r.Routes
 	return r, nil
 }
 
@@ -203,6 +211,11 @@ func (s *Server) securityHeaders(c *gin.Context) {
 
 // csrf：修改类请求必须带自定义头（浏览器跨站表单无法设置），配合 SameSite=Strict Cookie。
 func (s *Server) csrf(c *gin.Context) {
+	// 令牌认证不依赖浏览器自动携带的凭据，不受 CSRF 影响
+	if strings.HasPrefix(c.GetHeader("Authorization"), "Bearer ") {
+		c.Next()
+		return
+	}
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead && c.GetHeader("X-Requested-With") != "etos" {
 		fail(c, http.StatusForbidden, "CSRF", "missing X-Requested-With header")
 		return
@@ -268,6 +281,10 @@ func (s *Server) issue(c *gin.Context, u *store.User) error {
 }
 
 func (s *Server) auth(c *gin.Context) {
+	if strings.HasPrefix(c.GetHeader("Authorization"), "Bearer ") {
+		s.tokenAuth(c)
+		return
+	}
 	ck, err := c.Cookie(cookieName)
 	if err != nil {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "login required")

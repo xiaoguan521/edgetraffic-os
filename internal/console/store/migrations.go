@@ -21,6 +21,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300001_release_requests", Migrate: migrateReleaseRequests},
 		{ID: "202610300002_snippets", Migrate: migrateSnippets},
 		{ID: "202610300003_config_imports", Migrate: migrateConfigImports},
+		{ID: "202610300004_api_tokens", Migrate: migrateAPITokens},
 	}
 }
 
@@ -316,4 +317,24 @@ func migrateConfigImports(tx *gorm.DB) error {
 		Result       string
 	}
 	return tx.AutoMigrate(&ConfigImport{})
+}
+
+// ---- 202610300004_api_tokens：开放 API 令牌（P9）----
+
+func migrateAPITokens(tx *gorm.DB) error {
+	type APIToken struct {
+		ID         uint   `gorm:"primaryKey"`
+		Name       string `gorm:"size:64"`
+		Username   string `gorm:"index;size:64"`
+		Role       string `gorm:"size:16"`
+		TokenHash  string `gorm:"uniqueIndex;size:64"`
+		Prefix     string `gorm:"size:16"`
+		ExpiresAt  *time.Time
+		LastUsedAt *time.Time
+		LastUsedIP string `gorm:"size:64"`
+		Revoked    bool
+		CreatedBy  string `gorm:"size:64"`
+		CreatedAt  time.Time
+	}
+	return tx.AutoMigrate(&APIToken{})
 }

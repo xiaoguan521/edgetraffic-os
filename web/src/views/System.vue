@@ -17,6 +17,34 @@ onMounted(async () => {
   approval.value = await api.get('/release-approval')
   if (session.can('admin')) users.value = await api.get('/users')
 })
+const tokens = ref<any[]>([])
+const tkOpen = ref(false)
+const tkForm = reactive({ name: '', role: 'operator', expire_days: 90 })
+const newToken = ref('')
+async function loadTokens() {
+  tokens.value = await api.get('/api-tokens').catch(() => [])
+}
+onMounted(loadTokens)
+async function createToken() {
+  try {
+    const r = await api.post('/api-tokens', tkForm)
+    newToken.value = r.token
+    tkOpen.value = false
+    await loadTokens()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function revokeToken(id: number) {
+  try {
+    await api.del(`/api-tokens/${id}`)
+    await loadTokens()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+const apiLicensed = computed(() => !!lic.value?.features?.includes('api_token'))
+
 async function setApproval(on: boolean) {
   try {
     approval.value = await api.put('/release-approval', { enabled: on })
@@ -114,6 +142,42 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <LicenseImport />
       </section>
     </div>
+
+    <section class="panel">
+      <div class="uhead">
+        <h2>开放 API 令牌</h2>
+        <a-button size="small" :disabled="!apiLicensed || !session.writable" @click="tkOpen = true">新建令牌</a-button>
+      </div>
+      <p class="muted">
+        用 <span class="code">Authorization: Bearer &lt;令牌&gt;</span> 调用 <span class="code">/api/v1</span>，接口清单见 <a href="/api/v1/openapi.json" target="_blank">openapi.json</a>。令牌权限不高于创建者，创建者被降级时随之降级。
+        <template v-if="!apiLicensed">当前授权不包含“开放 API”。</template>
+      </p>
+      <a-alert v-if="newToken" type="success" show-icon closable style="margin: 8px 0" @close="newToken = ''">
+        <template #message>令牌只显示这一次，请立即保存：<span class="code">{{ newToken }}</span></template>
+      </a-alert>
+      <a-table v-if="tokens.length" :data-source="tokens" row-key="id" :pagination="false" size="small"
+        :columns="[{ title: '名称', dataIndex: 'name' }, { title: '前缀', key: 'prefix' }, { title: '用户 / 角色', key: 'who' }, { title: '到期', key: 'exp' }, { title: '最近使用', key: 'used' }, { title: '', key: 'op', width: 80 }]">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'prefix'"><span class="code">{{ record.prefix }}…</span></template>
+          <template v-else-if="column.key === 'who'">{{ record.username }} · {{ roleName[record.role] }}</template>
+          <template v-else-if="column.key === 'exp'">{{ record.expires_at ? dayjs(record.expires_at).format('YYYY-MM-DD') : '不过期' }}</template>
+          <template v-else-if="column.key === 'used'">{{ record.last_used_at ? dayjs(record.last_used_at).format('MM-DD HH:mm') + ' ' + record.last_used_ip : '从未' }}</template>
+          <template v-else-if="column.key === 'op'">
+            <a-tag v-if="record.revoked">已撤销</a-tag>
+            <a-popconfirm v-else title="撤销后立即失效，确定？" @confirm="revokeToken(record.id)"><a class="danger">撤销</a></a-popconfirm>
+          </template>
+        </template>
+      </a-table>
+      <a-modal v-model:open="tkOpen" title="新建 API 令牌" @ok="createToken">
+        <a-form layout="vertical">
+          <a-form-item label="名称"><a-input v-model:value="tkForm.name" placeholder="例如 ci-pipeline" /></a-form-item>
+          <a-form-item label="角色（不高于自己）">
+            <a-select v-model:value="tkForm.role" :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" />
+          </a-form-item>
+          <a-form-item label="有效天数（0 表示不过期）"><a-input-number v-model:value="tkForm.expire_days" :min="0" :max="3650" /></a-form-item>
+        </a-form>
+      </a-modal>
+    </section>
 
     <section class="panel" v-if="session.can('admin')">
       <div class="uhead">
@@ -286,5 +350,8 @@ h3 {
   margin: 8px 0 0;
   font-size: 13px;
   color: #6b7c80;
+}
+.danger {
+  color: #a3332d;
 }
 </style>

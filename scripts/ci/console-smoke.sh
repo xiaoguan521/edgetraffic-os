@@ -118,6 +118,20 @@ expect "片段提交审批" "$("${C[@]}" "$B/snippets?group_id=1")" '"origin":"i
 expect "不能重复应用" "$("${C[@]}" -X POST "$B/imports/$iid/apply" -d '{}')" "ALREADY_APPLIED"
 expect "报告可下载" "$("${C[@]}" "$B/imports/$iid/report")" '"summary"'
 
+echo "== 开放 API 令牌（P9）"
+tk=$("${C[@]}" -X POST "$B/api-tokens" -d '{"name":"ci","role":"operator","expire_days":30}')
+expect "创建令牌（明文只返回一次）" "$tk" '"token":"etos_'
+TOK=$(echo "$tk" | j "d['token']"); tid=$(echo "$tk" | j "d['info']['id']")
+T=(curl -s --cacert "$W/data/pki/web-ca.crt" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json')
+expect "令牌可调用读接口" "$("${T[@]}" "$B/sites?group_id=1")" '"name":"shop"'
+expect "令牌调用写接口不需要 CSRF 头" "$("${T[@]}" -X POST "$B/upstreams" -d '{"group_id":1,"spec":{"name":"tok-up","servers":[{"addr":"10.0.0.31:80"}]}}')" '"tok-up"'
+expect "令牌角色上限生效（operator 不能管理用户）" "$("${T[@]}" "$B/users")" "FORBIDDEN"
+expect "令牌不能创建令牌" "$("${T[@]}" -X POST "$B/api-tokens" -d '{"name":"x"}')" "FORBIDDEN"
+expect "OpenAPI 文档列出接口" "$("${T[@]}" "$B/openapi.json")" '"/sites/{id}"'
+if grep -q "$TOK" "$W/console.log" "$W/data/"*.db 2>/dev/null; then bad "令牌明文出现在日志或数据库中"; else ok "令牌明文不落库、不进日志"; fi
+"${C[@]}" -X DELETE "$B/api-tokens/$tid" >/dev/null
+expect "撤销后令牌失效" "$("${T[@]}" "$B/sites")" "UNAUTHORIZED"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

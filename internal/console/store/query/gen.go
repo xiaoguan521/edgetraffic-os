@@ -18,6 +18,7 @@ import (
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:             db,
+		APIToken:       newAPIToken(db, opts...),
 		AcmeChallenge:  newAcmeChallenge(db, opts...),
 		AcmeOrder:      newAcmeOrder(db, opts...),
 		AuditLog:       newAuditLog(db, opts...),
@@ -43,6 +44,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 type Query struct {
 	db *gorm.DB
 
+	APIToken       aPIToken
 	AcmeChallenge  acmeChallenge
 	AcmeOrder      acmeOrder
 	AuditLog       auditLog
@@ -71,6 +73,7 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:             db,
+		APIToken:       q.APIToken.clone(db),
 		AcmeChallenge:  q.AcmeChallenge.clone(db),
 		AcmeOrder:      q.AcmeOrder.clone(db),
 		AuditLog:       q.AuditLog.clone(db),
@@ -104,6 +107,7 @@ func (q *Query) WriteDB() *Query {
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:             db,
+		APIToken:       q.APIToken.replaceDB(db),
 		AcmeChallenge:  q.AcmeChallenge.replaceDB(db),
 		AcmeOrder:      q.AcmeOrder.replaceDB(db),
 		AuditLog:       q.AuditLog.replaceDB(db),
@@ -127,6 +131,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 }
 
 type queryCtx struct {
+	APIToken       IAPITokenDo
 	AcmeChallenge  IAcmeChallengeDo
 	AcmeOrder      IAcmeOrderDo
 	AuditLog       IAuditLogDo
@@ -150,6 +155,7 @@ type queryCtx struct {
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
+		APIToken:       q.APIToken.WithContext(ctx),
 		AcmeChallenge:  q.AcmeChallenge.WithContext(ctx),
 		AcmeOrder:      q.AcmeOrder.WithContext(ctx),
 		AuditLog:       q.AuditLog.WithContext(ctx),

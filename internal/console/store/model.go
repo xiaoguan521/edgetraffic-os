@@ -175,6 +175,22 @@ type ConfigImport struct {
 	Result       string     `json:"-"` // 应用结果 JSON
 }
 
+// APIToken 是开放 API 的访问令牌（规格书 9 / P9，授权功能 api_token）。只保存哈希，明文只在创建时返回一次。
+type APIToken struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	Name       string     `gorm:"size:64" json:"name"`
+	Username   string     `gorm:"index;size:64" json:"username"` // 令牌代表的用户
+	Role       string     `gorm:"size:16" json:"role"`           // 不高于该用户角色
+	TokenHash  string     `gorm:"uniqueIndex;size:64" json:"-"`
+	Prefix     string     `gorm:"size:16" json:"prefix"` // 便于识别的前 12 个字符
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	LastUsedIP string     `gorm:"size:64" json:"last_used_ip"`
+	Revoked    bool       `json:"revoked"`
+	CreatedBy  string     `gorm:"size:64" json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -274,5 +290,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

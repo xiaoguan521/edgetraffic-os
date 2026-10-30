@@ -38,8 +38,8 @@ type Command struct {
 	Upgrade string // 非空表示热升级动作：start | commit | abort（由 wrapper 自身执行，不调用外部命令）
 	Version string // upgrade-start 的目标版本
 	Path    string
-	Args []string // 不含 argv[0]
-	Env  []string
+	Args    []string // 不含 argv[0]
+	Env     []string
 }
 
 // SafeEnv 是执行 syapp 时使用的全部环境变量。
