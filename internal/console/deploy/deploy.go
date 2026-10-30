@@ -106,6 +106,17 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 			return in, fmt.Errorf("site %s: %w", s.Name, err)
 		}
 		rs.Name = s.Name
+		for i := range rs.Routes {
+			if st := rs.Routes[i].Static; st != nil && st.BundleID != 0 {
+				fs, err := d.staticFiles(groupID, st.BundleID)
+				if err != nil {
+					return in, fmt.Errorf("site %s: %w", s.Name, err)
+				}
+				cp := *st
+				cp.Files = fs
+				rs.Routes[i].Static = &cp
+			}
+		}
 		if d.Certs != nil {
 			if err := d.Certs.ResolveSite(&rs); err != nil {
 				return in, fmt.Errorf("site %s: %w", s.Name, err)

@@ -42,6 +42,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		Revision:         newRevision(db, opts...),
 		Site:             newSite(db, opts...),
 		Snippet:          newSnippet(db, opts...),
+		StaticBundle:     newStaticBundle(db, opts...),
 		StreamService:    newStreamService(db, opts...),
 		SystemKV:         newSystemKV(db, opts...),
 		Upstream:         newUpstream(db, opts...),
@@ -76,6 +77,7 @@ type Query struct {
 	Revision         revision
 	Site             site
 	Snippet          snippet
+	StaticBundle     staticBundle
 	StreamService    streamService
 	SystemKV         systemKV
 	Upstream         upstream
@@ -113,6 +115,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		Revision:         q.Revision.clone(db),
 		Site:             q.Site.clone(db),
 		Snippet:          q.Snippet.clone(db),
+		StaticBundle:     q.StaticBundle.clone(db),
 		StreamService:    q.StreamService.clone(db),
 		SystemKV:         q.SystemKV.clone(db),
 		Upstream:         q.Upstream.clone(db),
@@ -155,6 +158,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		Revision:         q.Revision.replaceDB(db),
 		Site:             q.Site.replaceDB(db),
 		Snippet:          q.Snippet.replaceDB(db),
+		StaticBundle:     q.StaticBundle.replaceDB(db),
 		StreamService:    q.StreamService.replaceDB(db),
 		SystemKV:         q.SystemKV.replaceDB(db),
 		Upstream:         q.Upstream.replaceDB(db),
@@ -187,6 +191,7 @@ type queryCtx struct {
 	Revision         IRevisionDo
 	Site             ISiteDo
 	Snippet          ISnippetDo
+	StaticBundle     IStaticBundleDo
 	StreamService    IStreamServiceDo
 	SystemKV         ISystemKVDo
 	Upstream         IUpstreamDo
@@ -219,6 +224,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		Revision:         q.Revision.WithContext(ctx),
 		Site:             q.Site.WithContext(ctx),
 		Snippet:          q.Snippet.WithContext(ctx),
+		StaticBundle:     q.StaticBundle.WithContext(ctx),
 		StreamService:    q.StreamService.WithContext(ctx),
 		SystemKV:         q.SystemKV.WithContext(ctx),
 		Upstream:         q.Upstream.WithContext(ctx),

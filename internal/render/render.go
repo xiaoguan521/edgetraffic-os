@@ -142,7 +142,17 @@ func Render(in Input) (*Bundle, error) {
 		}
 		for _, r := range routes {
 			if r.Mode == "static" {
-				files[path.Join("sites", s.Name, routeDir(r), "index.html")] = []byte(r.Static.IndexHTML)
+				dir := path.Join("sites", s.Name, routeDir(r))
+				if len(r.Static.Files) > 0 {
+					for p, b := range r.Static.Files {
+						files[path.Join(dir, p)] = b
+					}
+					if _, ok := r.Static.Files["index.html"]; !ok && r.Static.IndexHTML != "" {
+						files[path.Join(dir, "index.html")] = []byte(r.Static.IndexHTML)
+					}
+				} else {
+					files[path.Join(dir, "index.html")] = []byte(r.Static.IndexHTML)
+				}
 			}
 		}
 	}

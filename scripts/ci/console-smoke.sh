@@ -182,6 +182,14 @@ echo "== 批量与灰度发布（P9）"
 expect "批量发布逐组返回结果" "$("${C[@]}" -X POST "$B/releases/batch" -d '{"group_ids":[1],"note":"batch"}')" '"results":[{"group_id":1'
 expect "专业版不含灰度发布" "$("${C[@]}" -X POST "$B/node-groups/1/canary" -d '{}')" "LICENSE_FEATURE_DENIED"
 
+echo "== 静态资源发布（P9）"
+python3 -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr('dist/index.html','<h1>static v1</h1>'); z.writestr('dist/js/app.js','console.log(1)'); z.close()" "$W/web.zip"
+sbid=$(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR" -H 'X-Requested-With: etos' -F group_id=1 -F name=web-v1 -F "file=@$W/web.zip" "$B/static-bundles" | j "d['id']")
+expect "上传静态资源包" "$("${C[@]}" "$B/static-bundles?group_id=1")" '"files":2'
+"${C[@]}" -X POST "$B/sites" -d "{\"group_id\":1,\"spec\":{\"name\":\"web\",\"domains\":[\"web.example.com\"],\"routes\":[{\"path\":\"/\",\"match\":\"prefix\",\"mode\":\"static\",\"static\":{\"bundle_id\":$sbid}}]}}" >/dev/null
+expect "资源包文件进入待发布版本" "$("${C[@]}" "$B/node-groups/1/preview")" "/js/app.js"
+expect "被引用的资源包不能删除" "$("${C[@]}" -X DELETE "$B/static-bundles/$sbid")" "IN_USE"
+
 echo "== 四层代理（P9）"
 expect "保留端口被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":443,"servers":[{"addr":"10.0.0.41:3306"}]}}')" "INVALID_STREAM"
 expect "回源网段之外被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":3306,"servers":[{"addr":"169.254.169.254:80"}]}}')" "INVALID_STREAM"

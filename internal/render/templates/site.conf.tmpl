@@ -44,6 +44,10 @@ server {
 {{- else }}
         alias  /opt/syapp/conf/current/sites/{{ $s.Name }}/{{ routeDir $r }}/;
         index  index.html;
+{{- if $r.Static.Files }}
+        expires  1h;
+        etag     on;
+{{- end }}
 {{- end }}
 {{- else if eq $r.Mode "proxy" }}
         # location 内出现 proxy_set_header 时须重发基线的全部头（规格书 6.3）

@@ -307,6 +307,19 @@ type CanaryRelease struct {
 	FinishedAt     *time.Time `json:"finished_at"`
 }
 
+// StaticBundle 是一个静态资源包（P9 静态资源发布）：上传后不可变，被站点静态路由引用，随配置版本原子切换。
+type StaticBundle struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	GroupID    uint      `gorm:"index" json:"group_id"`
+	Name       string    `gorm:"size:128" json:"name"`
+	SHA256     string    `gorm:"column:sha256;size:64" json:"sha256"`
+	Size       int64     `json:"size"`
+	Files      int       `json:"files"`
+	Data       []byte    `json:"-"` // 规范化后的 tar.gz
+	UploadedBy string    `gorm:"size:64" json:"uploaded_by"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -406,5 +419,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &CanaryRelease{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &CanaryRelease{}, &StaticBundle{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

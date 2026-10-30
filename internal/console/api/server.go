@@ -186,6 +186,11 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/acme", s.acmeGet)
 	a.PUT("/acme", role(store.RoleAdmin), s.writable, s.acmePut)
 
+	// 静态资源发布（P9）
+	a.GET("/static-bundles", s.listStatic)
+	a.POST("/static-bundles", role(store.RoleOperator), s.writable, s.uploadStatic)
+	a.DELETE("/static-bundles/:id", role(store.RoleOperator), s.deleteStatic)
+
 	// 四层代理（P9）：新增与修改需要授权功能 stream；删除任何时候都可以（授权失效时可移除后继续发布）
 	a.GET("/streams", s.listStreams)
 	a.POST("/streams", role(store.RoleOperator), s.writable, s.feature(license.FeatureStream), s.saveStream)

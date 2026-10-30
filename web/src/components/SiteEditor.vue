@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'antdv-next'
-import { api, errMsg } from '../api/client'
+import { api, errMsg, http } from '../api/client'
 
 const props = defineProps<{ open: boolean; site: any | null; groupId: number; upstreams: any[] }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -10,7 +10,7 @@ interface Route {
   path: string
   match: 'prefix' | 'exact'
   mode: 'static' | 'proxy' | 'redirect' | 'deny'
-  static?: { index_html: string }
+  static?: { index_html: string; bundle_id?: number }
   proxy?: { upstream: string }
   redirect?: { to: string; code: number }
 }
@@ -31,6 +31,32 @@ const saving = ref(false)
 const error = ref('')
 const isNew = computed(() => !props.site)
 const certs = ref<any[]>([])
+const bundles = ref<any[]>([])
+async function loadBundles() {
+  bundles.value = await api.get('/static-bundles', { group_id: props.groupId }).catch(() => [])
+}
+function uploadBundle(r: Route) {
+  const el = document.createElement('input')
+  el.type = 'file'
+  el.accept = '.zip,.gz,.tgz'
+  el.onchange = async () => {
+    const file = el.files?.[0]
+    if (!file) return
+    const fd = new FormData()
+    fd.append('group_id', String(props.groupId))
+    fd.append('name', file.name)
+    fd.append('file', file)
+    try {
+      const b = (await http.post('/static-bundles', fd)).data
+      await loadBundles()
+      r.static!.bundle_id = b.id
+      message.success(`已上传 ${b.files} 个文件，保存站点并发布后生效`)
+    } catch (e) {
+      message.error(errMsg(e))
+    }
+  }
+  el.click()
+}
 
 // 证书是否覆盖全部域名（只做提示，最终以服务端校验为准）
 function covers(pattern: string, host: string) {
@@ -57,6 +83,7 @@ watch(
     if (!o) return
     error.value = ''
     api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
+    loadBundles()
     Object.assign(f, blank())
     if (props.site) {
       const s = props.site.spec
@@ -166,7 +193,14 @@ const modes = [
           <a-select :value="r.mode" style="width: 120px" :options="modes" @change="(v: any) => setMode(r, v)" />
           <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
         </div>
-        <a-textarea v-if="r.mode === 'static'" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
+        <template v-if="r.mode === 'static'">
+          <div class="rline" v-if="r.match === 'prefix'">
+            <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
+              :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
+            <a-button @click="uploadBundle(r)">上传 zip / tar.gz</a-button>
+          </div>
+          <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
+        </template>
         <a-select v-else-if="r.mode === 'proxy'" v-model:value="r.proxy!.upstream" style="width: 100%" placeholder="选择上游服务" :options="upstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
         <div v-else-if="r.mode === 'redirect'" class="rline">
           <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />

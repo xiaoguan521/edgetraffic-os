@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,6 +177,8 @@ if ($request_method = TRACE) { return 405; }`
 			in.Sites[0].Routes[i].Snippet = `limit_req zone=api_rl burst=20 nodelay; proxy_read_timeout 300s; proxy_set_header X-Tenant "a b";`
 		}
 	}
+	// 静态资源包路由也要通过真实 syapp -t
+	in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>x</h1>"), "css/a.css": []byte("a{}")}
 	// 四层代理（含 SNI 分流与 UDP）也要通过真实 syapp -t
 	in.Streams = []StreamProxy{
 		{Name: "mysql", Listen: 3306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}, Algorithm: "least_conn", ProxyProtocol: true},
@@ -202,5 +205,25 @@ if ($request_method = TRACE) { return 405; }`
 	}
 	if _, err := b.TarGz(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStaticBundle(t *testing.T) {
+	in := sampleInput(t)
+	in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>docs</h1>"), "css/app.css": []byte("body{}"), "img/a.png": {0x89, 'P'}}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := path.Join("sites", in.Sites[1].Name, routeDir(in.Sites[1].Routes[0]))
+	if string(b.Files[path.Join(dir, "css/app.css")]) != "body{}" || string(b.Files[path.Join(dir, "index.html")]) != "<h1>docs</h1>" {
+		t.Fatalf("static files missing: %v", b.Manifest.Files)
+	}
+	for _, bad := range []string{"../etc/passwd", "/abs", ".git/config", "a/../b", "a b", "a;b"} {
+		in := sampleInput(t)
+		in.Sites[1].Routes[0].Static.Files = map[string][]byte{bad: []byte("x")}
+		if _, err := Render(in); err == nil {
+			t.Errorf("path %q accepted", bad)
+		}
 	}
 }

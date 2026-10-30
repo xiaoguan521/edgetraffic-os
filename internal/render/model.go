@@ -64,6 +64,30 @@ type Route struct {
 // StaticSpec：MVP 中静态内容随配置版本一起发布（单个首页，最大 256 KiB）。
 type StaticSpec struct {
 	IndexHTML string `json:"index_html"`
+	// BundleID 引用控制台的静态资源包（P9 静态资源发布）；渲染前由控制台解析为 Files，随配置版本一起原子切换
+	BundleID uint              `json:"bundle_id,omitempty"`
+	Files    map[string][]byte `json:"-"`
+}
+
+// 静态资源包的限制（整个版本包上限 64 MiB，为配置留出余量）。
+const (
+	MaxStaticBytes = 48 << 20
+	MaxStaticFiles = 5000
+)
+
+var staticPathRe = regexp.MustCompile(`^[A-Za-z0-9._~@+-]+(/[A-Za-z0-9._~@+-]+)*$`)
+
+// ValidateStaticPath 校验静态资源包中的相对路径（不允许穿越、隐藏文件、绝对路径与特殊字符）。
+func ValidateStaticPath(p string) error {
+	if len(p) > 255 || !staticPathRe.MatchString(p) {
+		return fmt.Errorf("invalid static file path %q", p)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
+			return fmt.Errorf("invalid static file path %q", p)
+		}
+	}
+	return nil
 }
 
 type ProxySpec struct {
@@ -200,6 +224,22 @@ func (r *Route) validateMode(ups map[string]bool) error {
 		}
 		if len(r.Static.IndexHTML) > maxIndexHTML {
 			return fmt.Errorf("index_html larger than %d bytes", maxIndexHTML)
+		}
+		if r.Static.BundleID != 0 && r.Match != "prefix" {
+			return fmt.Errorf("static bundle requires a prefix route")
+		}
+		total := 0
+		if len(r.Static.Files) > MaxStaticFiles {
+			return fmt.Errorf("static bundle has more than %d files", MaxStaticFiles)
+		}
+		for p, b := range r.Static.Files {
+			if err := ValidateStaticPath(p); err != nil {
+				return err
+			}
+			total += len(b)
+		}
+		if total > MaxStaticBytes {
+			return fmt.Errorf("static bundle larger than %d bytes", MaxStaticBytes)
 		}
 	case "proxy":
 		if r.Proxy == nil || !ups[r.Proxy.Upstream] {

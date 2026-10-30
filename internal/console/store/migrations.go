@@ -28,6 +28,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300008_account_security", Migrate: migrateAccountSecurity},
 		{ID: "202610300009_streams", Migrate: migrateStreams},
 		{ID: "202610300010_canary", Migrate: migrateCanary},
+		{ID: "202610300011_static_bundles", Migrate: migrateStaticBundles},
 	}
 }
 
@@ -493,4 +494,21 @@ func migrateCanary(tx *gorm.DB) error {
 		FinishedAt     *time.Time
 	}
 	return tx.AutoMigrate(&CanaryRelease{})
+}
+
+// ---- 202610300011_static_bundles：静态资源发布（P9）----
+
+func migrateStaticBundles(tx *gorm.DB) error {
+	type StaticBundle struct {
+		ID         uint   `gorm:"primaryKey"`
+		GroupID    uint   `gorm:"index"`
+		Name       string `gorm:"size:128"`
+		SHA256     string `gorm:"column:sha256;size:64"`
+		Size       int64
+		Files      int
+		Data       []byte
+		UploadedBy string `gorm:"size:64"`
+		CreatedAt  time.Time
+	}
+	return tx.AutoMigrate(&StaticBundle{})
 }
