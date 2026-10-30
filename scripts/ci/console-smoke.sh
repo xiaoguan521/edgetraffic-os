@@ -65,7 +65,11 @@ rid=$(echo "$rq" | j "d['id']"); rrev=$(echo "$rq" | j "d['revision_id']")
 expect "申请详情含差异" "$("${C[@]}" "$B/release-requests/$rid")" "conf.d/site-blog.conf"
 expect "提交人不能自己批准" "$("${C[@]}" -X POST "$B/release-requests/$rid/approve" -d '{}')" "SELF_APPROVAL"
 JAR2=$W/jar2; C2=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR2" -c "$JAR2" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
-"${C2[@]}" -X POST "$B/auth/login" -d '{"username":"rel2","password":"Smoke@2026!rel"}' >/dev/null
+expect "新用户首次登录必须改口令" "$("${C2[@]}" -X POST "$B/auth/login" -d '{"username":"rel2","password":"Smoke@2026!rel"}')" '"must_change_password":true'
+expect "改口令前不能调用其他接口" "$("${C2[@]}" "$B/sites")" "PASSWORD_CHANGE_REQUIRED"
+expect "弱口令被拒绝" "$("${C2[@]}" -X PUT "$B/auth/password" -d '{"old_password":"Smoke@2026!rel","new_password":"weakpassword"}')" "WEAK_PASSWORD"
+expect "修改口令" "$("${C2[@]}" -X PUT "$B/auth/password" -d '{"old_password":"Smoke@2026!rel","new_password":"Smoke@2026!rel-new"}')" '"ok":true'
+expect "不能改回历史口令" "$("${C2[@]}" -X PUT "$B/auth/password" -d '{"old_password":"Smoke@2026!rel-new","new_password":"Smoke@2026!rel"}')" "PASSWORD_REUSED"
 d=$("${C2[@]}" -X POST "$B/release-requests/$rid/approve" -d '{"comment":"ok"}')
 expect "另一位发布员批准后下发冻结的版本" "$d" "\"revision_id\":\"$rrev\""
 id=$(echo "$d" | j "d['id']")
@@ -76,7 +80,7 @@ expect "审计记录审批" "$("${C[@]}" "$B/audit?limit=20")" "release.approve"
 expect "关闭发布审批" "$("${C[@]}" -X PUT "$B/release-approval" -d '{"enabled":false}')" '"enabled":false'
 
 echo "== 自定义片段（P7）"
-"${C[@]}" -X POST "$B/users" -d '{"username":"op2","password":"Smoke@2026!op2","role":"operator"}' >/dev/null
+"${C[@]}" -X POST "$B/users" -d '{"username":"op2","password":"Smoke@2026!opx","role":"operator"}' >/dev/null
 sid=$("${C[@]}" "$B/sites?group_id=1" | j "[x['id'] for x in d if x['name']=='shop'][0]")
 expect "禁用指令被拦下并给出行号" "$("${C[@]}" -X POST "$B/snippets" -d "{\"group_id\":1,\"site_id\":$sid,\"scope\":\"server\",\"content\":\"gzip on;\\ninclude /etc/passwd;\"}")" '"line":2'
 sn=$("${C[@]}" -X POST "$B/snippets" -d "{\"group_id\":1,\"site_id\":$sid,\"scope\":\"server\",\"content\":\"client_max_body_size 50m;\"}")
@@ -86,7 +90,8 @@ pv=$("${C[@]}" "$B/node-groups/1/preview")
 if [[ "$pv" == *client_max_body_size* ]]; then bad "待审批片段不应参与渲染"; else ok "待审批片段不参与渲染"; fi
 expect "提交人不能批准自己的片段" "$("${C[@]}" -X POST "$B/snippets/$snid/approve" -d '{}')" "SELF_APPROVAL"
 JAR3=$W/jar3; C3=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR3" -c "$JAR3" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
-"${C3[@]}" -X POST "$B/auth/login" -d '{"username":"op2","password":"Smoke@2026!op2"}' >/dev/null
+"${C3[@]}" -X POST "$B/auth/login" -d '{"username":"op2","password":"Smoke@2026!opx"}' >/dev/null
+"${C3[@]}" -X PUT "$B/auth/password" -d '{"old_password":"Smoke@2026!opx","new_password":"Smoke@2026!opx-new"}' >/dev/null
 expect "另一位运维批准片段" "$("${C3[@]}" -X POST "$B/snippets/$snid/approve" -d '{}')" '"ok":true'
 expect "批准后的片段进入待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" "client_max_body_size  50m;"
 
@@ -151,6 +156,23 @@ if [[ -n "${PKG_KEY:-}" ]]; then
   expect "版本库列表" "$("${C[@]}" "$B/packages")" '"kid":"etos-ci-pkg-ephemeral"'
   expect "节点组没有节点时拒绝升级" "$("${C[@]}" -X POST "$B/node-groups/1/upgrade" -d '{"version":"9.9.1"}')" "没有节点"
 fi
+
+echo "== 账号安全（等保 2.0，P9）"
+expect "读取安全策略" "$("${C[@]}" "$B/security-policy")" '"lock_threshold":5'
+"${C[@]}" -X POST "$B/users" -d '{"username":"lk1","password":"Smoke@2026!lkx","role":"viewer"}' >/dev/null
+for i in 1 2 3 4 5; do curl -s --cacert "$W/data/pki/web-ca.crt" -H 'X-Requested-With: etos' -H 'Content-Type: application/json' -X POST "$B/auth/login" -d '{"username":"lk1","password":"wrong-Pass#1"}' >/dev/null; done
+expect "连续失败后账号锁定" "$(curl -s --cacert "$W/data/pki/web-ca.crt" -H 'X-Requested-With: etos' -H 'Content-Type: application/json' -X POST "$B/auth/login" -d '{"username":"lk1","password":"Smoke@2026!lkx"}')" "ACCOUNT_LOCKED"
+lid=$("${C[@]}" "$B/users" | j "[u['id'] for u in d if u['username']=='lk1'][0]")
+"${C[@]}" -X PUT "$B/users/$lid" -d '{"unlock":true}' >/dev/null
+expect "管理员解锁后可登录" "$(curl -s --cacert "$W/data/pki/web-ca.crt" -H 'X-Requested-With: etos' -H 'Content-Type: application/json' -X POST "$B/auth/login" -d '{"username":"lk1","password":"Smoke@2026!lkx"}')" '"username":"lk1"'
+JAR4=$W/jar4; C4=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR4" -c "$JAR4" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+"${C4[@]}" -X POST "$B/auth/login" -d '{"username":"lk1","password":"Smoke@2026!lkx"}' >/dev/null
+"${C4[@]}" -X PUT "$B/auth/password" -d '{"old_password":"Smoke@2026!lkx","new_password":"Smoke@2026!lkx-2"}' >/dev/null
+expect "停用前会话可用" "$("${C4[@]}" "$B/auth/me")" '"username":"lk1"'
+"${C[@]}" -X PUT "$B/users/$lid" -d '{"disabled":true}' >/dev/null
+expect "停用立即生效（已有会话失效）" "$("${C4[@]}" "$B/auth/me")" "UNAUTHORIZED"
+expect "不能删除自己" "$("${C[@]}" -X DELETE "$B/users/1")" "SELF"
+expect "LDAP 设置（需 ldaps 或 StartTLS）" "$("${C[@]}" -X PUT "$B/sso/ldap" -d '{"enabled":true,"url":"http://x","base_dn":"dc=x","user_filter":"(uid=%s)"}')" "BAD_LDAP"
 
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'

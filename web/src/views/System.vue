@@ -82,6 +82,65 @@ async function addUser() {
     message.error(errMsg(e))
   }
 }
+const pol = ref<any>(null)
+const ldap = ref<any>(null)
+const ldapTestOpen = ref(false)
+const ldapTest = reactive({ username: '', password: '' })
+onMounted(async () => {
+  if (!session.can('admin')) return
+  pol.value = await api.get('/security-policy')
+  ldap.value = await api.get('/sso/ldap')
+  ldap.value.config.role_map ||= []
+})
+async function reloadUsers() {
+  users.value = await api.get('/users')
+}
+async function updUser(u: any, body: any) {
+  try {
+    await api.put(`/users/${u.id}`, body)
+    await reloadUsers()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function resetPw(u: any) {
+  const pw = window.prompt(`为 ${u.username} 设置临时口令（对方首次登录须修改）`)
+  if (pw) await updUser(u, { reset_password: pw })
+}
+async function delUser(u: any) {
+  try {
+    await api.del(`/users/${u.id}`)
+    await reloadUsers()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function savePolicy() {
+  try {
+    pol.value = await api.put('/security-policy', pol.value)
+    message.success('已保存')
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function saveLDAP() {
+  try {
+    ldap.value = await api.put('/sso/ldap', ldap.value.config)
+    ldap.value.config.role_map ||= []
+    message.success('已保存')
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function testLDAP() {
+  try {
+    const r = await api.post('/sso/ldap/test', ldapTest)
+    message.success(`认证成功：${r.dn}，角色 ${roleName[r.role] || r.role}`)
+    ldapTestOpen.value = false
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 const roleName: Record<string, string> = { admin: '管理员', operator: '运维', releaser: '发布员', viewer: '只读' }
 </script>
 
@@ -195,12 +254,82 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <h2>用户</h2>
         <a-button size="small" :disabled="!session.writable" @click="uOpen = true">新建用户</a-button>
       </div>
-      <a-table :data-source="users" row-key="id" :pagination="false" size="middle" :columns="[{ title: '用户名', dataIndex: 'username' }, { title: '角色', key: 'role' }, { title: '最近登录', key: 'login' }]">
+      <a-table :data-source="users" row-key="id" :pagination="false" size="middle" :columns="[{ title: '用户名', key: 'name' }, { title: '角色', key: 'role', width: 130 }, { title: '状态', key: 'st' }, { title: '最近登录', key: 'login' }, { title: '', key: 'op', width: 200 }]">
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'role'">{{ roleName[record.role] || record.role }}</template>
+          <template v-if="column.key === 'name'">{{ record.username }}<a-tag v-if="record.source && record.source !== 'local'" style="margin-left: 6px">{{ record.source.toUpperCase() }}</a-tag></template>
+          <template v-else-if="column.key === 'role'">
+            <a-select size="small" :value="record.role" style="width: 110px" :disabled="record.username === session.username || !session.writable"
+              :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" @change="(v: any) => updUser(record, { role: v })" />
+          </template>
+          <template v-else-if="column.key === 'st'">
+            <a-tag v-if="record.disabled" color="red">已停用</a-tag>
+            <a-tag v-else-if="record.locked_until && dayjs(record.locked_until).isAfter(dayjs())" color="orange">已锁定</a-tag>
+            <a-tag v-else-if="record.must_change_password" color="gold">待改口令</a-tag>
+            <a-tag v-else color="green">正常</a-tag>
+          </template>
           <template v-else-if="column.key === 'login'">{{ record.last_login_at ? dayjs(record.last_login_at).format('YYYY-MM-DD HH:mm') : '从未' }}</template>
+          <template v-else-if="column.key === 'op' && record.username !== session.username">
+            <a-space :size="4">
+              <a v-if="record.locked_until && dayjs(record.locked_until).isAfter(dayjs())" @click="updUser(record, { unlock: true })">解锁</a>
+              <a @click="updUser(record, { disabled: !record.disabled })">{{ record.disabled ? '启用' : '停用' }}</a>
+              <a v-if="!record.source || record.source === 'local'" @click="resetPw(record)">重置口令</a>
+              <a-popconfirm :title="`删除用户 ${record.username}？其 API 令牌一并撤销`" @confirm="delUser(record)"><a class="danger">删除</a></a-popconfirm>
+            </a-space>
+          </template>
         </template>
       </a-table>
+    </section>
+
+    <section class="panel" v-if="session.can('admin') && pol">
+      <div class="uhead">
+        <h2>账号安全策略</h2>
+        <a-button size="small" :disabled="!session.writable" @click="savePolicy">保存</a-button>
+      </div>
+      <p class="muted">按等保 2.0 三级要求的默认值：口令复杂度与有效期、历史口令、连续失败锁定、会话空闲超时与最长有效期。新建或重置口令的账号首次登录必须修改口令。</p>
+      <div class="pol">
+        <label>口令最短长度<a-input-number v-model:value="pol.min_length" :min="8" :max="64" /></label>
+        <label>字符类别（至少）<a-input-number v-model:value="pol.min_classes" :min="1" :max="4" /></label>
+        <label>口令有效期（天，0 不过期）<a-input-number v-model:value="pol.expire_days" :min="0" :max="3650" /></label>
+        <label>不得重复最近口令数<a-input-number v-model:value="pol.history" :min="0" :max="24" /></label>
+        <label>连续失败锁定（次）<a-input-number v-model:value="pol.lock_threshold" :min="3" :max="20" /></label>
+        <label>锁定时长（分钟）<a-input-number v-model:value="pol.lock_minutes" :min="1" :max="1440" /></label>
+        <label>会话空闲超时（分钟）<a-input-number v-model:value="pol.idle_minutes" :min="5" :max="480" /></label>
+        <label>会话最长有效期（小时）<a-input-number v-model:value="pol.max_hours" :min="1" :max="24" /></label>
+      </div>
+    </section>
+
+    <section class="panel" v-if="session.can('admin') && ldap">
+      <div class="uhead">
+        <h2>LDAP / AD 登录</h2>
+        <a-space>
+          <a-button size="small" @click="ldapTestOpen = true">测试</a-button>
+          <a-button size="small" type="primary" :disabled="!session.writable" @click="saveLDAP">保存</a-button>
+        </a-space>
+      </div>
+      <p class="muted">本地没有的用户名会交给 LDAP 认证，首次登录自动创建账号，角色按组映射（每次登录刷新）。只支持 ldaps:// 或 ldap:// + StartTLS。<template v-if="!ldap.licensed">当前授权不包含单点登录（专业版及以上）。</template></p>
+      <div class="pol">
+        <label class="wide">启用<a-switch v-model:checked="ldap.config.enabled" :disabled="!ldap.licensed" /></label>
+        <label class="wide">地址<a-input v-model:value="ldap.config.url" placeholder="ldaps://ad.example.com:636" /></label>
+        <label class="wide">服务账号 DN<a-input v-model:value="ldap.config.bind_dn" placeholder="cn=reader,dc=example,dc=com" /></label>
+        <label class="wide">服务账号口令<a-input-password v-model:value="ldap.config.bind_password" :placeholder="ldap.config.has_bind_password ? '已保存，留空不改' : ''" autocomplete="new-password" /></label>
+        <label class="wide">Base DN<a-input v-model:value="ldap.config.base_dn" placeholder="dc=example,dc=com" /></label>
+        <label class="wide">用户过滤器<a-input v-model:value="ldap.config.user_filter" placeholder="(&(objectClass=person)(sAMAccountName=%s))" /></label>
+        <label>默认角色<a-select v-model:value="ldap.config.default_role" :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" /></label>
+        <label><span>内网自签证书</span><a-checkbox v-model:checked="ldap.config.skip_tls_verify">不校验服务器证书</a-checkbox></label>
+      </div>
+      <div class="sub" style="margin: 8px 0 4px">组映射（memberOf 中的组 DN → 角色，取最高）</div>
+      <div v-for="(m, i) in ldap.config.role_map" :key="i" class="rm">
+        <a-input v-model:value="m.group" placeholder="cn=edge-admins,ou=groups,dc=example,dc=com" />
+        <a-select v-model:value="m.role" style="width: 120px" :options="Object.entries(roleName).map(([value, label]) => ({ value, label }))" />
+        <a class="danger" @click="ldap.config.role_map.splice(i, 1)">移除</a>
+      </div>
+      <a @click="(ldap.config.role_map ||= []).push({ group: '', role: 'viewer' })">添加映射</a>
+      <a-modal v-model:open="ldapTestOpen" title="测试 LDAP 登录" @ok="testLDAP">
+        <a-form layout="vertical">
+          <a-form-item label="用户名"><a-input v-model:value="ldapTest.username" /></a-form-item>
+          <a-form-item label="口令"><a-input-password v-model:value="ldapTest.password" /></a-form-item>
+        </a-form>
+      </a-modal>
     </section>
 
     <section class="panel about">
@@ -353,5 +482,30 @@ h3 {
 }
 .danger {
   color: #a3332d;
+}
+.pol {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.pol label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #445a5f;
+}
+.pol label.wide {
+  grid-column: span 2;
+}
+.rm {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.sub {
+  font-size: 12px;
+  color: #6b7c80;
 }
 </style>

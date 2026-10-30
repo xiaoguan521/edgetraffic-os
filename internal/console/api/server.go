@@ -21,6 +21,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/secpolicy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
@@ -193,6 +194,14 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/audit/verify", role(store.RoleAdmin), s.verifyAudit)
 	a.GET("/audit/export", role(store.RoleAdmin), s.feature(license.FeatureAuditExport), s.exportAudit)
 
+	a.PUT("/auth/password", s.changePassword)
+	a.GET("/sso/ldap", role(store.RoleAdmin), s.getLDAP)
+	a.PUT("/sso/ldap", role(store.RoleAdmin), s.putLDAP)
+	a.POST("/sso/ldap/test", role(store.RoleAdmin), s.testLDAP)
+	a.GET("/security-policy", role(store.RoleAdmin), s.getPolicy)
+	a.PUT("/security-policy", role(store.RoleAdmin), s.putPolicy)
+	a.PUT("/users/:id", role(store.RoleAdmin), s.updateUser)
+	a.DELETE("/users/:id", role(store.RoleAdmin), s.deleteUser)
 	a.GET("/users", role(store.RoleAdmin), s.listUsers)
 	a.POST("/users", role(store.RoleAdmin), s.writable, s.createUser)
 
@@ -286,21 +295,30 @@ func failErr(c *gin.Context, err error) {
 // ---------- 认证与授权 ----------
 
 type claims struct {
-	UID  uint   `json:"uid"`
-	Name string `json:"name"`
-	Role string `json:"role"`
+	UID    uint   `json:"uid"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
+	AuthAt int64  `json:"auth_at"` // 登录时间：会话最长有效期从这里算
+	PC     bool   `json:"pc"`      // 必须先修改口令（首次登录或口令过期）
 	jwt.RegisteredClaims
 }
 
+// issue 签发会话：空闲超时后失效，活动时滑动续期，自登录起最长 MaxHours（等保 2.0 三级）。
 func (s *Server) issue(c *gin.Context, u *store.User) error {
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{UID: u.ID, Name: u.Username, Role: u.Role,
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(8 * time.Hour)), IssuedAt: jwt.NewNumericDate(time.Now())}})
+	return s.issueAt(c, u, time.Now().Unix(), u.MustChangePassword || (isLocal(u) && s.policy().Expired(u.PasswordChangedAt, u.CreatedAt, time.Now())))
+}
+
+func (s *Server) issueAt(c *gin.Context, u *store.User, authAt int64, pc bool) error {
+	pol := s.policy()
+	idle := time.Duration(pol.IdleMinutes) * time.Minute
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{UID: u.ID, Name: u.Username, Role: u.Role, AuthAt: authAt, PC: pc,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(idle)), IssuedAt: jwt.NewNumericDate(time.Now())}})
 	str, err := tok.SignedString(s.jwtKey)
 	if err != nil {
 		return err
 	}
 	http.SetCookie(c.Writer, &http.Cookie{Name: cookieName, Value: str, Path: "/", HttpOnly: true, Secure: s.SecureCookie,
-		SameSite: http.SameSiteStrictMode, MaxAge: 8 * 3600})
+		SameSite: http.SameSiteStrictMode, MaxAge: pol.MaxHours * 3600})
 	return nil
 }
 
@@ -320,10 +338,42 @@ func (s *Server) auth(c *gin.Context) {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "session expired")
 		return
 	}
-	c.Set("uid", cl.UID)
-	c.Set("user", cl.Name)
-	c.Set("role", cl.Role)
+	pol := s.policy()
+	if time.Since(time.Unix(cl.AuthAt, 0)) > time.Duration(pol.MaxHours)*time.Hour {
+		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "session expired, please sign in again")
+		return
+	}
+	// 每次请求按数据库中的账号状态判断：停用、删除、改角色立即生效
+	uq := s.q().User
+	u, err := uq.WithContext(c.Request.Context()).Where(uq.ID.Eq(cl.UID)).First()
+	if err != nil || u.Disabled || u.Username != cl.Name {
+		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "account disabled or removed")
+		return
+	}
+	if cl.PC {
+		p := strings.TrimPrefix(c.Request.URL.Path, "/api/v1")
+		if p != "/auth/password" && p != "/auth/me" && p != "/auth/logout" {
+			fail(c, http.StatusForbidden, "PASSWORD_CHANGE_REQUIRED", "请先修改口令")
+			return
+		}
+	}
+	// 滑动续期：剩余时间不足一半空闲超时时重新签发
+	if cl.ExpiresAt != nil && time.Until(cl.ExpiresAt.Time) < time.Duration(pol.IdleMinutes)*time.Minute/2 {
+		_ = s.issueAt(c, u, cl.AuthAt, cl.PC)
+	}
+	c.Set("uid", u.ID)
+	c.Set("user", u.Username)
+	c.Set("role", u.Role)
+	c.Set("pc", cl.PC)
 	c.Next()
+}
+
+func isLocal(u *store.User) bool { return u.Source == "" || u.Source == "local" }
+
+// policy 返回当前账号安全策略。
+func (s *Server) policy() secpolicy.Policy {
+	v, _ := s.Store.GetKV("security_policy")
+	return secpolicy.Parse(v)
 }
 
 var rank = map[string]int{store.RoleViewer: 1, store.RoleReleaser: 2, store.RoleOperator: 3, store.RoleAdmin: 4}

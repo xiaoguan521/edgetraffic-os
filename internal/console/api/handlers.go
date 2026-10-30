@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gen/field"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -95,12 +96,17 @@ func (s *Server) setup(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "BAD_USERNAME", "用户名只能包含小写字母、数字和连字符，2–63 位")
 		return
 	}
+	if err := s.policy().CheckPassword(req.Username, req.Password); err != nil {
+		fail(c, http.StatusBadRequest, "WEAK_PASSWORD", err.Error())
+		return
+	}
 	h, err := crypto.HashPassword(req.Password)
 	if err != nil {
 		failErr(c, err)
 		return
 	}
-	u := &store.User{Username: req.Username, PasswordHash: h, Role: store.RoleAdmin}
+	now := time.Now()
+	u := &store.User{Username: req.Username, PasswordHash: h, Role: store.RoleAdmin, Source: "local", PasswordChangedAt: &now}
 	q, ctx := s.q(), c.Request.Context()
 	if err := q.User.WithContext(ctx).Create(u); err != nil {
 		failErr(c, err)
@@ -137,14 +143,43 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	uq, ctx := s.q().User, c.Request.Context()
+	pol := s.policy()
 	u, err := uq.WithContext(ctx).Where(uq.Username.Eq(req.Username)).First()
-	ok := err == nil && crypto.CheckPassword(u.PasswordHash, req.Password)
+	if err == nil && u.LockedUntil != nil && time.Now().Before(*u.LockedUntil) {
+		c.Set("user", req.Username)
+		_ = s.Audit.Write(auditEntry(c, "auth.login", "user", req.Username, "locked"))
+		fail(c, http.StatusTooManyRequests, "ACCOUNT_LOCKED", fmt.Sprintf("账号已锁定，请于 %s 后再试或联系管理员解锁", u.LockedUntil.Format("15:04")))
+		return
+	}
+	var ok bool
+	switch {
+	case err == nil && isLocal(u):
+		ok = crypto.CheckPassword(u.PasswordHash, req.Password)
+	case s.ldapEnabled() && (err != nil || u.Source == "ldap"):
+		// 本地没有此用户或用户来自 LDAP：交给 LDAP 认证（首次登录自动创建，角色按映射）
+		u, ok = s.ldapLogin(c, req.Username, req.Password)
+		err = nil
+	}
+	if err == nil && ok && u.Disabled {
+		c.Set("user", u.Username)
+		_ = s.Audit.Write(auditEntry(c, "auth.login", "user", u.Username, "disabled"))
+		fail(c, http.StatusForbidden, "ACCOUNT_DISABLED", "账号已停用")
+		return
+	}
 	if !ok {
 		lf.mu.Lock()
-		if lf.n++; lf.n >= 5 {
+		if lf.n++; lf.n >= 5*2 { // 单个来源 IP 的失败上限（防撞库），账号级锁定见下
 			lf.n, lf.until = 0, time.Now().Add(15*time.Minute)
 		}
 		lf.mu.Unlock()
+		if err == nil && u != nil && u.ID != 0 {
+			n := u.FailedLogins + 1
+			set := []field.AssignExpr{uq.FailedLogins.Value(n)}
+			if n >= pol.LockThreshold {
+				set = []field.AssignExpr{uq.FailedLogins.Value(0), uq.LockedUntil.Value(time.Now().Add(time.Duration(pol.LockMinutes) * time.Minute))}
+			}
+			_, _ = uq.WithContext(ctx).Where(uq.ID.Eq(u.ID)).UpdateSimple(set...)
+		}
 		c.Set("user", req.Username)
 		_ = s.Audit.Write(auditEntry(c, "auth.login", "user", req.Username, "failure"))
 		fail(c, http.StatusUnauthorized, "BAD_CREDENTIALS", "用户名或密码错误")
@@ -153,14 +188,15 @@ func (s *Server) login(c *gin.Context) {
 	lf.mu.Lock()
 	lf.n = 0
 	lf.mu.Unlock()
-	_, _ = uq.WithContext(ctx).Where(uq.ID.Eq(u.ID)).Update(uq.LastLoginAt, time.Now())
+	_, _ = uq.WithContext(ctx).Where(uq.ID.Eq(u.ID)).UpdateSimple(uq.LastLoginAt.Value(time.Now()), uq.FailedLogins.Value(0), uq.LockedUntil.Null())
 	c.Set("user", u.Username)
-	s.audit(c, "auth.login", "user", u.Username, nil)
+	s.audit(c, "auth.login", "user", u.Username, map[string]string{"source": u.Source})
 	if err := s.issue(c, u); err != nil {
 		failErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"username": u.Username, "role": u.Role})
+	mustChange := u.MustChangePassword || (isLocal(u) && pol.Expired(u.PasswordChangedAt, u.CreatedAt, time.Now()))
+	c.JSON(http.StatusOK, gin.H{"username": u.Username, "role": u.Role, "must_change_password": mustChange})
 }
 
 func (s *Server) logout(c *gin.Context) {
@@ -169,7 +205,7 @@ func (s *Server) logout(c *gin.Context) {
 }
 
 func (s *Server) me(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"username": c.GetString("user"), "role": c.GetString("role")})
+	c.JSON(http.StatusOK, gin.H{"username": c.GetString("user"), "role": c.GetString("role"), "must_change_password": c.GetBool("pc")})
 }
 
 // ---------- 授权 ----------
@@ -1150,12 +1186,17 @@ func (s *Server) createUser(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "BAD_USERNAME", "用户名只能包含小写字母、数字和连字符")
 		return
 	}
+	if err := s.policy().CheckPassword(req.Username, req.Password); err != nil {
+		fail(c, http.StatusBadRequest, "WEAK_PASSWORD", err.Error())
+		return
+	}
 	h, err := crypto.HashPassword(req.Password)
 	if err != nil {
 		failErr(c, err)
 		return
 	}
-	u := &store.User{Username: req.Username, PasswordHash: h, Role: req.Role}
+	// 管理员设置的初始口令：首次登录必须修改
+	u := &store.User{Username: req.Username, PasswordHash: h, Role: req.Role, Source: "local", MustChangePassword: true}
 	if err := s.q().User.WithContext(c.Request.Context()).Create(u); err != nil {
 		fail(c, http.StatusConflict, "DUPLICATE", "用户已存在")
 		return

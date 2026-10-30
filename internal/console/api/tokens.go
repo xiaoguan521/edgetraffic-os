@@ -45,7 +45,7 @@ func (s *Server) tokenAuth(c *gin.Context) {
 		return
 	}
 	u, err := q.User.WithContext(ctx).Where(q.User.Username.Eq(t.Username)).First()
-	if err != nil {
+	if err != nil || u.Disabled {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "token owner no longer exists")
 		return
 	}

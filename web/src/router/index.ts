@@ -7,6 +7,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/setup', name: 'setup', component: () => import('../views/Setup.vue'), meta: { public: true } },
+    { path: '/password', name: 'password', component: () => import('../views/ChangePassword.vue'), meta: { public: true } },
     { path: '/login', name: 'login', component: () => import('../views/Login.vue'), meta: { public: true } },
     {
       path: '/',

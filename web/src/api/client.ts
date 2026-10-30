@@ -21,6 +21,8 @@ http.interceptors.response.use(
     const data = err.response?.data
     if (status === 401 && router.currentRoute.value.name !== 'login' && router.currentRoute.value.name !== 'setup') {
       router.push({ name: 'login', query: { next: router.currentRoute.value.fullPath } })
+    } else if (status === 403 && data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      router.push({ name: 'password' })
     } else if (status === 423) {
       message.warning(data?.message || '授权已失效，控制台为只读状态')
     } else if (status === 402) {

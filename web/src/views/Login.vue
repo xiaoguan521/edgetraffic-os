@@ -16,7 +16,11 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    await api.post('/auth/login', form)
+    const r = await api.post('/auth/login', form)
+    if (r.must_change_password) {
+      router.push({ name: 'password' })
+      return
+    }
     await session.loadMe()
     await session.loadLicense()
     router.push((route.query.next as string) || '/dashboard')

@@ -21,6 +21,15 @@ type User struct {
 	Role         string `gorm:"size:16" json:"role"`
 	CreatedAt    time.Time
 	LastLoginAt  *time.Time `json:"last_login_at"`
+
+	// 账号安全（等保 2.0 三级，P9）
+	Source             string     `gorm:"size:16" json:"source"` // local | ldap | oidc（空视为 local）
+	Disabled           bool       `json:"disabled"`
+	MustChangePassword bool       `json:"must_change_password"`
+	PasswordChangedAt  *time.Time `json:"password_changed_at"`
+	PasswordHistory    string     `json:"-"` // 最近几次口令哈希（JSON）
+	FailedLogins       int        `json:"failed_logins"`
+	LockedUntil        *time.Time `json:"locked_until"`
 }
 
 type NodeGroup struct {

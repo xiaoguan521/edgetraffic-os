@@ -10,6 +10,7 @@ import {
   DashboardOutlined,
   GlobalOutlined,
   ImportOutlined,
+  KeyOutlined,
   LockOutlined,
   LogoutOutlined,
   RocketOutlined,
@@ -94,7 +95,7 @@ async function logout() {
           <router-link v-if="lic" :to="{ name: 'system' }" class="lic" :class="licTone">
             <i class="dot" />{{ licText }}
           </router-link>
-          <a-dropdown :menu="{ items: [{ key: 'logout', icon: () => h(LogoutOutlined), label: '退出登录' }], onClick: logout }">
+          <a-dropdown :menu="{ items: [{ key: 'password', icon: () => h(KeyOutlined), label: '修改口令' }, { key: 'logout', icon: () => h(LogoutOutlined), label: '退出登录' }], onClick: (e: any) => (e.key === 'password' ? router.push({ name: 'password' }) : logout()) }">
             <a-button type="text">{{ session.username }}（{{ roleName[session.role] || session.role }}）</a-button>
           </a-dropdown>
         </div>

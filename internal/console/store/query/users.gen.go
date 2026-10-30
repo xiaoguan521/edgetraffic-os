@@ -33,6 +33,13 @@ func newUser(db *gorm.DB, opts ...gen.DOOption) user {
 	_user.Role = field.NewString(tableName, "role")
 	_user.CreatedAt = field.NewTime(tableName, "created_at")
 	_user.LastLoginAt = field.NewTime(tableName, "last_login_at")
+	_user.Source = field.NewString(tableName, "source")
+	_user.Disabled = field.NewBool(tableName, "disabled")
+	_user.MustChangePassword = field.NewBool(tableName, "must_change_password")
+	_user.PasswordChangedAt = field.NewTime(tableName, "password_changed_at")
+	_user.PasswordHistory = field.NewString(tableName, "password_history")
+	_user.FailedLogins = field.NewInt(tableName, "failed_logins")
+	_user.LockedUntil = field.NewTime(tableName, "locked_until")
 
 	_user.fillFieldMap()
 
@@ -42,13 +49,20 @@ func newUser(db *gorm.DB, opts ...gen.DOOption) user {
 type user struct {
 	userDo userDo
 
-	ALL          field.Asterisk
-	ID           field.Uint
-	Username     field.String
-	PasswordHash field.String
-	Role         field.String
-	CreatedAt    field.Time
-	LastLoginAt  field.Time
+	ALL                field.Asterisk
+	ID                 field.Uint
+	Username           field.String
+	PasswordHash       field.String
+	Role               field.String
+	CreatedAt          field.Time
+	LastLoginAt        field.Time
+	Source             field.String
+	Disabled           field.Bool
+	MustChangePassword field.Bool
+	PasswordChangedAt  field.Time
+	PasswordHistory    field.String
+	FailedLogins       field.Int
+	LockedUntil        field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -71,6 +85,13 @@ func (u *user) updateTableName(table string) *user {
 	u.Role = field.NewString(table, "role")
 	u.CreatedAt = field.NewTime(table, "created_at")
 	u.LastLoginAt = field.NewTime(table, "last_login_at")
+	u.Source = field.NewString(table, "source")
+	u.Disabled = field.NewBool(table, "disabled")
+	u.MustChangePassword = field.NewBool(table, "must_change_password")
+	u.PasswordChangedAt = field.NewTime(table, "password_changed_at")
+	u.PasswordHistory = field.NewString(table, "password_history")
+	u.FailedLogins = field.NewInt(table, "failed_logins")
+	u.LockedUntil = field.NewTime(table, "locked_until")
 
 	u.fillFieldMap()
 
@@ -95,13 +116,20 @@ func (u *user) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *user) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 6)
+	u.fieldMap = make(map[string]field.Expr, 13)
 	u.fieldMap["id"] = u.ID
 	u.fieldMap["username"] = u.Username
 	u.fieldMap["password_hash"] = u.PasswordHash
 	u.fieldMap["role"] = u.Role
 	u.fieldMap["created_at"] = u.CreatedAt
 	u.fieldMap["last_login_at"] = u.LastLoginAt
+	u.fieldMap["source"] = u.Source
+	u.fieldMap["disabled"] = u.Disabled
+	u.fieldMap["must_change_password"] = u.MustChangePassword
+	u.fieldMap["password_changed_at"] = u.PasswordChangedAt
+	u.fieldMap["password_history"] = u.PasswordHistory
+	u.fieldMap["failed_logins"] = u.FailedLogins
+	u.fieldMap["locked_until"] = u.LockedUntil
 }
 
 func (u user) clone(db *gorm.DB) user {

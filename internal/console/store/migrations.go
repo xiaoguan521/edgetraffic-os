@@ -25,6 +25,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300005_alerts", Migrate: migrateAlerts},
 		{ID: "202610300006_node_drifts", Migrate: migrateNodeDrifts},
 		{ID: "202610300007_dataplane_upgrades", Migrate: migrateDataplaneUpgrades},
+		{ID: "202610300008_account_security", Migrate: migrateAccountSecurity},
 	}
 }
 
@@ -432,4 +433,26 @@ func migrateDataplaneUpgrades(tx *gorm.DB) error {
 		}
 	}
 	return tx.AutoMigrate(&DataplanePackage{}, &DataplaneUpgrade{})
+}
+
+// ---- 202610300008_account_security：账号安全策略与外部身份（P9）----
+
+func migrateAccountSecurity(tx *gorm.DB) error {
+	type User struct {
+		Source             string `gorm:"size:16"`
+		Disabled           bool
+		MustChangePassword bool
+		PasswordChangedAt  *time.Time
+		PasswordHistory    string
+		FailedLogins       int
+		LockedUntil        *time.Time
+	}
+	for _, col := range []string{"Source", "Disabled", "MustChangePassword", "PasswordChangedAt", "PasswordHistory", "FailedLogins", "LockedUntil"} {
+		if !tx.Migrator().HasColumn(&User{}, col) {
+			if err := tx.Migrator().AddColumn(&User{}, col); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
