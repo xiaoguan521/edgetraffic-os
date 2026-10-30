@@ -149,6 +149,19 @@ func TestRenderSyappSyntax(t *testing.T) {
 	// 带一个进行中的 ACME 挑战，确认挑战 location 也能通过真实 syapp -t
 	tok := "abcDEF0123456789_-tokenXYZ"
 	in.AcmeChallenges = []AcmeChallenge{{Token: tok, KeyAuth: tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"}}
+	// 三个插入点的自定义片段（12.7）也要通过真实 syapp -t
+	in.HTTPSnippets = []NamedSnippet{{Name: "tuning", Text: `gzip_comp_level 5; gzip_types text/css application/json;
+limit_req_zone $binary_remote_addr zone=api_rl:10m rate=10r/s;
+map $http_x_env $env_tag { default prod; ~^test test; }`}}
+	in.Sites[0].ServerSnippet = `client_max_body_size 50m;
+add_header X-Env $env_tag always;
+location /v2/ { proxy_pass http://up_api/v2/; proxy_set_header X-Env $env_tag; proxy_read_timeout 120s; }
+if ($request_method = TRACE) { return 405; }`
+	for i := range in.Sites[0].Routes {
+		if in.Sites[0].Routes[i].Mode == "proxy" {
+			in.Sites[0].Routes[i].Snippet = `limit_req zone=api_rl burst=20 nodelay; proxy_read_timeout 300s; proxy_set_header X-Tenant "a b";`
+		}
+	}
 	b, err := Render(in)
 	if err != nil {
 		t.Fatal(err)

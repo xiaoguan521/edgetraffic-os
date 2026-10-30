@@ -32,6 +32,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		ReleaseRequest: newReleaseRequest(db, opts...),
 		Revision:       newRevision(db, opts...),
 		Site:           newSite(db, opts...),
+		Snippet:        newSnippet(db, opts...),
 		SystemKV:       newSystemKV(db, opts...),
 		Upstream:       newUpstream(db, opts...),
 		User:           newUser(db, opts...),
@@ -55,6 +56,7 @@ type Query struct {
 	ReleaseRequest releaseRequest
 	Revision       revision
 	Site           site
+	Snippet        snippet
 	SystemKV       systemKV
 	Upstream       upstream
 	User           user
@@ -81,6 +83,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		ReleaseRequest: q.ReleaseRequest.clone(db),
 		Revision:       q.Revision.clone(db),
 		Site:           q.Site.clone(db),
+		Snippet:        q.Snippet.clone(db),
 		SystemKV:       q.SystemKV.clone(db),
 		Upstream:       q.Upstream.clone(db),
 		User:           q.User.clone(db),
@@ -112,6 +115,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		ReleaseRequest: q.ReleaseRequest.replaceDB(db),
 		Revision:       q.Revision.replaceDB(db),
 		Site:           q.Site.replaceDB(db),
+		Snippet:        q.Snippet.replaceDB(db),
 		SystemKV:       q.SystemKV.replaceDB(db),
 		Upstream:       q.Upstream.replaceDB(db),
 		User:           q.User.replaceDB(db),
@@ -133,6 +137,7 @@ type queryCtx struct {
 	ReleaseRequest IReleaseRequestDo
 	Revision       IRevisionDo
 	Site           ISiteDo
+	Snippet        ISnippetDo
 	SystemKV       ISystemKVDo
 	Upstream       IUpstreamDo
 	User           IUserDo
@@ -154,6 +159,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		ReleaseRequest: q.ReleaseRequest.WithContext(ctx),
 		Revision:       q.Revision.WithContext(ctx),
 		Site:           q.Site.WithContext(ctx),
+		Snippet:        q.Snippet.WithContext(ctx),
 		SystemKV:       q.SystemKV.WithContext(ctx),
 		Upstream:       q.Upstream.WithContext(ctx),
 		User:           q.User.WithContext(ctx),

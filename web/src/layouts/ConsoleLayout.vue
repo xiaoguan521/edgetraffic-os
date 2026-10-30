@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   AuditOutlined,
   ClusterOutlined,
+  CodeOutlined,
   DashboardOutlined,
   GlobalOutlined,
   LockOutlined,
@@ -22,6 +23,7 @@ const items = [
   { key: 'nodes', icon: () => h(ClusterOutlined), label: '节点' },
   { key: 'sites', icon: () => h(GlobalOutlined), label: '站点与上游' },
   { key: 'certificates', icon: () => h(LockOutlined), label: '证书' },
+  { key: 'snippets', icon: () => h(CodeOutlined), label: '自定义片段' },
   { key: 'releases', icon: () => h(RocketOutlined), label: '发布' },
   { key: 'audit', icon: () => h(AuditOutlined), label: '审计' },
   { key: 'system', icon: () => h(SafetyCertificateOutlined), label: '授权与系统' },

@@ -25,6 +25,7 @@ var tmplFS embed.FS
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"join":     strings.Join,
 	"routeDir": routeDir,
+	"indent":   indentSnippet,
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
 // routeDir 为静态路由生成稳定的目录名，与路由在列表中的位置无关。
@@ -53,6 +54,15 @@ const ManifestName = "MANIFEST.json"
 // Render 校验输入并生成版本目录。相同输入总是得到相同的 Digest。
 func Render(in Input) (*Bundle, error) {
 	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+	// 片段在副本上校验并规范化，不修改调用方的数据
+	in.Sites = append([]Site(nil), in.Sites...)
+	for i := range in.Sites {
+		in.Sites[i].Routes = append([]Route(nil), in.Sites[i].Routes...)
+	}
+	in.HTTPSnippets = append([]NamedSnippet(nil), in.HTTPSnippets...)
+	if err := in.validateInputSnippets(); err != nil {
 		return nil, err
 	}
 	if len(in.MimeTypes) == 0 {
@@ -89,6 +99,10 @@ func Render(in Input) (*Bundle, error) {
 		}{in.Revision, ups}); err != nil {
 			return nil, err
 		}
+	}
+
+	for _, sn := range in.HTTPSnippets {
+		files["conf.d/snippet-"+sn.Name+".conf"] = []byte("# 自定义片段 " + sn.Name + "（经审批，渲染器规范化输出，禁止手改）\n" + sn.Text)
 	}
 
 	for _, s := range in.Sites {

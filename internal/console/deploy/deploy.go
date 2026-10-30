@@ -93,7 +93,9 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 	if err != nil {
 		return in, fmt.Errorf("load sites: %w", err)
 	}
+	siteIDs := map[string]uint{}
 	for _, s := range sites {
+		siteIDs[s.Name] = s.ID
 		var rs render.Site
 		if err := json.Unmarshal([]byte(s.Spec), &rs); err != nil {
 			return in, fmt.Errorf("site %s: %w", s.Name, err)
@@ -120,6 +122,9 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		}
 		ru.Name = u.Name
 		in.Upstreams = append(in.Upstreams, ru)
+	}
+	if err := d.applySnippets(groupID, &in, siteIDs); err != nil {
+		return in, err
 	}
 	return in, nil
 }

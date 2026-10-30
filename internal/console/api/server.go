@@ -107,6 +107,16 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/node-groups/:id/rollback", role(store.RoleReleaser), s.rollback) // 过期状态下仍可用
 	a.POST("/node-groups/:id/release-requests", role(store.RoleReleaser), s.writable, s.requestRelease)
 
+	// 自定义片段（P7，规格书 12.7）：每次变更都需另一人批准
+	a.GET("/snippets", s.listSnippets)
+	a.GET("/snippets/stats", role(store.RoleOperator), s.snippetStats)
+	a.POST("/snippets/validate", role(store.RoleOperator), s.validateSnippet)
+	a.POST("/snippets", role(store.RoleOperator), s.writable, s.submitSnippet)
+	a.POST("/snippets/:id/delete", role(store.RoleOperator), s.writable, s.deleteSnippet)
+	a.POST("/snippets/:id/approve", role(store.RoleOperator), s.writable, s.approveSnippet)
+	a.POST("/snippets/:id/reject", role(store.RoleOperator), s.rejectSnippet)
+	a.POST("/snippets/:id/withdraw", role(store.RoleOperator), s.withdrawSnippet)
+
 	// 发布审批（P7）：开启需要 release_approval 功能，关闭任何时候都可以
 	a.GET("/release-approval", s.approvalGet)
 	a.PUT("/release-approval", role(store.RoleAdmin), s.approvalPut)
@@ -220,6 +230,8 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "STALE_REQUEST", "提交后线上版本已变化（例如有人回滚），该申请已过期，请重新提交")
 	case errors.Is(err, deploy.ErrSelfApproval):
 		fail(c, http.StatusForbidden, "SELF_APPROVAL", "提交人不能审批自己的发布申请")
+	case errors.Is(err, deploy.ErrNoPendingChange):
+		fail(c, http.StatusConflict, "NO_PENDING_CHANGE", "该片段没有待审批的变更")
 	case errors.Is(err, deploy.ErrForbidden):
 		fail(c, http.StatusForbidden, "FORBIDDEN", "只有提交人或管理员可以撤回")
 	default:

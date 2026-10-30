@@ -59,6 +59,15 @@ server {
 {{- else if eq $r.Mode "deny" }}
         return  403;
 {{- end }}
+{{- if $r.Snippet }}
+        # 自定义片段（经审批）
+{{ indent $r.Snippet 2 }}
+{{- end }}
     }
+{{- end }}
+{{- if $s.ServerSnippet }}
+
+    # 自定义片段（经审批）
+{{ indent $s.ServerSnippet 1 }}
 {{- end }}
 }

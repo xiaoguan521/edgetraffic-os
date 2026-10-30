@@ -19,6 +19,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610280001_certificates", Migrate: migrateCertificates},
 		{ID: "202610290001_acme", Migrate: migrateAcme},
 		{ID: "202610300001_release_requests", Migrate: migrateReleaseRequests},
+		{ID: "202610300002_snippets", Migrate: migrateSnippets},
 	}
 }
 
@@ -263,4 +264,31 @@ func migrateReleaseRequests(tx *gorm.DB) error {
 		DeploymentID   uint
 	}
 	return tx.AutoMigrate(&ReleaseRequest{})
+}
+
+// ---- 202610300002_snippets：自定义片段（P7）----
+
+func migrateSnippets(tx *gorm.DB) error {
+	type Snippet struct {
+		ID            uint   `gorm:"primaryKey"`
+		GroupID       uint   `gorm:"uniqueIndex:idx_snippet_slot"`
+		SiteID        uint   `gorm:"uniqueIndex:idx_snippet_slot"`
+		Scope         string `gorm:"uniqueIndex:idx_snippet_slot;size:16"`
+		RoutePath     string `gorm:"uniqueIndex:idx_snippet_slot;size:255"`
+		Name          string `gorm:"uniqueIndex:idx_snippet_slot;size:32"`
+		Content       string
+		ContentSHA256 string `gorm:"column:content_sha256;size:64"`
+		Pending       string
+		PendingDelete bool
+		PendingBy     string `gorm:"size:64"`
+		PendingAt     *time.Time
+		PendingNote   string
+		Origin        string `gorm:"size:32"`
+		ApprovedBy    string `gorm:"size:64"`
+		ApprovedAt    *time.Time
+		CreatedBy     string `gorm:"size:64"`
+		CreatedAt     time.Time
+		UpdatedAt     time.Time
+	}
+	return tx.AutoMigrate(&Snippet{})
 }

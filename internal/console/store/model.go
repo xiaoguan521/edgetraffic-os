@@ -132,6 +132,29 @@ type ReleaseRequest struct {
 	DeploymentID   uint       `json:"deployment_id"`
 }
 
+// Snippet 是自定义配置片段（规格书 12.7 路径 A）。任何变更都先进入 Pending*，由另一人批准后才成为 Content 并参与渲染。
+type Snippet struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	GroupID       uint       `gorm:"uniqueIndex:idx_snippet_slot" json:"group_id"`
+	SiteID        uint       `gorm:"uniqueIndex:idx_snippet_slot" json:"site_id"`             // http 片段为 0
+	Scope         string     `gorm:"uniqueIndex:idx_snippet_slot;size:16" json:"scope"`       // http | server | location
+	RoutePath     string     `gorm:"uniqueIndex:idx_snippet_slot;size:255" json:"route_path"` // location 片段对应的路由路径
+	Name          string     `gorm:"uniqueIndex:idx_snippet_slot;size:32" json:"name"`        // http 片段名
+	Content       string     `json:"content"`                                                 // 已批准、生效中的规范化文本（空表示尚未生效）
+	ContentSHA256 string     `gorm:"column:content_sha256;size:64" json:"content_sha256"`
+	Pending       string     `json:"pending"` // 待审批的新内容（规范化后）
+	PendingDelete bool       `json:"pending_delete"`
+	PendingBy     string     `gorm:"size:64" json:"pending_by"`
+	PendingAt     *time.Time `json:"pending_at"`
+	PendingNote   string     `json:"pending_note"`
+	Origin        string     `gorm:"size:32" json:"origin"` // manual | import | drift
+	ApprovedBy    string     `gorm:"size:64" json:"approved_by"`
+	ApprovedAt    *time.Time `json:"approved_at"`
+	CreatedBy     string     `gorm:"size:64" json:"created_by"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -231,5 +254,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

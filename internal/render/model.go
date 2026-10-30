@@ -18,6 +18,8 @@ type Input struct {
 	MimeTypes  []byte          // 由数据面安装包的 share/defaults/mime.types 提供
 
 	AcmeChallenges []AcmeChallenge // 进行中的 ACME HTTP-01 挑战，渲染进 snippets/acme-challenge.conf
+
+	HTTPSnippets []NamedSnippet // 已审批的 http 层自定义片段（12.7）
 }
 
 // AcmeChallenge 是一个 HTTP-01 挑战：节点对 /.well-known/acme-challenge/<Token> 返回 KeyAuth。
@@ -34,6 +36,8 @@ type Site struct {
 	ForceHTTPS bool     `json:"force_https"`
 	HTTP2      bool     `json:"http2"`
 	Routes     []Route  `json:"routes"`
+
+	ServerSnippet string `json:"-"` // 已审批的 server 层自定义片段（不随站点表单保存，由控制台按审批状态填入）
 }
 
 // TLS 证书以 PEM 原文传入，渲染进版本目录 certs/。
@@ -52,6 +56,8 @@ type Route struct {
 	Static   *StaticSpec   `json:"static,omitempty"`
 	Proxy    *ProxySpec    `json:"proxy,omitempty"`
 	Redirect *RedirectSpec `json:"redirect,omitempty"`
+
+	Snippet string `json:"-"` // 已审批的 location 层自定义片段
 }
 
 // StaticSpec：MVP 中静态内容随配置版本一起发布（单个首页，最大 256 KiB）。

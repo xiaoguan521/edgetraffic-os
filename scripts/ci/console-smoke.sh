@@ -75,6 +75,21 @@ expect "申请状态为已批准" "$("${C[@]}" "$B/release-requests/$rid")" '"st
 expect "审计记录审批" "$("${C[@]}" "$B/audit?limit=20")" "release.approve"
 expect "关闭发布审批" "$("${C[@]}" -X PUT "$B/release-approval" -d '{"enabled":false}')" '"enabled":false'
 
+echo "== 自定义片段（P7）"
+"${C[@]}" -X POST "$B/users" -d '{"username":"op2","password":"Smoke@2026!op2","role":"operator"}' >/dev/null
+sid=$("${C[@]}" "$B/sites?group_id=1" | j "[x['id'] for x in d if x['name']=='shop'][0]")
+expect "禁用指令被拦下并给出行号" "$("${C[@]}" -X POST "$B/snippets" -d "{\"group_id\":1,\"site_id\":$sid,\"scope\":\"server\",\"content\":\"gzip on;\\ninclude /etc/passwd;\"}")" '"line":2'
+sn=$("${C[@]}" -X POST "$B/snippets" -d "{\"group_id\":1,\"site_id\":$sid,\"scope\":\"server\",\"content\":\"client_max_body_size 50m;\"}")
+expect "提交片段" "$sn" '"pending_by":"admin"'
+snid=$(echo "$sn" | j "d['id']")
+pv=$("${C[@]}" "$B/node-groups/1/preview")
+if [[ "$pv" == *client_max_body_size* ]]; then bad "待审批片段不应参与渲染"; else ok "待审批片段不参与渲染"; fi
+expect "提交人不能批准自己的片段" "$("${C[@]}" -X POST "$B/snippets/$snid/approve" -d '{}')" "SELF_APPROVAL"
+JAR3=$W/jar3; C3=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR3" -c "$JAR3" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+"${C3[@]}" -X POST "$B/auth/login" -d '{"username":"op2","password":"Smoke@2026!op2"}' >/dev/null
+expect "另一位运维批准片段" "$("${C3[@]}" -X POST "$B/snippets/$snid/approve" -d '{}')" '"ok":true'
+expect "批准后的片段进入待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" "client_max_body_size  50m;"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi
