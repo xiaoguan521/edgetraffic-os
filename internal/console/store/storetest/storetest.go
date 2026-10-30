@@ -23,20 +23,35 @@ import (
 // Open 返回一个已完成迁移的空库。
 func Open(t testing.TB) *store.Store {
 	t.Helper()
+	db := OpenRaw(t)
+	if err := store.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	return &store.Store{DB: db}
+}
+
+// OpenRaw 返回一个未执行任何迁移的空库（SQLite 临时文件，或 PostgreSQL 中独立的 schema）。
+func OpenRaw(t testing.TB) *gorm.DB {
+	t.Helper()
 	dsn := os.Getenv("ETOS_TEST_DB")
 	if dsn == "" {
-		st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+		db, err := store.OpenDB(filepath.Join(t.TempDir(), "test.db"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return st
+		t.Cleanup(func() {
+			if s, err := db.DB(); err == nil {
+				_ = s.Close()
+			}
+		})
+		return db
 	}
 	if !strings.HasPrefix(dsn, "postgres") {
 		t.Fatalf("ETOS_TEST_DB must be a postgres:// DSN")
 	}
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
-	schema := "t_" + hex.EncodeToString(b)
+	schema := "t_" + hex.EncodeToString(b) // 本函数生成，非外部输入
 	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatal(err)
@@ -57,14 +72,14 @@ func Open(t testing.TB) *store.Store {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	st, err := store.Open(u.String())
+	db, err := store.OpenDB(u.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if db, err := st.DB.DB(); err == nil {
-			_ = db.Close()
+		if s, err := db.DB(); err == nil {
+			_ = s.Close()
 		}
 	})
-	return st
+	return db
 }
