@@ -90,6 +90,34 @@ JAR3=$W/jar3; C3=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR3" -c "$JAR3
 expect "另一位运维批准片段" "$("${C3[@]}" -X POST "$B/snippets/$snid/approve" -d '{}')" '"ok":true'
 expect "批准后的片段进入待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" "client_max_body_size  50m;"
 
+echo "== 配置导入（P7）"
+cat > "$W/dump.txt" <<'DUMP'
+# configuration file /etc/web/web.conf:
+worker_processes auto;
+http {
+    upstream legacy_api { server 10.0.0.21:8080; }
+    include conf.d/*.conf;
+}
+# configuration file /etc/web/conf.d/imp.conf:
+server {
+    listen 80;
+    server_name imp.example.com;
+    client_max_body_size 8m;
+    location /api/ { proxy_pass http://legacy_api; proxy_read_timeout 90s; }
+    location ~ \.php$ { fastcgi_pass 127.0.0.1:9000; }
+}
+DUMP
+imp=$(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR" -H 'X-Requested-With: etos' -F group_id=1 -F "file=@$W/dump.txt" "$B/imports")
+expect "生成导入报告" "$imp" '"partial":1'
+expect "无法转换的指令带文件名与行号" "$imp" '"file":"/etc/web/conf.d/imp.conf","line":6,"directive":"fastcgi_pass"'
+iid=$(echo "$imp" | j "d['import']['id']")
+ap=$("${C[@]}" -X POST "$B/imports/$iid/apply" -d '{}')
+expect "应用导入：生成上游" "$ap" '"legacy-api"'
+expect "需人工处理的站点导入后停用" "$ap" '"enabled":false'
+expect "片段提交审批" "$("${C[@]}" "$B/snippets?group_id=1")" '"origin":"import"'
+expect "不能重复应用" "$("${C[@]}" -X POST "$B/imports/$iid/apply" -d '{}')" "ALREADY_APPLIED"
+expect "报告可下载" "$("${C[@]}" "$B/imports/$iid/report")" '"summary"'
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

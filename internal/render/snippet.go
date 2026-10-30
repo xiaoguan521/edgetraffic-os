@@ -45,7 +45,9 @@ type SnippetIssue struct {
 	Message   string `json:"message"`
 }
 
-func (i SnippetIssue) String() string { return fmt.Sprintf("第 %d 行 %s：%s", i.Line, i.Directive, i.Message) }
+func (i SnippetIssue) String() string {
+	return fmt.Sprintf("第 %d 行 %s：%s", i.Line, i.Directive, i.Message)
+}
 
 const (
 	maxSnippetBytes      = 16 << 10
@@ -142,6 +144,17 @@ func ValidateSnippet(scope SnippetScope, src string, ctx SnippetContext) (string
 	if len(src) > maxSnippetBytes {
 		return "", nil, fmt.Errorf("%w: larger than %d bytes", ErrSnippet, maxSnippetBytes)
 	}
+	ds, err := conf.Parse("snippet", []byte(src))
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: %v", ErrSnippet, err)
+	}
+	out, issues, err := ValidateDirectives(scope, ds, ctx)
+	return out, issues, err
+}
+
+// ValidateDirectives 校验已解析的指令（保留各自原始的文件与行号，配置导入用），返回规范化文本。
+// 会就地补齐嵌套 location 的基线代理头。
+func ValidateDirectives(scope SnippetScope, ds []*conf.Directive, ctx SnippetContext) (string, []SnippetIssue, error) {
 	var allow map[string]bool
 	switch scope {
 	case ScopeHTTP:
@@ -152,10 +165,6 @@ func ValidateSnippet(scope SnippetScope, src string, ctx SnippetContext) (string
 		allow = allowLocation
 	default:
 		return "", nil, fmt.Errorf("%w: unknown scope %q", ErrSnippet, scope)
-	}
-	ds, err := conf.Parse("snippet", []byte(src))
-	if err != nil {
-		return "", nil, fmt.Errorf("%w: %v", ErrSnippet, err)
 	}
 	c := &checker{ctx: ctx}
 	ds = c.list(ds, scope, allow, 1)

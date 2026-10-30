@@ -22,6 +22,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AcmeOrder:      newAcmeOrder(db, opts...),
 		AuditLog:       newAuditLog(db, opts...),
 		Certificate:    newCertificate(db, opts...),
+		ConfigImport:   newConfigImport(db, opts...),
 		Deployment:     newDeployment(db, opts...),
 		DeploymentNode: newDeploymentNode(db, opts...),
 		EnrollToken:    newEnrollToken(db, opts...),
@@ -46,6 +47,7 @@ type Query struct {
 	AcmeOrder      acmeOrder
 	AuditLog       auditLog
 	Certificate    certificate
+	ConfigImport   configImport
 	Deployment     deployment
 	DeploymentNode deploymentNode
 	EnrollToken    enrollToken
@@ -73,6 +75,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AcmeOrder:      q.AcmeOrder.clone(db),
 		AuditLog:       q.AuditLog.clone(db),
 		Certificate:    q.Certificate.clone(db),
+		ConfigImport:   q.ConfigImport.clone(db),
 		Deployment:     q.Deployment.clone(db),
 		DeploymentNode: q.DeploymentNode.clone(db),
 		EnrollToken:    q.EnrollToken.clone(db),
@@ -105,6 +108,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AcmeOrder:      q.AcmeOrder.replaceDB(db),
 		AuditLog:       q.AuditLog.replaceDB(db),
 		Certificate:    q.Certificate.replaceDB(db),
+		ConfigImport:   q.ConfigImport.replaceDB(db),
 		Deployment:     q.Deployment.replaceDB(db),
 		DeploymentNode: q.DeploymentNode.replaceDB(db),
 		EnrollToken:    q.EnrollToken.replaceDB(db),
@@ -127,6 +131,7 @@ type queryCtx struct {
 	AcmeOrder      IAcmeOrderDo
 	AuditLog       IAuditLogDo
 	Certificate    ICertificateDo
+	ConfigImport   IConfigImportDo
 	Deployment     IDeploymentDo
 	DeploymentNode IDeploymentNodeDo
 	EnrollToken    IEnrollTokenDo
@@ -149,6 +154,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AcmeOrder:      q.AcmeOrder.WithContext(ctx),
 		AuditLog:       q.AuditLog.WithContext(ctx),
 		Certificate:    q.Certificate.WithContext(ctx),
+		ConfigImport:   q.ConfigImport.WithContext(ctx),
 		Deployment:     q.Deployment.WithContext(ctx),
 		DeploymentNode: q.DeploymentNode.WithContext(ctx),
 		EnrollToken:    q.EnrollToken.WithContext(ctx),

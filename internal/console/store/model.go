@@ -155,6 +155,26 @@ type Snippet struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
+// ConfigImport 是一次配置导入（规格书 12.4）：保存完整报告（不含证书与私钥）供下载与审计。
+type ConfigImport struct {
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	GroupID      uint       `gorm:"index" json:"group_id"`
+	Source       string     `gorm:"size:16" json:"source"` // dump | archive
+	FileName     string     `json:"file_name"`
+	Report       string     `json:"-"`
+	ReportSHA256 string     `gorm:"column:report_sha256;size:64" json:"report_sha256"`
+	Sites        int        `json:"sites"`
+	Full         int        `json:"full"`
+	Partial      int        `json:"partial"`
+	Failed       int        `json:"failed"`
+	Issues       int        `json:"issues"`
+	CreatedBy    string     `gorm:"size:64" json:"created_by"`
+	CreatedAt    time.Time  `json:"created_at"`
+	AppliedBy    string     `gorm:"size:64" json:"applied_by"`
+	AppliedAt    *time.Time `json:"applied_at"`
+	Result       string     `json:"-"` // 应用结果 JSON
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -254,5 +274,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

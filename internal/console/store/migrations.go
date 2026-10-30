@@ -20,6 +20,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610290001_acme", Migrate: migrateAcme},
 		{ID: "202610300001_release_requests", Migrate: migrateReleaseRequests},
 		{ID: "202610300002_snippets", Migrate: migrateSnippets},
+		{ID: "202610300003_config_imports", Migrate: migrateConfigImports},
 	}
 }
 
@@ -291,4 +292,28 @@ func migrateSnippets(tx *gorm.DB) error {
 		UpdatedAt     time.Time
 	}
 	return tx.AutoMigrate(&Snippet{})
+}
+
+// ---- 202610300003_config_imports：配置导入（P7）----
+
+func migrateConfigImports(tx *gorm.DB) error {
+	type ConfigImport struct {
+		ID           uint   `gorm:"primaryKey"`
+		GroupID      uint   `gorm:"index"`
+		Source       string `gorm:"size:16"`
+		FileName     string
+		Report       string
+		ReportSHA256 string `gorm:"column:report_sha256;size:64"`
+		Sites        int
+		Full         int
+		Partial      int
+		Failed       int
+		Issues       int
+		CreatedBy    string `gorm:"size:64"`
+		CreatedAt    time.Time
+		AppliedBy    string `gorm:"size:64"`
+		AppliedAt    *time.Time
+		Result       string
+	}
+	return tx.AutoMigrate(&ConfigImport{})
 }
