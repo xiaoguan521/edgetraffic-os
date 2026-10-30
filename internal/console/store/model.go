@@ -191,6 +191,45 @@ type APIToken struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
+// AlertChannel 是告警通道（规格书 7.1 M9）。密钥类字段加密存储，接口从不返回。
+type AlertChannel struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;size:64" json:"name"`
+	Type      string    `gorm:"size:16" json:"type"` // webhook | wecom | dingtalk | email
+	URL       string    `json:"url"`                 // webhook / 机器人地址（email 为 smtp://host:port）
+	SecretEnc string    `json:"-"`                   // 钉钉加签密钥 / SMTP 口令（加密）
+	SMTPUser  string    `gorm:"column:smtp_user" json:"smtp_user"`
+	MailFrom  string    `json:"mail_from"`
+	MailTo    string    `json:"mail_to"` // 逗号分隔
+	Enabled   bool      `json:"enabled"`
+	CreatedBy string    `gorm:"size:64" json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AlertRule 是内置告警规则的配置（离线、5xx 率、证书到期、配置漂移）。
+type AlertRule struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Kind       string    `gorm:"uniqueIndex;size:32" json:"kind"`
+	Enabled    bool      `json:"enabled"`
+	Threshold  float64   `json:"threshold"`
+	ChannelIDs string    `json:"channel_ids"` // 逗号分隔
+	UpdatedBy  string    `gorm:"size:64" json:"updated_by"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// AlertEvent 是一次告警（同一对象同一规则同时只有一条 firing）。
+type AlertEvent struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	Kind       string     `gorm:"size:32" json:"kind"`
+	ObjectKey  string     `gorm:"index;size:128" json:"object_key"`
+	Message    string     `json:"message"`
+	Status     string     `gorm:"index;size:16" json:"status"` // firing | resolved
+	FiredAt    time.Time  `json:"fired_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Notify     string     `json:"notify"` // 最近一次通知结果
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -290,5 +329,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

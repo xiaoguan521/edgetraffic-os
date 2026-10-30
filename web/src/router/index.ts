@@ -20,6 +20,7 @@ const router = createRouter({
         { path: 'imports', name: 'imports', component: () => import('../views/Imports.vue'), meta: { title: '配置导入' } },
         { path: 'snippets', name: 'snippets', component: () => import('../views/Snippets.vue'), meta: { title: '自定义片段' } },
         { path: 'releases', name: 'releases', component: () => import('../views/Releases.vue'), meta: { title: '发布' } },
+        { path: 'alerts', name: 'alerts', component: () => import('../views/Alerts.vue'), meta: { title: '告警' } },
         { path: 'audit', name: 'audit', component: () => import('../views/Audit.vue'), meta: { title: '审计' } },
         { path: 'system', name: 'system', component: () => import('../views/System.vue'), meta: { title: '授权与系统' } },
       ],

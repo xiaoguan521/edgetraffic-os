@@ -22,6 +22,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300002_snippets", Migrate: migrateSnippets},
 		{ID: "202610300003_config_imports", Migrate: migrateConfigImports},
 		{ID: "202610300004_api_tokens", Migrate: migrateAPITokens},
+		{ID: "202610300005_alerts", Migrate: migrateAlerts},
 	}
 }
 
@@ -337,4 +338,43 @@ func migrateAPITokens(tx *gorm.DB) error {
 		CreatedAt  time.Time
 	}
 	return tx.AutoMigrate(&APIToken{})
+}
+
+// ---- 202610300005_alerts：告警通道、规则与事件（P9）----
+
+func migrateAlerts(tx *gorm.DB) error {
+	type AlertChannel struct {
+		ID        uint   `gorm:"primaryKey"`
+		Name      string `gorm:"uniqueIndex;size:64"`
+		Type      string `gorm:"size:16"`
+		URL       string
+		SecretEnc string
+		SMTPUser  string `gorm:"column:smtp_user"`
+		MailFrom  string
+		MailTo    string
+		Enabled   bool
+		CreatedBy string `gorm:"size:64"`
+		CreatedAt time.Time
+		UpdatedAt time.Time
+	}
+	type AlertRule struct {
+		ID         uint   `gorm:"primaryKey"`
+		Kind       string `gorm:"uniqueIndex;size:32"`
+		Enabled    bool
+		Threshold  float64
+		ChannelIDs string
+		UpdatedBy  string `gorm:"size:64"`
+		UpdatedAt  time.Time
+	}
+	type AlertEvent struct {
+		ID         uint   `gorm:"primaryKey"`
+		Kind       string `gorm:"size:32"`
+		ObjectKey  string `gorm:"index;size:128"`
+		Message    string
+		Status     string `gorm:"index;size:16"`
+		FiredAt    time.Time
+		ResolvedAt *time.Time
+		Notify     string
+	}
+	return tx.AutoMigrate(&AlertChannel{}, &AlertRule{}, &AlertEvent{})
 }

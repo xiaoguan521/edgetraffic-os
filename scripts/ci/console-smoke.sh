@@ -132,6 +132,13 @@ if grep -q "$TOK" "$W/console.log" "$W/data/"*.db 2>/dev/null; then bad "令牌�
 "${C[@]}" -X DELETE "$B/api-tokens/$tid" >/dev/null
 expect "撤销后令牌失效" "$("${T[@]}" "$B/sites")" "UNAUTHORIZED"
 
+echo "== 告警（P9）"
+expect "创建钉钉通道（密钥加密保存）" "$("${C[@]}" -X POST "$B/alert-channels" -d '{"name":"dt","type":"dingtalk","url":"https://oapi.example.com/robot/send?access_token=x","secret":"SECsmoke","enabled":true}')" '"type":"dingtalk"'
+expect "保存告警规则" "$("${C[@]}" -X PUT "$B/alert-rules/cert_expiry" -d '{"enabled":true,"threshold":30,"channel_ids":[1]}')" '"ok":true'
+al=$("${C[@]}" "$B/alerts")
+expect "告警页数据" "$al" '"has_secret":true'
+if [[ "$al" == *SECsmoke* ]]; then bad "接口返回了通道密钥"; else ok "接口不返回通道密钥"; fi
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

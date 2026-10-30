@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/acme"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/alerts"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/api"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
@@ -121,6 +122,7 @@ func run(log *slog.Logger, o options) error {
 	dep := &deploy.Service{Store: st, Certs: crt, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes()}
 	gw.OnOnline = dep.Align
 	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
+	alr := &alerts.Service{Store: st, Box: box, Log: log, IMAllow: func() bool { return lic.Snapshot().Feature(license.FeatureAlertIM) }}
 	// 启动时所有节点先视为离线，等待重新连接
 	nd := query.Use(st.DB).Node
 	if _, err := nd.WithContext(context.Background()).Where(nd.Status.Eq("online")).Update(nd.Status, "offline"); err != nil {
@@ -158,7 +160,7 @@ func run(log *slog.Logger, o options) error {
 		log.Warn("Web 控制台未启用 HTTPS 却监听在非本机地址：登录凭据会以明文传输。生产环境请配置 -tls-cert/-tls-key 或 -tls-auto（ETOS_TLS_AUTO=1）",
 			"listen", listen)
 	}
-	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
+	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Alerts: alr, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
 		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: useTLS}
 	if webCA != nil {
 		apiSrv.WebCAPEM = webCA.CertPEM()

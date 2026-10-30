@@ -2,6 +2,7 @@
 import { computed, h, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  AlertOutlined,
   AuditOutlined,
   ClusterOutlined,
   CodeOutlined,
@@ -27,6 +28,7 @@ const items = [
   { key: 'imports', icon: () => h(ImportOutlined), label: '配置导入' },
   { key: 'snippets', icon: () => h(CodeOutlined), label: '自定义片段' },
   { key: 'releases', icon: () => h(RocketOutlined), label: '发布' },
+  { key: 'alerts', icon: () => h(AlertOutlined), label: '告警' },
   { key: 'audit', icon: () => h(AuditOutlined), label: '审计' },
   { key: 'system', icon: () => h(SafetyCertificateOutlined), label: '授权与系统' },
 ]

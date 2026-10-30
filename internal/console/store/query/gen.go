@@ -21,6 +21,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		APIToken:       newAPIToken(db, opts...),
 		AcmeChallenge:  newAcmeChallenge(db, opts...),
 		AcmeOrder:      newAcmeOrder(db, opts...),
+		AlertChannel:   newAlertChannel(db, opts...),
+		AlertEvent:     newAlertEvent(db, opts...),
+		AlertRule:      newAlertRule(db, opts...),
 		AuditLog:       newAuditLog(db, opts...),
 		Certificate:    newCertificate(db, opts...),
 		ConfigImport:   newConfigImport(db, opts...),
@@ -47,6 +50,9 @@ type Query struct {
 	APIToken       aPIToken
 	AcmeChallenge  acmeChallenge
 	AcmeOrder      acmeOrder
+	AlertChannel   alertChannel
+	AlertEvent     alertEvent
+	AlertRule      alertRule
 	AuditLog       auditLog
 	Certificate    certificate
 	ConfigImport   configImport
@@ -76,6 +82,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		APIToken:       q.APIToken.clone(db),
 		AcmeChallenge:  q.AcmeChallenge.clone(db),
 		AcmeOrder:      q.AcmeOrder.clone(db),
+		AlertChannel:   q.AlertChannel.clone(db),
+		AlertEvent:     q.AlertEvent.clone(db),
+		AlertRule:      q.AlertRule.clone(db),
 		AuditLog:       q.AuditLog.clone(db),
 		Certificate:    q.Certificate.clone(db),
 		ConfigImport:   q.ConfigImport.clone(db),
@@ -110,6 +119,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		APIToken:       q.APIToken.replaceDB(db),
 		AcmeChallenge:  q.AcmeChallenge.replaceDB(db),
 		AcmeOrder:      q.AcmeOrder.replaceDB(db),
+		AlertChannel:   q.AlertChannel.replaceDB(db),
+		AlertEvent:     q.AlertEvent.replaceDB(db),
+		AlertRule:      q.AlertRule.replaceDB(db),
 		AuditLog:       q.AuditLog.replaceDB(db),
 		Certificate:    q.Certificate.replaceDB(db),
 		ConfigImport:   q.ConfigImport.replaceDB(db),
@@ -134,6 +146,9 @@ type queryCtx struct {
 	APIToken       IAPITokenDo
 	AcmeChallenge  IAcmeChallengeDo
 	AcmeOrder      IAcmeOrderDo
+	AlertChannel   IAlertChannelDo
+	AlertEvent     IAlertEventDo
+	AlertRule      IAlertRuleDo
 	AuditLog       IAuditLogDo
 	Certificate    ICertificateDo
 	ConfigImport   IConfigImportDo
@@ -158,6 +173,9 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		APIToken:       q.APIToken.WithContext(ctx),
 		AcmeChallenge:  q.AcmeChallenge.WithContext(ctx),
 		AcmeOrder:      q.AcmeOrder.WithContext(ctx),
+		AlertChannel:   q.AlertChannel.WithContext(ctx),
+		AlertEvent:     q.AlertEvent.WithContext(ctx),
+		AlertRule:      q.AlertRule.WithContext(ctx),
 		AuditLog:       q.AuditLog.WithContext(ctx),
 		Certificate:    q.Certificate.WithContext(ctx),
 		ConfigImport:   q.ConfigImport.WithContext(ctx),

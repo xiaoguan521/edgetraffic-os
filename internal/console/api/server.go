@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/acme"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/alerts"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
@@ -32,6 +33,7 @@ type Server struct {
 	Deploy        *deploy.Service
 	Certs         *certs.Service
 	Acme          *acme.Service
+	Alerts        *alerts.Service
 	Lic           *licsvc.Service
 	Audit         *audit.Logger
 	Log           *slog.Logger
@@ -92,6 +94,14 @@ func (s *Server) Handler() (http.Handler, error) {
 	a := v1.Group("", s.auth)
 	a.GET("/auth/me", s.me)
 	a.GET("/openapi.json", s.openAPI)
+
+	// 告警（P9，规格书 7.1 M9）：企业微信 / 钉钉通道需要授权功能 alert_im
+	a.GET("/alerts", s.alertsGet)
+	a.POST("/alert-channels", role(store.RoleAdmin), s.writable, s.saveChannel)
+	a.PUT("/alert-channels/:id", role(store.RoleAdmin), s.writable, s.saveChannel)
+	a.DELETE("/alert-channels/:id", role(store.RoleAdmin), s.deleteChannel)
+	a.POST("/alert-channels/:id/test", role(store.RoleAdmin), s.testChannel)
+	a.PUT("/alert-rules/:kind", role(store.RoleAdmin), s.writable, s.saveRule)
 
 	// 开放 API 令牌（P9）：创建需要授权功能 api_token；撤销任何时候都可以；令牌不能再创建令牌
 	a.GET("/api-tokens", s.listTokens)
