@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/ha"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/secpolicy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -42,7 +43,8 @@ type Server struct {
 	GRPCAddr      string // 节点连接控制台使用的地址，写入安装命令
 	CAFingerprint string
 	SecureCookie  bool
-	WebCAPEM      []byte // -tls-auto 时的 Web CA 证书，公开下载以便导入浏览器
+	WebCAPEM      []byte      // -tls-auto 时的 Web CA 证书，公开下载以便导入浏览器
+	HA            *ha.Elector // 主备选主；nil 视为单机
 
 	jwtKey []byte
 	fails  sync.Map // ip -> *loginFail
@@ -77,6 +79,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), s.securityHeaders)
+	r.GET("/healthz", s.healthz)
+	r.Use(s.standbyGuard)
 
 	if len(s.WebCAPEM) > 0 {
 		r.GET("/web-ca.crt", func(c *gin.Context) {

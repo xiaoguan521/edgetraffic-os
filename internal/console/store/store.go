@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -27,16 +29,46 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := Migrate(db); err != nil {
+	if err := migrateLocked(db, dsn); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return &Store{DB: db}, nil
 }
 
+// migrateLockKey 串行化多台控制台（高可用）同时启动时的迁移（"ETOSMIG1"）。
+const migrateLockKey int64 = 0x45544f534d494731
+
+// migrateLocked 在 PostgreSQL 上持有 advisory lock 执行迁移，避免两台控制台并发迁移；SQLite 直接迁移。
+func migrateLocked(db *gorm.DB, dsn string) error {
+	if !IsPostgres(dsn) {
+		return Migrate(db)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrateLockKey); err != nil {
+		return err
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrateLockKey) //nolint:errcheck
+	return Migrate(db)
+}
+
+// IsPostgres 报告 dsn 是否指向 PostgreSQL。
+func IsPostgres(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
 // OpenDB 只建立连接，不执行迁移（测试升级路径时使用）。
 func OpenDB(dsn string) (*gorm.DB, error) {
 	var dial gorm.Dialector
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+	if IsPostgres(dsn) {
 		dial = postgres.Open(dsn)
 	} else {
 		dial = sqlite.Open(dsn + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
@@ -46,7 +78,7 @@ func OpenDB(dsn string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if sqlDB, err := db.DB(); err == nil && !strings.HasPrefix(dsn, "postgres") {
+	if sqlDB, err := db.DB(); err == nil && !IsPostgres(dsn) {
 		sqlDB.SetMaxOpenConns(1) // SQLite 单写者
 	}
 	return db, nil
@@ -73,6 +105,14 @@ func (s *Store) GetKV(key string) (string, error) {
 
 func (s *Store) SetKV(key, value string) error {
 	return s.DB.Save(&SystemKV{Key: key, Value: value}).Error
+}
+
+// InitKV 在键不存在时写入 value，返回库中最终的值（并发启动的多台控制台得到同一个值）。
+func (s *Store) InitKV(key, value string) (string, error) {
+	if err := s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&SystemKV{Key: key, Value: value}).Error; err != nil {
+		return "", err
+	}
+	return s.GetKV(key)
 }
 
 // First 按主键取一条记录。

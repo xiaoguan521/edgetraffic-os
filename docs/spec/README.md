@@ -25,8 +25,8 @@
 | 构建与发布 | 完成：多架构镜像（GHCR，amd64 / arm64）、控制台多平台二进制、节点安装包与 install.sh，`v*` 标签出正式 Release |
 | P6 正式版基础 | 完成（除正式密钥仪式）：证书库与 ACME、RPM / DEB 与静态 syapp、nftables、gorm/gen + 冻结迁移、控制台 HTTPS、PostgreSQL、加密备份恢复、漂移一键恢复、独立模式、离线签名工具与授权后台（`syapp-license-server serve`）。正式 License / 升级包签名密钥待离线仪式，开发期沿用演示密钥 |
 | P7 配置迁移与人工配置治理 | 完成：发布审批（双人复核）、自定义片段（三个插入点白名单 + 强制另一人批准）、配置导入（-T / tar.gz → 站点模型，逐行报告）、漂移 diff 上报与采纳 |
-| P8 数据面统一升级 | 进行中：升级包厂商签名（etos-pkg 密钥）、wrapper 热升级子命令（真实 syapp 演练通过）、离线签名工具 sign-package 已完成；控制台版本库与分批编排、agent 执行、agent 自升级、国密变体待完成 |
-| P9 商业功能 | 进行中：开放 API 令牌与 OpenAPI、告警（邮件 / Webhook / 企业微信 / 钉钉）已完成；灰度与批量发布、LDAP / OIDC、四层代理、静态资源发布、高可用、等保密码策略待完成 |
+| P8 数据面统一升级 | 基本完成：升级包厂商签名（etos-pkg 密钥）、wrapper 热升级子命令（真实 syapp 演练通过）、离线签名工具 sign-package、控制台版本库与分批编排、agent 执行与自升级已完成；国密（铜锁 NTLS）变体待定：需要改动 syapp 源码，与“改名 patch 只改字符串”规则冲突，待决策 |
+| P9 商业功能 | 完成：开放 API 令牌与 OpenAPI、告警（邮件 / Webhook / 企业微信 / 钉钉）、发布审批、灰度（5xx 自动回滚）与批量发布、等保 2.0 账号安全、LDAP / OIDC 单点登录、四层代理（TCP / UDP / SNI）、静态资源发布（原子切换）、控制台主备高可用（PostgreSQL 选主 + keepalived，见 `docs/ha.md`） |
 | P10 Lua 扩展 | 未开始（需 2 周技术评估） |
 
 当前基线版本：`v0.1.0`（MVP 演示版）；P6、P7 完成后计划发 v0.2 给试点客户。

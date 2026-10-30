@@ -50,8 +50,9 @@ func (s *Service) Init() error {
 		if _, err := rand.Read(raw); err != nil {
 			return err
 		}
-		id := "inst_" + hex.EncodeToString(raw)
-		if err := s.Store.SetKV("installation_id", id); err != nil {
+		// 只在库中不存在时写入：高可用下并发首启的控制台得到同一个 ID
+		id, err := s.Store.InitKV("installation_id", "inst_"+hex.EncodeToString(raw))
+		if err != nil {
 			return err
 		}
 		out, _ := json.Marshal(map[string]string{"installation_id": id})

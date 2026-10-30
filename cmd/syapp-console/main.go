@@ -29,6 +29,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/ha"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -113,6 +114,16 @@ func run(log *slog.Logger, o options) error {
 	if err != nil {
 		return fmt.Errorf("secret key: %w", err)
 	}
+	// PostgreSQL 可被多台控制台共用（主备高可用，docs/ha.md）：所有控制台必须共用同一套 CA 与数据密钥，否则节点证书与库中加密数据在切换后不可用
+	pg := store.IsPostgres(dsn)
+	if pg {
+		if err := sharedIdentity(st, "ha_secretbox_id", box.ID(), "secret.key"); err != nil {
+			return err
+		}
+		if err := sharedIdentity(st, "ha_ca_fingerprint", pki.Fingerprint(ca.Cert.Raw), "pki/"); err != nil {
+			return err
+		}
+	}
 	crt := &certs.Service{Store: st, Box: box, Audit: aud}
 	if err := crt.MigrateInline(); err != nil {
 		return fmt.Errorf("migrate site certificates: %w", err)
@@ -124,11 +135,13 @@ func run(log *slog.Logger, o options) error {
 	dep.Feature = func(f string) bool { return lic.Snapshot().Feature(license.Feature(f)) }
 	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
 	alr := &alerts.Service{Store: st, Box: box, Log: log, IMAllow: func() bool { return lic.Snapshot().Feature(license.FeatureAlertIM) }}
-	// 启动时所有节点先视为离线，等待重新连接
-	nd := query.Use(st.DB).Node
-	if _, err := nd.WithContext(context.Background()).Where(nd.Status.Eq("online")).Update(nd.Status, "offline"); err != nil {
-		return fmt.Errorf("reset node status: %w", err)
+	el := &ha.Elector{Licensed: func() bool { return lic.Snapshot().Feature(license.FeatureHA) }, Log: log}
+	if pg { // 共用 PostgreSQL 时总是选主，避免两台控制台同时下发
+		if el.DB, err = st.DB.DB(); err != nil {
+			return err
+		}
 	}
+	gw.Ready = el.IsLeader
 
 	hosts := splitList(grpcHosts)
 	if len(hosts) == 0 {
@@ -162,7 +175,7 @@ func run(log *slog.Logger, o options) error {
 			"listen", listen)
 	}
 	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Alerts: alr, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
-		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: useTLS}
+		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: useTLS, HA: el}
 	if webCA != nil {
 		apiSrv.WebCAPEM = webCA.CertPEM()
 	}
@@ -183,8 +196,19 @@ func run(log *slog.Logger, o options) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go housekeeping(ctx, st, lic)
-	go acm.Loop(ctx)
+	// 后台任务只在主控制台运行；单机模式下本进程立即成为主
+	lead := func(lctx context.Context) {
+		// 接管时所有节点先视为离线，等待重新连接
+		nd := query.Use(st.DB).Node
+		if _, err := nd.WithContext(lctx).Where(nd.Status.Eq("online")).Update(nd.Status, "offline"); err != nil {
+			log.Warn("reset node status", "err", err)
+		}
+		lic.Tick(time.Now())
+		go housekeeping(lctx, st, lic)
+		go acm.Loop(lctx)
+		go alr.Run(lctx)
+	}
+	go el.Run(ctx, lead, gw.DisconnectAll)
 
 	errc := make(chan error, 2)
 	go func() { errc <- gs.Serve(gl) }()
@@ -198,7 +222,7 @@ func run(log *slog.Logger, o options) error {
 		}
 	}()
 	log.Info("syapp-console started", "version", version.Version, "web", listen, "grpc", grpcListen,
-		"grpc_advertise", grpcAdvertise, "grpc_hosts", strings.Join(hosts, ","), "installation_id", lic.InstallationID())
+		"grpc_advertise", grpcAdvertise, "grpc_hosts", strings.Join(hosts, ","), "installation_id", lic.InstallationID(), "ha", el.Enabled())
 
 	select {
 	case <-ctx.Done():
@@ -214,20 +238,34 @@ func run(log *slog.Logger, o options) error {
 	return nil
 }
 
+// sharedIdentity 校验高可用集群中各控制台的共享密钥材料一致：首台写入指纹，之后启动的控制台必须相同。
+func sharedIdentity(st *store.Store, key, val, file string) error {
+	got, err := st.InitKV(key, val)
+	if err != nil {
+		return err
+	}
+	if got != val {
+		return fmt.Errorf("ha: %s differs from the other consoles; copy the data directory's %s from the first console", key, file)
+	}
+	return nil
+}
+
 // commandKey 读取或生成指令签名密钥（Ed25519），私钥只保存在控制台数据库。
 func commandKey(st *store.Store) (ed25519.PrivateKey, error) {
-	if v, err := st.GetKV("command_key"); err == nil {
-		b, err := base64.StdEncoding.DecodeString(v)
-		if err == nil && len(b) == ed25519.PrivateKeySize {
-			return ed25519.PrivateKey(b), nil
-		}
-		return nil, errors.New("corrupt command_key")
-	}
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	return priv, st.SetKV("command_key", base64.StdEncoding.EncodeToString(priv))
+	// 只在不存在时写入：高可用下并发启动的控制台得到同一把密钥
+	v, err := st.InitKV("command_key", base64.StdEncoding.EncodeToString(priv))
+	if err != nil {
+		return nil, err
+	}
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil || len(b) != ed25519.PrivateKeySize {
+		return nil, errors.New("corrupt command_key")
+	}
+	return ed25519.PrivateKey(b), nil
 }
 
 // housekeeping：每小时记录已见时间（防时钟回拨）、清理 7 天前的分钟指标。

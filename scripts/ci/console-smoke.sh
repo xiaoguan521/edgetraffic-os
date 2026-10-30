@@ -221,6 +221,31 @@ expect "恢复后授权仍有效（安装 ID 一致）" "$("${C2[@]}" "$B2/licen
 expect "恢复后审计哈希链完好" "$("${C2[@]}" "$B2/audit/verify")" '"intact":true'
 expect "恢复操作写入审计" "$("${C2[@]}" "$B2/audit?action=system.restore")" "system.restore"
 
+if [[ -n "$DB" ]]; then
+  echo "== 主备高可用（P9，同一个 PostgreSQL）"
+  kill $CPID 2>/dev/null; wait $CPID 2>/dev/null
+  # 备控制台的数据目录只复制 CA 与数据密钥；安装 ID 从共用数据库继承
+  mkdir -p "$W/data-b" && cp -r "$W/data/pki" "$W/data/secret.key" "$W/data-b/"
+  "$CONSOLE" "${args[@]}" > "$W/console-a.log" 2>&1 & APID=$!
+  for _ in $(seq 1 40); do curl -s --cacert "$W/data/pki/web-ca.crt" "https://localhost:$PORT/healthz" | grep -q '"role":"leader"' && break; sleep 0.5; done
+  "$CONSOLE" -listen 127.0.0.1:18645 -grpc-listen 127.0.0.1:19645 -grpc-hosts 127.0.0.1 -data "$W/data-b" -tls-auto -db "$DB" > "$W/console-b.log" 2>&1 & BPID=$!
+  trap 'kill $CPID $APID $BPID 2>/dev/null' EXIT
+  HB=https://localhost:18645
+  for _ in $(seq 1 40); do curl -s --cacert "$W/data/pki/web-ca.crt" "$HB/healthz" >/dev/null && break; sleep 0.5; done
+  expect "先启动的控制台为主" "$(curl -s --cacert "$W/data/pki/web-ca.crt" "https://localhost:$PORT/healthz")" '"role":"leader"'
+  expect "后启动的控制台为备，/healthz 返回 503" "$(curl -s --cacert "$W/data/pki/web-ca.crt" -w ' %{http_code}' "$HB/healthz")" '"role":"standby"'
+  expect "备控制台拒绝 API" "$(curl -s --cacert "$W/data/pki/web-ca.crt" "$HB/api/v1/setup/status")" '"STANDBY"'
+  kill $APID; wait $APID 2>/dev/null
+  for _ in $(seq 1 40); do curl -s --cacert "$W/data/pki/web-ca.crt" "$HB/healthz" | grep -q '"role":"leader"' && break; sleep 0.5; done
+  expect "主控制台退出后备控制台接管" "$(curl -s --cacert "$W/data/pki/web-ca.crt" -w ' %{http_code}' "$HB/healthz")" '"role":"leader"'
+  JB=$W/jarb; CB=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JB" -c "$JB" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+  "${CB[@]}" -X POST "$HB/api/v1/auth/login" -d '{"username":"admin","password":"Smoke@2026!"}' >/dev/null
+  expect "接管后授权仍有效（安装 ID 相同）" "$("${CB[@]}" "$HB/api/v1/license" | j "d['state']")" "VALID"
+  expect "接管后数据一致" "$("${CB[@]}" "$HB/api/v1/streams?group_id=1")" '"mysql"'
+  kill $BPID 2>/dev/null; wait $BPID 2>/dev/null
+  if grep -q "PRIVATE KEY" "$W/console-a.log" "$W/console-b.log"; then bad "日志中出现私钥"; else ok "主备日志中没有私钥"; fi
+fi
+
 if [[ $fail -ne 0 ]]; then tail -20 "$W/console.log" | sed 's/^/::warning title=console log::/'; fi
 echo "---- $fail failed"
 [[ $fail -eq 0 ]] && echo "CONSOLE SMOKE OK" || exit 1

@@ -6,7 +6,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +16,10 @@ import (
 )
 
 // Box 负责加解密。
-type Box struct{ aead cipher.AEAD }
+type Box struct {
+	aead cipher.AEAD
+	id   string
+}
 
 // LoadOrCreate 读取密钥文件，不存在时生成 32 字节随机密钥。
 func LoadOrCreate(path string) (*Box, error) {
@@ -41,8 +46,12 @@ func LoadOrCreate(path string) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	h := sha256.Sum256(append([]byte("etos-secretbox-id\n"), key...))
+	return &Box{aead: aead, id: hex.EncodeToString(h[:8])}, nil
 }
+
+// ID 返回密钥的标识（单向哈希的前 8 字节），用于确认多台控制台使用同一把密钥；不能反推出密钥。
+func (b *Box) ID() string { return b.id }
 
 // Seal 加密明文，返回 "v1:" + base64(nonce || 密文)。
 func (b *Box) Seal(plain string) (string, error) {

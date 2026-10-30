@@ -49,6 +49,8 @@ type Server struct {
 	Log    *slog.Logger
 	// OnOnline 在节点上线（收到 Hello）后调用，用于自动对齐版本。
 	OnOnline func(nodeID uint)
+	// Ready 为 false 时（高可用备控制台）拒绝所有节点请求，节点会重连到 VIP 上的主控制台。
+	Ready func() bool
 
 	mu       sync.Mutex
 	sessions map[uint]*session
@@ -90,6 +92,20 @@ func (s *Server) GRPCServer(tlsCfg *tls.Config) *grpc.Server {
 	return gs
 }
 
+var errStandby = status.Error(codes.Unavailable, "standby console: connect to the active console")
+
+func (s *Server) standby() bool { return s.Ready != nil && !s.Ready() }
+
+// DisconnectAll 断开全部节点（失去主身份时调用）。
+func (s *Server) DisconnectAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, sess := range s.sessions {
+		close(sess.done)
+		delete(s.sessions, id)
+	}
+}
+
 func hashToken(t string) string { h := sha256.Sum256([]byte(t)); return hex.EncodeToString(h[:]) }
 
 // NewEnrollToken 生成一次性注册令牌（15 分钟有效），返回明文，库中只存哈希。
@@ -118,6 +134,9 @@ func remoteAddr(ctx context.Context) string {
 
 // Enroll 处理节点注册。
 func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+	if s.standby() {
+		return nil, errStandby
+	}
 	ip := remoteAddr(ctx)
 	fail := func(code codes.Code, msg string) (*agentv1.EnrollResponse, error) {
 		_ = s.Audit.Write(audit.Entry{Username: "agent:" + req.Hostname, IP: ip, Action: "node.enroll", ObjectType: "node", Result: "failure", Detail: map[string]string{"reason": msg}})
@@ -203,6 +222,9 @@ func (s *Server) nodeFromPeer(ctx context.Context) (*store.Node, error) {
 
 // Connect 处理 agent 的长连接。
 func (s *Server) Connect(stream agentv1.AgentGateway_ConnectServer) error {
+	if s.standby() {
+		return errStandby
+	}
 	ctx := stream.Context()
 	node, err := s.nodeFromPeer(ctx)
 	if err != nil {
@@ -361,6 +383,9 @@ func (s *Server) Send(ctx context.Context, nodeID uint, m *agentv1.ServerMessage
 
 // FetchBundle 向节点提供配置包；节点只能取得本组的版本。
 func (s *Server) FetchBundle(req *agentv1.FetchBundleRequest, stream agentv1.AgentGateway_FetchBundleServer) error {
+	if s.standby() {
+		return errStandby
+	}
 	node, err := s.nodeFromPeer(stream.Context())
 	if err != nil {
 		return err
@@ -481,6 +506,9 @@ func ParseAgentVersion(v string) (version, arch string) {
 
 // FetchPackage 分片下发版本库中的升级包（规格书 12.6）：只有已验签入库的包；签名随指令下发，由 wrapper / agent 使用前再校验。
 func (s *Server) FetchPackage(req *agentv1.FetchPackageRequest, stream agentv1.AgentGateway_FetchPackageServer) error {
+	if s.standby() {
+		return errStandby
+	}
 	if _, err := s.nodeFromPeer(stream.Context()); err != nil {
 		return err
 	}
