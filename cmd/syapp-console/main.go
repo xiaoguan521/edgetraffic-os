@@ -31,6 +31,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
@@ -121,7 +122,10 @@ func run(log *slog.Logger, o options) error {
 	gw.OnOnline = dep.Align
 	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
 	// 启动时所有节点先视为离线，等待重新连接
-	st.DB.Model(&store.Node{}).Where("status = ?", "online").Update("status", "offline")
+	nd := query.Use(st.DB).Node
+	if _, err := nd.WithContext(context.Background()).Where(nd.Status.Eq("online")).Update(nd.Status, "offline"); err != nil {
+		return fmt.Errorf("reset node status: %w", err)
+	}
 
 	hosts := splitList(grpcHosts)
 	if len(hosts) == 0 {
@@ -233,7 +237,10 @@ func housekeeping(ctx context.Context, st *store.Store, lic *licsvc.Service) {
 			return
 		case now := <-t.C:
 			lic.Tick(now)
-			st.DB.Where("minute < ?", now.Add(-7*24*time.Hour).Unix()).Delete(&store.MetricMinute{})
+			m := query.Use(st.DB).MetricMinute
+			if _, err := m.WithContext(ctx).Where(m.Minute.Lt(now.Add(-7 * 24 * time.Hour).Unix())).Delete(); err != nil {
+				slog.Warn("prune metrics", "err", err)
+			}
 		}
 	}
 }

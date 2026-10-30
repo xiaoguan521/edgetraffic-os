@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -15,9 +16,15 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/crypto"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
+
+// bg 用于不依附单个请求的统计查询。
+var bg = context.Background()
+
+func (s *Server) q() *query.Query { return query.Use(s.Store.DB) }
 
 // ---------- 初始化与登录 ----------
 
@@ -50,14 +57,14 @@ func (s *Server) licView() licenseView {
 		v.Nodes, v.Sites, v.ExpiresAt, v.MaintUntil = p.Limits.Nodes, p.Limits.Sites, p.ExpiresAt, p.MaintenanceUntil
 		v.DaysLeft = int(time.Until(p.ExpiresAt).Hours() / 24)
 	}
-	s.Store.DB.Model(&store.Node{}).Where("status <> ?", "revoked").Count(&v.NodesUsed)
-	s.Store.DB.Model(&store.Site{}).Count(&v.SitesUsed)
+	q := s.q()
+	v.NodesUsed, _ = q.Node.WithContext(bg).Where(q.Node.Status.Neq("revoked")).Count()
+	v.SitesUsed, _ = q.Site.WithContext(bg).Count()
 	return v
 }
 
 func (s *Server) userCount() int64 {
-	var n int64
-	s.Store.DB.Model(&store.User{}).Count(&n)
+	n, _ := s.q().User.WithContext(bg).Count()
 	return n
 }
 
@@ -90,15 +97,18 @@ func (s *Server) setup(c *gin.Context) {
 		return
 	}
 	u := &store.User{Username: req.Username, PasswordHash: h, Role: store.RoleAdmin}
-	if err := s.Store.DB.Create(u).Error; err != nil {
+	q, ctx := s.q(), c.Request.Context()
+	if err := q.User.WithContext(ctx).Create(u); err != nil {
 		failErr(c, err)
 		return
 	}
 	// 初始化默认节点组
-	var n int64
-	s.Store.DB.Model(&store.NodeGroup{}).Count(&n)
-	if n == 0 {
-		s.Store.DB.Create(&store.NodeGroup{Name: "default", Description: "默认节点组", AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"})
+	if n, err := q.NodeGroup.WithContext(ctx).Count(); err == nil && n == 0 {
+		if err := q.NodeGroup.WithContext(ctx).Create(&store.NodeGroup{Name: "default", Description: "默认节点组",
+			AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"}); err != nil {
+			failErr(c, err)
+			return
+		}
 	}
 	c.Set("user", u.Username)
 	s.audit(c, "system.setup", "user", u.Username, nil)
@@ -122,8 +132,9 @@ func (s *Server) login(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	var u store.User
-	ok := s.Store.DB.Where("username = ?", req.Username).First(&u).Error == nil && crypto.CheckPassword(u.PasswordHash, req.Password)
+	uq, ctx := s.q().User, c.Request.Context()
+	u, err := uq.WithContext(ctx).Where(uq.Username.Eq(req.Username)).First()
+	ok := err == nil && crypto.CheckPassword(u.PasswordHash, req.Password)
 	if !ok {
 		lf.mu.Lock()
 		if lf.n++; lf.n >= 5 {
@@ -138,11 +149,10 @@ func (s *Server) login(c *gin.Context) {
 	lf.mu.Lock()
 	lf.n = 0
 	lf.mu.Unlock()
-	now := time.Now()
-	s.Store.DB.Model(&u).Update("last_login_at", now)
+	_, _ = uq.WithContext(ctx).Where(uq.ID.Eq(u.ID)).Update(uq.LastLoginAt, time.Now())
 	c.Set("user", u.Username)
 	s.audit(c, "auth.login", "user", u.Username, nil)
-	if err := s.issue(c, &u); err != nil {
+	if err := s.issue(c, u); err != nil {
 		failErr(c, err)
 		return
 	}
@@ -225,8 +235,12 @@ func validCIDRs(csv string) error {
 }
 
 func (s *Server) listGroups(c *gin.Context) {
-	var gs []store.NodeGroup
-	s.Store.DB.Order("id").Find(&gs)
+	q, ctx := s.q(), c.Request.Context()
+	gs, err := q.NodeGroup.WithContext(ctx).Order(q.NodeGroup.ID).Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	type row struct {
 		store.NodeGroup
 		Nodes  int64 `json:"nodes"`
@@ -235,10 +249,11 @@ func (s *Server) listGroups(c *gin.Context) {
 	}
 	out := make([]row, 0, len(gs))
 	for _, g := range gs {
-		r := row{NodeGroup: g}
-		s.Store.DB.Model(&store.Node{}).Where("group_id = ? AND status <> ?", g.ID, "revoked").Count(&r.Nodes)
-		s.Store.DB.Model(&store.Node{}).Where("group_id = ? AND status = ?", g.ID, "online").Count(&r.Online)
-		s.Store.DB.Model(&store.Site{}).Where("group_id = ?", g.ID).Count(&r.Sites)
+		r := row{NodeGroup: *g}
+		nd := q.Node
+		r.Nodes, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked")).Count()
+		r.Online, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Eq("online")).Count()
+		r.Sites, _ = q.Site.WithContext(ctx).Where(q.Site.GroupID.Eq(g.ID)).Count()
 		out = append(out, r)
 	}
 	c.JSON(http.StatusOK, out)
@@ -259,7 +274,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom}
-	if err := s.Store.DB.Create(g).Error; err != nil {
+	if err := s.q().NodeGroup.WithContext(c.Request.Context()).Create(g); err != nil {
 		failErr(c, err)
 		return
 	}
@@ -286,10 +301,13 @@ func (s *Server) updateGroup(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	if err := s.Store.DB.Model(g).Updates(map[string]any{"description": req.Description, "allowed_cidrs": req.AllowedCIDRs, "real_ip_from": req.RealIPFrom}).Error; err != nil {
+	ng := s.q().NodeGroup
+	if _, err := ng.WithContext(c.Request.Context()).Where(ng.ID.Eq(g.ID)).UpdateSimple(ng.Description.Value(req.Description),
+		ng.AllowedCIDRs.Value(req.AllowedCIDRs), ng.RealIPFrom.Value(req.RealIPFrom)); err != nil {
 		failErr(c, err)
 		return
 	}
+	g.Description, g.AllowedCIDRs, g.RealIPFrom = req.Description, req.AllowedCIDRs, req.RealIPFrom
 	s.audit(c, "group.update", "node_group", fmt.Sprint(id), req)
 	c.JSON(http.StatusOK, g)
 }
@@ -305,8 +323,12 @@ func (s *Server) enrollToken(c *gin.Context) {
 	}
 	snap := s.Lic.Snapshot()
 	if snap.Payload != nil && snap.Payload.Limits.Nodes > 0 {
-		var n int64
-		s.Store.DB.Model(&store.Node{}).Where("status <> ?", "revoked").Count(&n)
+		nd := s.q().Node
+		n, err := nd.WithContext(c.Request.Context()).Where(nd.Status.Neq("revoked")).Count()
+		if err != nil {
+			failErr(c, err)
+			return
+		}
 		if n >= int64(snap.Payload.Limits.Nodes) {
 			fail(c, http.StatusPaymentRequired, "LICENSE_NODE_LIMIT", fmt.Sprintf("已达到授权节点数上限（%d）", snap.Payload.Limits.Nodes))
 			return
@@ -325,12 +347,16 @@ func (s *Server) enrollToken(c *gin.Context) {
 // ---------- 节点 ----------
 
 func (s *Server) listNodes(c *gin.Context) {
-	var ns []store.Node
-	q := s.Store.DB.Order("id")
+	nd := s.q().Node
+	sel := nd.WithContext(c.Request.Context()).Order(nd.ID)
 	if g := queryGroup(c); g != 0 {
-		q = q.Where("group_id = ?", g)
+		sel = sel.Where(nd.GroupID.Eq(g))
 	}
-	q.Find(&ns)
+	ns, err := sel.Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, ns)
 }
 
@@ -357,7 +383,11 @@ func (s *Server) revokeNode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	s.Store.DB.Model(&store.Node{}).Where("id = ?", id).Update("status", "revoked")
+	nd := s.q().Node
+	if _, err := nd.WithContext(c.Request.Context()).Where(nd.ID.Eq(id)).Update(nd.Status, "revoked"); err != nil {
+		failErr(c, err)
+		return
+	}
 	s.GW.Disconnect(id)
 	s.audit(c, "node.revoke", "node", fmt.Sprint(id), nil)
 	c.Status(http.StatusNoContent)
@@ -388,15 +418,19 @@ func toSiteView(st store.Site) siteView {
 }
 
 func (s *Server) listSites(c *gin.Context) {
-	var ss []store.Site
-	q := s.Store.DB.Order("name")
+	sq := s.q().Site
+	sel := sq.WithContext(c.Request.Context()).Order(sq.Name)
 	if g := queryGroup(c); g != 0 {
-		q = q.Where("group_id = ?", g)
+		sel = sel.Where(sq.GroupID.Eq(g))
 	}
-	q.Find(&ss)
+	ss, err := sel.Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	out := make([]siteView, 0, len(ss))
 	for _, st := range ss {
-		out = append(out, toSiteView(st))
+		out = append(out, toSiteView(*st))
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -475,8 +509,11 @@ func (s *Server) createSite(c *gin.Context) {
 	}
 	snap := s.Lic.Snapshot()
 	if snap.Payload != nil && snap.Payload.Limits.Sites > 0 {
-		var n int64
-		s.Store.DB.Model(&store.Site{}).Count(&n)
+		n, err := s.q().Site.WithContext(c.Request.Context()).Count()
+		if err != nil {
+			failErr(c, err)
+			return
+		}
 		if n >= int64(snap.Payload.Limits.Sites) {
 			fail(c, http.StatusPaymentRequired, "LICENSE_SITE_LIMIT", fmt.Sprintf("已达到授权站点数上限（%d）", snap.Payload.Limits.Sites))
 			return
@@ -489,7 +526,7 @@ func (s *Server) createSite(c *gin.Context) {
 	}
 	spec, _ := json.Marshal(req.Spec)
 	st := &store.Site{GroupID: req.GroupID, Name: req.Spec.Name, Spec: string(spec), Enabled: req.Enabled == nil || *req.Enabled, Version: 1, UpdatedBy: c.GetString("user")}
-	if err := s.Store.DB.Create(st).Error; err != nil {
+	if err := s.q().Site.WithContext(c.Request.Context()).Create(st); err != nil {
 		fail(c, http.StatusConflict, "DUPLICATE", "同名站点已存在")
 		return
 	}
@@ -529,8 +566,14 @@ func (s *Server) updateSite(c *gin.Context) {
 		}
 	}
 	spec, _ := json.Marshal(req.Spec)
-	res := s.Store.DB.Model(&store.Site{}).Where("id = ? AND version = ?", id, st.Version).
-		Updates(map[string]any{"spec": string(spec), "enabled": enabled, "version": st.Version + 1, "updated_by": c.GetString("user")})
+	// 乐观锁：只有版本号未变时才更新
+	sq := s.q().Site
+	res, err := sq.WithContext(c.Request.Context()).Where(sq.ID.Eq(id), sq.Version.Eq(st.Version)).UpdateSimple(sq.Spec.Value(string(spec)),
+		sq.Enabled.Value(enabled), sq.Version.Value(st.Version+1), sq.UpdatedBy.Value(c.GetString("user")))
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	if res.RowsAffected != 1 {
 		fail(c, http.StatusConflict, "VERSION_CONFLICT", "站点已被他人修改，请刷新后重试")
 		return
@@ -550,7 +593,10 @@ func (s *Server) deleteSite(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	s.Store.DB.Delete(st)
+	if _, err := s.q().Site.WithContext(c.Request.Context()).Delete(st); err != nil {
+		failErr(c, err)
+		return
+	}
 	s.audit(c, "site.delete", "site", st.Name, nil)
 	c.Status(http.StatusNoContent)
 }
@@ -733,15 +779,19 @@ type upstreamView struct {
 }
 
 func (s *Server) listUpstreams(c *gin.Context) {
-	var us []store.Upstream
-	q := s.Store.DB.Order("name")
+	uq := s.q().Upstream
+	sel := uq.WithContext(c.Request.Context()).Order(uq.Name)
 	if g := queryGroup(c); g != 0 {
-		q = q.Where("group_id = ?", g)
+		sel = sel.Where(uq.GroupID.Eq(g))
 	}
-	q.Find(&us)
+	us, err := sel.Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	out := make([]upstreamView, 0, len(us))
 	for _, u := range us {
-		v := upstreamView{Upstream: u}
+		v := upstreamView{Upstream: *u}
 		_ = json.Unmarshal([]byte(u.Spec), &v.Spec)
 		v.Spec.Name = u.Name
 		out = append(out, v)
@@ -761,7 +811,7 @@ func (s *Server) createUpstream(c *gin.Context) {
 	}
 	spec, _ := json.Marshal(req.Spec)
 	u := &store.Upstream{GroupID: req.GroupID, Name: req.Spec.Name, Spec: string(spec), UpdatedBy: c.GetString("user")}
-	if err := s.Store.DB.Create(u).Error; err != nil {
+	if err := s.q().Upstream.WithContext(c.Request.Context()).Create(u); err != nil {
 		fail(c, http.StatusConflict, "DUPLICATE", "同名上游已存在")
 		return
 	}
@@ -790,7 +840,13 @@ func (s *Server) updateUpstream(c *gin.Context) {
 		return
 	}
 	spec, _ := json.Marshal(req.Spec)
-	s.Store.DB.Model(u).Updates(map[string]any{"spec": string(spec), "updated_by": c.GetString("user")})
+	uq := s.q().Upstream
+	if _, err := uq.WithContext(c.Request.Context()).Where(uq.ID.Eq(u.ID)).
+		UpdateSimple(uq.Spec.Value(string(spec)), uq.UpdatedBy.Value(c.GetString("user"))); err != nil {
+		failErr(c, err)
+		return
+	}
+	u.Spec, u.UpdatedBy = string(spec), c.GetString("user")
 	s.audit(c, "upstream.update", "upstream", u.Name, req.Spec)
 	c.JSON(http.StatusOK, upstreamView{Upstream: *u, Spec: req.Spec})
 }
@@ -809,7 +865,10 @@ func (s *Server) deleteUpstream(c *gin.Context) {
 		fail(c, http.StatusConflict, "IN_USE", "上游仍被站点引用："+err.Error())
 		return
 	}
-	s.Store.DB.Delete(u)
+	if _, err := s.q().Upstream.WithContext(c.Request.Context()).Delete(u); err != nil {
+		failErr(c, err)
+		return
+	}
 	s.audit(c, "upstream.delete", "upstream", u.Name, nil)
 	c.Status(http.StatusNoContent)
 }
@@ -867,22 +926,32 @@ func (s *Server) rollback(c *gin.Context) {
 }
 
 func (s *Server) listRevisions(c *gin.Context) {
-	var rs []store.Revision
-	q := s.Store.DB.Select("seq, id, group_id, parent_id, digest, note, created_by, created_at").Order("seq desc").Limit(50)
+	rv := s.q().Revision
+	// 列表不读取版本包（Bundle 可能很大）
+	sel := rv.WithContext(c.Request.Context()).Select(rv.Seq, rv.ID, rv.GroupID, rv.ParentID, rv.Digest, rv.Note, rv.CreatedBy, rv.CreatedAt).
+		Order(rv.Seq.Desc()).Limit(50)
 	if g := queryGroup(c); g != 0 {
-		q = q.Where("group_id = ?", g)
+		sel = sel.Where(rv.GroupID.Eq(g))
 	}
-	q.Find(&rs)
+	rs, err := sel.Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, rs)
 }
 
 func (s *Server) listDeployments(c *gin.Context) {
-	var ds []store.Deployment
-	q := s.Store.DB.Order("id desc").Limit(30)
+	dp := s.q().Deployment
+	sel := dp.WithContext(c.Request.Context()).Preload(dp.Nodes).Order(dp.ID.Desc()).Limit(30)
 	if g := queryGroup(c); g != 0 {
-		q = q.Where("group_id = ?", g)
+		sel = sel.Where(dp.GroupID.Eq(g))
 	}
-	q.Preload("Nodes").Find(&ds)
+	ds, err := sel.Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, ds)
 }
 
@@ -891,8 +960,9 @@ func (s *Server) getDeployment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var d store.Deployment
-	if err := s.Store.DB.Preload("Nodes").First(&d, id).Error; err != nil {
+	dp := s.q().Deployment
+	d, err := dp.WithContext(c.Request.Context()).Preload(dp.Nodes).Where(dp.ID.Eq(id)).First()
+	if err != nil {
 		fail(c, http.StatusNotFound, "NOT_FOUND", "not found")
 		return
 	}
@@ -919,12 +989,15 @@ func (s *Server) series(groupID uint, minutes int) []point {
 		P95ms    float64
 	}
 	var rows []agg
-	q := s.Store.DB.Model(&store.MetricMinute{}).Select("minute, sum(requests) as requests, sum(s5xx) as s5xx, sum(s4xx) as s4xx, max(p95ms) as p95ms").
-		Where("minute >= ?", since).Group("minute").Order("minute")
+	q := s.q()
+	m, nd := q.MetricMinute, q.Node
+	sel := m.WithContext(bg).Select(m.Minute, m.Requests.Sum().As("requests"), m.S5xx.Sum().As("s5xx"),
+		m.S4xx.Sum().As("s4xx"), m.P95ms.Max().As("p95ms")).
+		Where(m.Minute.Gte(since)).Group(m.Minute).Order(m.Minute)
 	if groupID != 0 {
-		q = q.Where("node_id IN (?)", s.Store.DB.Model(&store.Node{}).Select("id").Where("group_id = ?", groupID))
+		sel = sel.Where(m.Columns(m.NodeID).In(nd.WithContext(bg).Select(nd.ID).Where(nd.GroupID.Eq(groupID))))
 	}
-	q.Scan(&rows)
+	_ = sel.Scan(&rows)
 	idx := map[int64]agg{}
 	for _, r := range rows {
 		idx[r.Minute] = r
@@ -947,15 +1020,19 @@ func (s *Server) metrics(c *gin.Context) {
 }
 
 func (s *Server) dashboard(c *gin.Context) {
-	var nodes, online, drifted, sites, groups int64
-	s.Store.DB.Model(&store.Node{}).Where("status <> ?", "revoked").Count(&nodes)
-	s.Store.DB.Model(&store.Node{}).Where("status = ?", "online").Count(&online)
-	s.Store.DB.Model(&store.Node{}).Where("status = ? AND drifted = ?", "online", true).Count(&drifted)
-	s.Store.DB.Model(&store.Site{}).Count(&sites)
-	s.Store.DB.Model(&store.NodeGroup{}).Count(&groups)
+	q, ctx := s.q(), c.Request.Context()
+	nd := q.Node
+	nodes, _ := nd.WithContext(ctx).Where(nd.Status.Neq("revoked")).Count()
+	online, _ := nd.WithContext(ctx).Where(nd.Status.Eq("online")).Count()
+	drifted, _ := nd.WithContext(ctx).Where(nd.Status.Eq("online"), nd.Drifted.Is(true)).Count()
+	sites, _ := q.Site.WithContext(ctx).Count()
+	groups, _ := q.NodeGroup.WithContext(ctx).Count()
 	certExpiring, certExpired := s.Certs.Counts()
-	var deps []store.Deployment
-	s.Store.DB.Order("id desc").Limit(6).Find(&deps)
+	deps, err := q.Deployment.WithContext(ctx).Order(q.Deployment.ID.Desc()).Limit(6).Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	ser := s.series(0, 30)
 	var req, e5 uint64
 	for _, p := range ser[max(0, len(ser)-15):] {
@@ -981,8 +1058,12 @@ func (s *Server) listAudit(c *gin.Context) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	var rows []store.AuditLog
-	s.Store.DB.Order("id desc").Limit(limit).Find(&rows)
+	a := s.q().AuditLog
+	rows, err := a.WithContext(c.Request.Context()).Order(a.ID.Desc()).Limit(limit).Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, rows)
 }
 
@@ -996,8 +1077,12 @@ func (s *Server) verifyAudit(c *gin.Context) {
 }
 
 func (s *Server) exportAudit(c *gin.Context) {
-	var rows []store.AuditLog
-	s.Store.DB.Order("id").Find(&rows)
+	a := s.q().AuditLog
+	rows, err := a.WithContext(c.Request.Context()).Order(a.ID).Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", `attachment; filename="audit.csv"`)
 	w := csv.NewWriter(c.Writer)
@@ -1012,8 +1097,12 @@ func (s *Server) exportAudit(c *gin.Context) {
 // ---------- 用户 ----------
 
 func (s *Server) listUsers(c *gin.Context) {
-	var us []store.User
-	s.Store.DB.Order("id").Find(&us)
+	uq := s.q().User
+	us, err := uq.WithContext(c.Request.Context()).Order(uq.ID).Find()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, us)
 }
 
@@ -1040,7 +1129,7 @@ func (s *Server) createUser(c *gin.Context) {
 		return
 	}
 	u := &store.User{Username: req.Username, PasswordHash: h, Role: req.Role}
-	if err := s.Store.DB.Create(u).Error; err != nil {
+	if err := s.q().User.WithContext(c.Request.Context()).Create(u); err != nil {
 		fail(c, http.StatusConflict, "DUPLICATE", "用户已存在")
 		return
 	}
@@ -1050,8 +1139,8 @@ func (s *Server) createUser(c *gin.Context) {
 
 // pushLicense 把新 License 推送给所有在线节点（agent 侧独立校验）。
 func (s *Server) pushLicense() {
-	var ns []store.Node
-	s.Store.DB.Where("status = ?", "online").Find(&ns)
+	nd := s.q().Node
+	ns, _ := nd.WithContext(bg).Where(nd.Status.Eq("online")).Find()
 	for _, n := range ns {
 		s.GW.PushLicense(n.ID)
 	}

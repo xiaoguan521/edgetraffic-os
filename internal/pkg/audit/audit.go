@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 )
 
 // Logger 串行写入审计记录。
@@ -45,26 +47,29 @@ func (l *Logger) Write(e Entry) error {
 	if e.Result == "" {
 		e.Result = "success"
 	}
-	var last store.AuditLog
+	a := query.Use(l.DB).AuditLog
+	ctx := context.Background()
 	prev := ""
-	if err := l.DB.Order("id desc").Limit(1).Find(&last).Error; err == nil && last.ID != 0 {
-		prev = last.Hash
+	if last, err := a.WithContext(ctx).Order(a.ID.Desc()).Limit(1).Find(); err != nil {
+		return err
+	} else if len(last) == 1 {
+		prev = last[0].Hash
 	}
 	r := &store.AuditLog{TS: time.Now().UTC().Truncate(time.Microsecond), Username: e.Username, IP: e.IP, Action: e.Action,
 		ObjectType: e.ObjectType, ObjectID: e.ObjectID, Detail: detail, Result: e.Result, PrevHash: prev}
 	r.Hash = hashOf(r)
-	return l.DB.Create(r).Error
+	return a.WithContext(ctx).Create(r)
 }
 
 // Verify 校验整条哈希链，返回第一条被篡改记录的 ID（0 表示完好）。
 func (l *Logger) Verify() (uint, error) {
-	var rows []store.AuditLog
-	if err := l.DB.Order("id asc").Find(&rows).Error; err != nil {
+	a := query.Use(l.DB).AuditLog
+	rows, err := a.WithContext(context.Background()).Order(a.ID).Find()
+	if err != nil {
 		return 0, err
 	}
 	prev := ""
-	for i := range rows {
-		r := &rows[i]
+	for _, r := range rows {
 		if r.PrevHash != prev || hashOf(r) != r.Hash {
 			return r.ID, nil
 		}

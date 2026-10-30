@@ -26,10 +26,12 @@ import (
 	"time"
 
 	xacme "golang.org/x/crypto/acme"
+	"gorm.io/gen/field"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -183,13 +185,23 @@ type OrderView struct {
 	Domains []string `json:"domains"`
 }
 
+// bg：签发在后台 goroutine 中运行，不绑定请求上下文。
+var bg = context.Background()
+
+func (s *Service) q() *query.Query { return query.Use(s.Store.DB) }
+
+func (s *Service) clearChallenges(orderID uint) {
+	ac := s.q().AcmeChallenge
+	_, _ = ac.WithContext(bg).Where(ac.OrderID.Eq(orderID)).Delete()
+}
+
 // Orders 返回最近的签发记录。
 func (s *Service) Orders(limit int) []OrderView {
-	var rows []store.AcmeOrder
-	s.Store.DB.Order("id desc").Limit(limit).Find(&rows)
+	o := s.q().AcmeOrder
+	rows, _ := o.WithContext(bg).Order(o.ID.Desc()).Limit(limit).Find()
 	out := make([]OrderView, 0, len(rows))
 	for _, r := range rows {
-		v := OrderView{AcmeOrder: r}
+		v := OrderView{AcmeOrder: *r}
 		_ = json.Unmarshal([]byte(r.Domains), &v.Domains)
 		out = append(out, v)
 	}
@@ -198,8 +210,11 @@ func (s *Service) Orders(limit int) []OrderView {
 
 // groupsFor 找出线上版本中有站点服务这些域名的节点组，并检查每个域名都能被某个组应答。
 func (s *Service) groupsFor(domains []string) ([]uint, error) {
-	var sites []store.Site
-	s.Store.DB.Where("enabled = ?", true).Find(&sites)
+	q := s.q()
+	sites, err := q.Site.WithContext(bg).Where(q.Site.Enabled.Is(true)).Find()
+	if err != nil {
+		return nil, err
+	}
 	live := map[uint]map[string][]byte{}
 	served := map[string]bool{}
 	seen := map[uint]bool{}
@@ -213,8 +228,7 @@ func (s *Service) groupsFor(domains []string) ([]uint, error) {
 		if !ok {
 			g, err := store.First[store.NodeGroup](s.Store, st.GroupID)
 			if err == nil && g.CurrentRevisionID != "" {
-				var rev store.Revision
-				if s.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&rev).Error == nil {
+				if rev, err := q.Revision.WithContext(bg).Where(q.Revision.ID.Eq(g.CurrentRevisionID)).First(); err == nil {
 					files, _ = render.ReadTarGz(rev.Bundle)
 				}
 			}
@@ -275,8 +289,11 @@ func (s *Service) Issue(name string, domains []string, user string) (*store.Acme
 	if err := render.ValidateName(name); err != nil {
 		return nil, errors.New("证书名称不合法：只能使用小写字母、数字和连字符")
 	}
-	var n int64
-	s.Store.DB.Model(&store.Certificate{}).Where("name = ?", name).Count(&n)
+	c := s.q().Certificate
+	n, err := c.WithContext(bg).Where(c.Name.Eq(name)).Count()
+	if err != nil {
+		return nil, err
+	}
 	if n > 0 {
 		return nil, errors.New("同名证书已存在")
 	}
@@ -310,15 +327,19 @@ func (s *Service) start(name string, certID uint, domains []string, user string)
 	if s.running == nil {
 		s.running = map[uint]bool{}
 	}
-	var pending int64
-	s.Store.DB.Model(&store.AcmeOrder{}).Where("status = ?", "pending").Count(&pending)
+	ao := s.q().AcmeOrder
+	pending, err := ao.WithContext(bg).Where(ao.Status.Eq("pending")).Count()
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	if pending > 0 {
 		s.mu.Unlock()
 		return nil, errors.New("已有签发正在进行，请等它完成后再试")
 	}
 	dj, _ := json.Marshal(domains)
 	o := &store.AcmeOrder{Name: name, CertID: certID, Domains: string(dj), Status: "pending", Step: "准备", CreatedBy: user}
-	if err := s.Store.DB.Create(o).Error; err != nil {
+	if err := ao.WithContext(bg).Create(o); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
@@ -332,7 +353,8 @@ func (s *Service) start(name string, certID uint, domains []string, user string)
 
 func (s *Service) step(o *store.AcmeOrder, step string) {
 	o.Step = step
-	s.Store.DB.Model(&store.AcmeOrder{}).Where("id = ?", o.ID).Update("step", step)
+	ao := s.q().AcmeOrder
+	_, _ = ao.WithContext(bg).Where(ao.ID.Eq(o.ID)).Update(ao.Step, step)
 }
 
 // publish 把当前挑战同步到这些节点组并等待生效。
@@ -379,12 +401,13 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 		s.mu.Unlock()
 	}()
 	fail := func(err error) {
-		s.Store.DB.Where("order_id = ?", o.ID).Delete(&store.AcmeChallenge{})
+		s.clearChallenges(o.ID)
 		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer ccancel()
 		_ = s.publish(cctx, groups, 0) // 清理节点上的挑战片段
 		now := time.Now()
-		s.Store.DB.Model(&store.AcmeOrder{}).Where("id = ?", o.ID).Updates(map[string]any{"status": "failed", "error": err.Error(), "finished_at": &now})
+		ao := s.q().AcmeOrder
+		_, _ = ao.WithContext(bg).Where(ao.ID.Eq(o.ID)).UpdateSimple(ao.Status.Value("failed"), ao.Error.Value(err.Error()), ao.FinishedAt.Value(now))
 		_ = s.Audit.Write(audit.Entry{Username: user, Action: "certificate.acme_result", ObjectType: "certificate", ObjectID: o.Name,
 			Result: "failure", Detail: map[string]any{"order": o.ID, "step": o.Step, "error": err.Error()}})
 		if s.Log != nil {
@@ -429,7 +452,7 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 			fail(err)
 			return
 		}
-		if err := s.Store.DB.Create(&store.AcmeChallenge{OrderID: o.ID, Domain: z.Identifier.Value, Token: ch.Token, KeyAuth: ka}).Error; err != nil {
+		if err := s.q().AcmeChallenge.WithContext(bg).Create(&store.AcmeChallenge{OrderID: o.ID, Domain: z.Identifier.Value, Token: ch.Token, KeyAuth: ka}); err != nil {
 			fail(err)
 			return
 		}
@@ -485,7 +508,7 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kder}))
 
 	s.step(o, "写入证书库并下发")
-	s.Store.DB.Where("order_id = ?", o.ID).Delete(&store.AcmeChallenge{})
+	s.clearChallenges(o.ID)
 	certID := o.CertID
 	if certID == 0 {
 		cert, err := s.Certs.CreateFrom("acme", o.Name, certPEM.String(), keyPEM, "system:acme")
@@ -513,28 +536,30 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
 	if err := s.publish(ctx, targets, certID); err != nil {
 		// 证书已经签发并入库，只是下发失败：记录错误，可在证书页“重新下发”
-		now := time.Now()
-		s.Store.DB.Model(&store.AcmeOrder{}).Where("id = ?", o.ID).Updates(map[string]any{"status": "valid", "cert_id": certID,
-			"error": "证书已签发，下发到节点时出错：" + err.Error(), "finished_at": &now})
+		ao := s.q().AcmeOrder
+		_, _ = ao.WithContext(bg).Where(ao.ID.Eq(o.ID)).UpdateSimple(ao.Status.Value("valid"), ao.CertID.Value(certID),
+			ao.Error.Value("证书已签发，下发到节点时出错："+err.Error()), ao.FinishedAt.Value(time.Now()))
 		return
 	}
-	now := time.Now()
-	s.Store.DB.Model(&store.AcmeOrder{}).Where("id = ?", o.ID).Updates(map[string]any{"status": "valid", "cert_id": certID, "step": "完成", "finished_at": &now})
+	ao := s.q().AcmeOrder
+	_, _ = ao.WithContext(bg).Where(ao.ID.Eq(o.ID)).UpdateSimple(ao.Status.Value("valid"), ao.CertID.Value(certID),
+		ao.Step.Value("完成"), ao.FinishedAt.Value(time.Now()))
 	_ = s.Audit.Write(audit.Entry{Username: user, Action: "certificate.acme_result", ObjectType: "certificate", ObjectID: o.Name,
 		Detail: map[string]any{"order": o.ID, "cert_id": certID, "domains": domains}})
 }
 
 // Due 返回需要自动续期的 ACME 证书：剩余不足 30 天、开启自动续期、6 小时内没有失败过。
 func (s *Service) Due(now time.Time) []store.Certificate {
-	var cs []store.Certificate
-	s.Store.DB.Where("source = ? AND auto_renew = ? AND not_after < ?", "acme", true, now.Add(RenewBefore)).Find(&cs)
+	q := s.q()
+	c, ao := q.Certificate, q.AcmeOrder
+	cs, _ := c.WithContext(bg).Where(c.Source.Eq("acme"), c.AutoRenew.Is(true), c.NotAfter.Lt(now.Add(RenewBefore))).Find()
 	var out []store.Certificate
 	for _, c := range cs {
-		var recent int64
-		s.Store.DB.Model(&store.AcmeOrder{}).Where("cert_id = ? AND (status = ? OR (status = ? AND created_at > ?))",
-			c.ID, "pending", "failed", now.Add(-6*time.Hour)).Count(&recent)
-		if recent == 0 {
-			out = append(out, c)
+		// cert_id = ? AND (status = 'pending' OR (status = 'failed' AND created_at > 6 小时前))
+		recent, err := ao.WithContext(bg).Where(ao.CertID.Eq(c.ID), field.Or(ao.Status.Eq("pending"),
+			field.And(ao.Status.Eq("failed"), ao.CreatedAt.Gt(now.Add(-6*time.Hour))))).Count()
+		if err == nil && recent == 0 {
+			out = append(out, *c)
 		}
 	}
 	return out
@@ -542,9 +567,10 @@ func (s *Service) Due(now time.Time) []store.Certificate {
 
 // Loop 每小时检查一次需要续期的证书；启动时把上次异常退出遗留的进行中订单标记为失败。
 func (s *Service) Loop(ctx context.Context) {
-	now := time.Now()
-	s.Store.DB.Model(&store.AcmeOrder{}).Where("status = ?", "pending").Updates(map[string]any{"status": "failed", "error": "控制台重启，签发中断", "finished_at": &now})
-	s.Store.DB.Where("1 = 1").Delete(&store.AcmeChallenge{})
+	ao, ac := s.q().AcmeOrder, s.q().AcmeChallenge
+	_, _ = ao.WithContext(ctx).Where(ao.Status.Eq("pending")).
+		UpdateSimple(ao.Status.Value("failed"), ao.Error.Value("控制台重启，签发中断"), ao.FinishedAt.Value(time.Now()))
+	_, _ = ac.WithContext(ctx).Where(ac.ID.Gt(0)).Delete()
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {

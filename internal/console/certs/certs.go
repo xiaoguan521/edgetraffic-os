@@ -5,6 +5,7 @@
 package certs
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -54,6 +56,11 @@ type parsed struct {
 }
 
 // parse 校验证书链与私钥：PEM 格式、私钥与证书匹配、证书未过期。
+// bg：证书服务的方法没有请求上下文（也被后台续期调用），查询使用 Background。
+var bg = context.Background()
+
+func (s *Service) q() *query.Query { return query.Use(s.Store.DB) }
+
 func parse(certPEM, keyPEM string, now time.Time) (*parsed, error) {
 	certPEM, keyPEM = strings.TrimSpace(certPEM)+"\n", strings.TrimSpace(keyPEM)+"\n"
 	var chain []*x509.Certificate
@@ -181,7 +188,7 @@ func (s *Service) CreateFrom(source, name, certPEM, keyPEM, user string) (*store
 	if err := s.fill(c, p, user); err != nil {
 		return nil, err
 	}
-	if err := s.Store.DB.Create(c).Error; err != nil {
+	if err := s.q().Certificate.WithContext(bg).Create(c); err != nil {
 		return nil, fmt.Errorf("同名证书已存在")
 	}
 	s.audit(user, "certificate.create", c, map[string]any{"domains": p.domains, "source": source})
@@ -210,7 +217,7 @@ func (s *Service) Renew(id uint, certPEM, keyPEM, user string) (*store.Certifica
 	if err := s.fill(c, p, user); err != nil {
 		return nil, err
 	}
-	if err := s.Store.DB.Save(c).Error; err != nil {
+	if err := s.q().Certificate.WithContext(bg).Save(c); err != nil {
 		return nil, err
 	}
 	s.audit(user, "certificate.renew", c, map[string]any{"previous_fingerprint": old})
@@ -230,7 +237,7 @@ func (s *Service) Delete(id uint, user string) error {
 		}
 		return fmt.Errorf("证书正被站点使用：%s", strings.Join(names, "、"))
 	}
-	if err := s.Store.DB.Delete(c).Error; err != nil {
+	if _, err := s.q().Certificate.WithContext(bg).Delete(c); err != nil {
 		return err
 	}
 	s.audit(user, "certificate.delete", c, nil)
@@ -300,8 +307,8 @@ type user struct {
 
 // users 列出引用某张证书的站点。
 func (s *Service) users(id uint) []user {
-	var sites []store.Site
-	s.Store.DB.Order("name").Find(&sites)
+	t := s.q().Site
+	sites, _ := t.WithContext(bg).Order(t.Name).Find()
 	var out []user
 	for _, st := range sites {
 		var rs render.Site
@@ -361,14 +368,15 @@ func toView(c store.Certificate, us []user, now time.Time) View {
 
 // List 返回全部证书，按到期时间升序。
 func (s *Service) List() ([]View, error) {
-	var cs []store.Certificate
-	if err := s.Store.DB.Order("not_after").Find(&cs).Error; err != nil {
+	t := s.q().Certificate
+	cs, err := t.WithContext(bg).Order(t.NotAfter).Find()
+	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
 	out := make([]View, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, toView(c, s.users(c.ID), now))
+		out = append(out, toView(*c, s.users(c.ID), now))
 	}
 	return out, nil
 }
@@ -376,15 +384,17 @@ func (s *Service) List() ([]View, error) {
 // Counts 返回即将到期与已过期的证书数量（总览页使用）。
 func (s *Service) Counts() (expiring, expired int64) {
 	now := time.Now()
-	s.Store.DB.Model(&store.Certificate{}).Where("not_after <= ?", now).Count(&expired)
-	s.Store.DB.Model(&store.Certificate{}).Where("not_after > ? AND not_after <= ?", now, now.Add(ExpiringWindow)).Count(&expiring)
+	t := s.q().Certificate
+	expired, _ = t.WithContext(bg).Where(t.NotAfter.Lte(now)).Count()
+	expiring, _ = t.WithContext(bg).Where(t.NotAfter.Gt(now), t.NotAfter.Lte(now.Add(ExpiringWindow))).Count()
 	return
 }
 
 // MigrateInline 把旧版本站点里内嵌的 PEM 迁移到证书库（启动时执行，幂等）。
 func (s *Service) MigrateInline() error {
-	var sites []store.Site
-	if err := s.Store.DB.Find(&sites).Error; err != nil {
+	q := s.q()
+	sites, err := q.Site.WithContext(bg).Find()
+	if err != nil {
 		return err
 	}
 	for _, st := range sites {
@@ -398,8 +408,10 @@ func (s *Service) MigrateInline() error {
 		}
 		name := "site-" + st.Name
 		for i := 2; ; i++ {
-			var n int64
-			s.Store.DB.Model(&store.Certificate{}).Where("name = ?", name).Count(&n)
+			n, err := q.Certificate.WithContext(bg).Where(q.Certificate.Name.Eq(name)).Count()
+			if err != nil {
+				return err
+			}
 			if n == 0 {
 				break
 			}
@@ -409,12 +421,12 @@ func (s *Service) MigrateInline() error {
 		if err := s.fill(c, p, "system"); err != nil {
 			return err
 		}
-		if err := s.Store.DB.Create(c).Error; err != nil {
+		if err := q.Certificate.WithContext(bg).Create(c); err != nil {
 			return err
 		}
 		rs.HTTPS = &render.TLS{CertID: c.ID}
 		spec, _ := json.Marshal(rs)
-		if err := s.Store.DB.Model(&store.Site{}).Where("id = ?", st.ID).Update("spec", string(spec)).Error; err != nil {
+		if _, err := q.Site.WithContext(bg).Where(q.Site.ID.Eq(st.ID)).Update(q.Site.Spec, string(spec)); err != nil {
 			return err
 		}
 		s.audit("system", "certificate.migrate", c, map[string]any{"site": st.Name})

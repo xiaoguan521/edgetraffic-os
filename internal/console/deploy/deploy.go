@@ -18,10 +18,11 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/textdiff"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
-	"gorm.io/gorm"
+	"gorm.io/gen/field"
 )
 
 // ApplyTimeout 是单个节点执行一次发布的超时。
@@ -87,8 +88,12 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		return render.Input{}, err
 	}
 	in := render.Input{Revision: rev, AllowedNet: allowed, RealIPFrom: realIP, MimeTypes: d.MimeTypes}
-	var sites []store.Site
-	d.Store.DB.Where("group_id = ? AND enabled = ?", groupID, true).Order("name").Find(&sites)
+	q := d.q()
+	// 查询失败必须报错：否则会渲染出一份没有站点的配置并下发到全部节点
+	sites, err := q.Site.WithContext(bg).Where(q.Site.GroupID.Eq(groupID), q.Site.Enabled.Is(true)).Order(q.Site.Name).Find()
+	if err != nil {
+		return in, fmt.Errorf("load sites: %w", err)
+	}
 	for _, s := range sites {
 		var rs render.Site
 		if err := json.Unmarshal([]byte(s.Spec), &rs); err != nil {
@@ -102,9 +107,13 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		}
 		in.Sites = append(in.Sites, rs)
 	}
-	in.AcmeChallenges = d.challenges()
-	var ups []store.Upstream
-	d.Store.DB.Where("group_id = ?", groupID).Order("name").Find(&ups)
+	if in.AcmeChallenges, err = d.challenges(); err != nil {
+		return in, fmt.Errorf("load acme challenges: %w", err)
+	}
+	ups, err := q.Upstream.WithContext(bg).Where(q.Upstream.GroupID.Eq(groupID)).Order(q.Upstream.Name).Find()
+	if err != nil {
+		return in, fmt.Errorf("load upstreams: %w", err)
+	}
 	for _, u := range ups {
 		var ru render.UpstreamGroup
 		if err := json.Unmarshal([]byte(u.Spec), &ru); err != nil {
@@ -114,6 +123,21 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 		in.Upstreams = append(in.Upstreams, ru)
 	}
 	return in, nil
+}
+
+// bg：发布在后台 goroutine 中执行，不随发起请求的结束而取消。
+var bg = context.Background()
+
+func (d *Service) q() *query.Query { return query.Use(d.Store.DB) }
+
+// revision 读取一个版本；groupID 不为 0 时同时校验它属于该节点组。
+func (d *Service) revision(id string, groupID uint) (*store.Revision, error) {
+	rv := d.q().Revision
+	sel := rv.WithContext(bg).Where(rv.ID.Eq(id))
+	if groupID != 0 {
+		sel = sel.Where(rv.GroupID.Eq(groupID))
+	}
+	return sel.First()
 }
 
 // FileDiff 是预览中的一个文件差异。
@@ -136,8 +160,7 @@ func (d *Service) Preview(groupID uint) ([]FileDiff, string, error) {
 	old := map[string][]byte{}
 	g, _ := store.First[store.NodeGroup](d.Store, groupID)
 	if g != nil && g.CurrentRevisionID != "" {
-		var rev store.Revision
-		if d.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&rev).Error == nil {
+		if rev, err := d.revision(g.CurrentRevisionID, 0); err == nil {
 			old, _ = render.ReadTarGz(rev.Bundle)
 		}
 	}
@@ -187,9 +210,9 @@ func (d *Service) newRevision(groupID uint, parent, note, user string) (*store.R
 		return nil, err
 	}
 	var rev *store.Revision
-	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
+	err = d.q().Transaction(func(tx *query.Query) error {
 		r := &store.Revision{ID: tempRevisionID(), GroupID: groupID, ParentID: parent, Note: note, CreatedBy: user}
-		if err := tx.Create(r).Error; err != nil {
+		if err := tx.Revision.WithContext(bg).Create(r); err != nil {
 			return err
 		}
 		r.ID = fmt.Sprintf("r%06d", r.Seq)
@@ -204,7 +227,7 @@ func (d *Service) newRevision(groupID uint, parent, note, user string) (*store.R
 		}
 		mj, _ := json.Marshal(b.Manifest)
 		r.Digest, r.Bundle, r.Manifest = b.Manifest.Digest, tgz, string(mj)
-		if err := tx.Save(r).Error; err != nil {
+		if err := tx.Revision.WithContext(bg).Save(r); err != nil {
 			return err
 		}
 		rev = r
@@ -230,8 +253,7 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 		return nil, err
 	}
 	if g.CurrentRevisionID != "" {
-		var cur store.Revision
-		if d.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&cur).Error == nil && cur.Digest == digest {
+		if cur, err := d.revision(g.CurrentRevisionID, 0); err == nil && cur.Digest == digest {
 			lk.Unlock()
 			return nil, ErrNoChanges
 		}
@@ -256,14 +278,17 @@ func tempRevisionID() string {
 }
 
 // challenges 返回进行中的 ACME 挑战（按 token 排序，保证渲染确定）。
-func (d *Service) challenges() []render.AcmeChallenge {
-	var rows []store.AcmeChallenge
-	d.Store.DB.Order("token").Find(&rows)
+func (d *Service) challenges() ([]render.AcmeChallenge, error) {
+	ac := d.q().AcmeChallenge
+	rows, err := ac.WithContext(bg).Order(ac.Token).Find()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]render.AcmeChallenge, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, render.AcmeChallenge{Token: r.Token, KeyAuth: r.KeyAuth})
 	}
-	return out
+	return out, nil
 }
 
 // CertRefresh 证书续期后，以组的线上版本为基础只替换引用该证书的站点的证书文件，生成新版本并下发。
@@ -286,8 +311,8 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		lk.Unlock()
 		return nil, err
 	}
-	var cur store.Revision
-	if err := d.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&cur).Error; err != nil {
+	cur, err := d.revision(g.CurrentRevisionID, 0)
+	if err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -315,7 +340,11 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 			changed = append(changed, name)
 		}
 	}
-	ch := d.challenges()
+	ch, err := d.challenges()
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
 	if old, ok := files[render.AcmeSnippet]; ok {
 		snip, err := render.RenderAcmeSnippet(ch)
 		if err != nil {
@@ -335,10 +364,10 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		return nil, nil
 	}
 	var rev *store.Revision
-	err = d.Store.DB.Transaction(func(tx *gorm.DB) error {
+	err = d.q().Transaction(func(tx *query.Query) error {
 		r := &store.Revision{ID: tempRevisionID(), GroupID: groupID, ParentID: cur.ID,
 			Note: "证书续期：" + strings.Join(changed, "、"), CreatedBy: user}
-		if err := tx.Create(r).Error; err != nil {
+		if err := tx.Revision.WithContext(bg).Create(r); err != nil {
 			return err
 		}
 		r.ID = fmt.Sprintf("r%06d", r.Seq)
@@ -349,7 +378,7 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		}
 		mj, _ := json.Marshal(b.Manifest)
 		r.Digest, r.Bundle, r.Manifest = b.Manifest.Digest, tgz, string(mj)
-		if err := tx.Save(r).Error; err != nil {
+		if err := tx.Revision.WithContext(bg).Save(r); err != nil {
 			return err
 		}
 		rev = r
@@ -367,12 +396,13 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 // Wait 等待发布结束（ACME 需要等挑战真正下发到节点后再通知 CA 验证）。
 func (d *Service) Wait(ctx context.Context, depID uint) (*store.Deployment, error) {
 	for {
-		var dep store.Deployment
-		if err := d.Store.DB.First(&dep, depID).Error; err != nil {
+		dp := d.q().Deployment
+		dep, err := dp.WithContext(ctx).Where(dp.ID.Eq(depID)).First()
+		if err != nil {
 			return nil, err
 		}
 		if dep.Status != "APPLYING" {
-			return &dep, nil
+			return dep, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -406,14 +436,14 @@ func (d *Service) Restore(nodeID uint, user, ip string) (*store.Deployment, erro
 	if !lk.TryLock() {
 		return nil, ErrBusy
 	}
-	var rev store.Revision
-	if err := d.Store.DB.Where("id = ? AND group_id = ?", n.AppliedRevision, g.ID).First(&rev).Error; err != nil {
+	rev, err := d.revision(n.AppliedRevision, g.ID)
+	if err != nil {
 		lk.Unlock()
 		return nil, fmt.Errorf("revision %s not found", n.AppliedRevision)
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "node.restore", ObjectType: "node", ObjectID: n.Name,
 		Detail: map[string]any{"revision": rev.ID, "tree_hash": n.TreeHash}})
-	return d.start(lk, g, &rev, "restore", "恢复 "+n.Name+" 的手工改动", user, []uint{n.ID})
+	return d.start(lk, g, rev, "restore", "恢复 "+n.Name+" 的手工改动", user, []uint{n.ID})
 }
 
 // Rollback 把组回滚到某个历史版本（重新下发该版本）。
@@ -427,14 +457,14 @@ func (d *Service) Rollback(groupID uint, revID, user, ip string) (*store.Deploym
 		lk.Unlock()
 		return nil, err
 	}
-	var rev store.Revision
-	if err := d.Store.DB.Where("id = ? AND group_id = ?", revID, groupID).First(&rev).Error; err != nil {
+	rev, err := d.revision(revID, groupID)
+	if err != nil {
 		lk.Unlock()
 		return nil, fmt.Errorf("revision %s not found in this node group", revID)
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.rollback", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
 		Detail: map[string]string{"to": rev.ID, "from": g.CurrentRevisionID}})
-	return d.start(lk, g, &rev, "rollback", "回滚到 "+rev.ID, user, nil)
+	return d.start(lk, g, rev, "rollback", "回滚到 "+rev.ID, user, nil)
 }
 
 // Align 让刚上线的节点对齐到组的当前版本（规格书 7.2：离线节点上线后自动对齐）。
@@ -451,26 +481,34 @@ func (d *Service) Align(nodeID uint) {
 	if !lk.TryLock() {
 		return // 正在发布，结束后节点会被包含在发布中或下次上线再对齐
 	}
-	var rev store.Revision
-	if d.Store.DB.Where("id = ?", g.CurrentRevisionID).First(&rev).Error != nil {
+	rev, err := d.revision(g.CurrentRevisionID, 0)
+	if err != nil {
 		lk.Unlock()
 		return
 	}
-	_, _ = d.start(lk, g, &rev, "align", "节点上线自动对齐", "system", []uint{nodeID})
+	_, _ = d.start(lk, g, rev, "align", "节点上线自动对齐", "system", []uint{nodeID})
 }
 
 func (d *Service) start(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision, kind, note, user string, only []uint) (*store.Deployment, error) {
-	var nodes []store.Node
-	q := d.Store.DB.Where("group_id = ? AND status <> ?", g.ID, "revoked")
+	nd := d.q().Node
+	sel := nd.WithContext(bg).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked"))
 	if only != nil {
-		q = q.Where("id IN ?", only)
+		sel = sel.Where(nd.ID.In(only...))
 	}
-	q.Order("id").Find(&nodes)
+	ptrs, err := sel.Order(nd.ID).Find()
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	nodes := make([]store.Node, len(ptrs))
+	for i, p := range ptrs {
+		nodes[i] = *p
+	}
 	dep := &store.Deployment{GroupID: g.ID, RevisionID: rev.ID, Kind: kind, Status: "APPLYING", Note: note, CreatedBy: user, StartedAt: time.Now()}
 	for _, n := range nodes {
 		dep.Nodes = append(dep.Nodes, store.DeploymentNode{NodeID: n.ID, NodeName: n.Name, Status: "PENDING"})
 	}
-	if err := d.Store.DB.Create(dep).Error; err != nil {
+	if err := d.q().Deployment.WithContext(bg).Create(dep); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -491,12 +529,14 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			defer wg.Done()
 			n := nodes[i]
 			dn := &dep.Nodes[i]
+			q := d.q()
 			upd := func(status, msg, stderr string, done bool) {
-				m := map[string]any{"status": status, "message": msg, "stderr": stderr}
+				dnq := q.DeploymentNode
+				set := []field.AssignExpr{dnq.Status.Value(status), dnq.Message.Value(msg), dnq.Stderr.Value(stderr)}
 				if done {
-					m["finished_at"] = time.Now()
+					set = append(set, dnq.FinishedAt.Value(time.Now()))
 				}
-				d.Store.DB.Model(&store.DeploymentNode{}).Where("id = ?", dn.ID).Updates(m)
+				_, _ = dnq.WithContext(bg).Where(dnq.ID.Eq(dn.ID)).UpdateSimple(set...)
 				results[i] = status
 			}
 			if !d.GW.Online(n.ID) {
@@ -504,10 +544,12 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 				return
 			}
 			upd("APPLYING", "", "", false)
-			var cur store.Node
-			d.Store.DB.First(&cur, n.ID)
+			cur, err := q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).First()
+			if err != nil {
+				upd("FAILED", "读取节点状态失败："+err.Error(), "", true)
+				return
+			}
 			var res *agentv1.CommandResult
-			var err error
 			if dep.Kind == "rollback" {
 				// 回滚优先切换节点本地已有的版本：不依赖授权状态，过期时也可用（规格书 8.6）
 				res, err = d.GW.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: rev.ID}}}, ApplyTimeout)
@@ -530,7 +572,7 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			}
 			st := res.Status.String()
 			if res.Status == agentv1.CommandResult_APPLIED {
-				d.Store.DB.Model(&store.Node{}).Where("id = ?", n.ID).Update("applied_revision", rev.ID)
+				_, _ = q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).Update(q.Node.AppliedRevision, rev.ID)
 			}
 			upd(st, res.Message, res.Stderr, true)
 		}(i)
@@ -557,10 +599,11 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			status = "PENDING_NODES" // 全部离线：版本已生成，节点上线后对齐
 		}
 	}
-	now := time.Now()
-	d.Store.DB.Model(&store.Deployment{}).Where("id = ?", dep.ID).Updates(map[string]any{"status": status, "finished_at": now})
+	q := d.q()
+	dp, ng := q.Deployment, q.NodeGroup
+	_, _ = dp.WithContext(bg).Where(dp.ID.Eq(dep.ID)).UpdateSimple(dp.Status.Value(status), dp.FinishedAt.Value(time.Now()))
 	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" && dep.Kind != "restore" {
-		d.Store.DB.Model(&store.NodeGroup{}).Where("id = ?", g.ID).Update("current_revision_id", rev.ID)
+		_, _ = ng.WithContext(bg).Where(ng.ID.Eq(g.ID)).Update(ng.CurrentRevisionID, rev.ID)
 	}
 	d.Log.Info("deployment finished", "id", dep.ID, "kind", dep.Kind, "revision", rev.ID, "status", status, "applied", applied, "failed", failed)
 	_ = d.Audit.Write(audit.Entry{Username: dep.CreatedBy, Action: "release.result", ObjectType: "deployment", ObjectID: fmt.Sprint(dep.ID),

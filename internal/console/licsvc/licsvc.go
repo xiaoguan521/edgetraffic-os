@@ -2,6 +2,7 @@
 package licsvc
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
@@ -132,11 +134,12 @@ func fingerprintMatch(want []string) bool {
 }
 
 func (s *Service) raw() string {
-	var l store.LicenseStore
-	if err := s.Store.DB.Order("id desc").Limit(1).Find(&l).Error; err != nil || l.ID == 0 {
+	l := query.Use(s.Store.DB).LicenseStore
+	rows, err := l.WithContext(context.Background()).Order(l.ID.Desc()).Limit(1).Find()
+	if err != nil || len(rows) == 0 {
 		return ""
 	}
-	return l.Raw
+	return rows[0].Raw
 }
 
 // Raw 返回当前 License 原文（推送给 agent 用）。
@@ -194,7 +197,7 @@ func (s *Service) Import(raw, user string) (license.Snapshot, error) {
 	if snap.State == license.StateInvalid || snap.State == license.StateUnlicensed {
 		return snap, errors.New("license rejected: " + snap.Reason)
 	}
-	if err := s.Store.DB.Create(&store.LicenseStore{Raw: raw, ImportedBy: user, ImportedAt: time.Now()}).Error; err != nil {
+	if err := query.Use(s.Store.DB).LicenseStore.WithContext(context.Background()).Create(&store.LicenseStore{Raw: raw, ImportedBy: user, ImportedAt: time.Now()}); err != nil {
 		return snap, err
 	}
 	return snap, nil
@@ -211,8 +214,8 @@ type ActivationRequest struct {
 }
 
 func (s *Service) ActivationRequest() ActivationRequest {
-	var n int64
-	s.Store.DB.Model(&store.Node{}).Where("status <> ?", "revoked").Count(&n)
+	nd := query.Use(s.Store.DB).Node
+	n, _ := nd.WithContext(context.Background()).Where(nd.Status.Neq("revoked")).Count()
 	return ActivationRequest{InstallationID: s.installationID, FPHashes: FingerprintHashes(), Product: version.Product,
 		Version: version.Version, Nodes: n, CreatedAt: time.Now().UTC()}
 }
