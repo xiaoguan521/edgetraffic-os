@@ -184,6 +184,110 @@ func (Signal_Kind) EnumDescriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14, 0}
 }
 
+type DriftFile_Change int32
+
+const (
+	DriftFile_CHANGE_UNSPECIFIED DriftFile_Change = 0
+	DriftFile_MODIFIED           DriftFile_Change = 1
+	DriftFile_ADDED              DriftFile_Change = 2
+	DriftFile_REMOVED            DriftFile_Change = 3
+)
+
+// Enum value maps for DriftFile_Change.
+var (
+	DriftFile_Change_name = map[int32]string{
+		0: "CHANGE_UNSPECIFIED",
+		1: "MODIFIED",
+		2: "ADDED",
+		3: "REMOVED",
+	}
+	DriftFile_Change_value = map[string]int32{
+		"CHANGE_UNSPECIFIED": 0,
+		"MODIFIED":           1,
+		"ADDED":              2,
+		"REMOVED":            3,
+	}
+)
+
+func (x DriftFile_Change) Enum() *DriftFile_Change {
+	p := new(DriftFile_Change)
+	*p = x
+	return p
+}
+
+func (x DriftFile_Change) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DriftFile_Change) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_v1_agent_proto_enumTypes[3].Descriptor()
+}
+
+func (DriftFile_Change) Type() protoreflect.EnumType {
+	return &file_agent_v1_agent_proto_enumTypes[3]
+}
+
+func (x DriftFile_Change) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DriftFile_Change.Descriptor instead.
+func (DriftFile_Change) EnumDescriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17, 0}
+}
+
+type UpgradeDataplane_Action int32
+
+const (
+	UpgradeDataplane_ACTION_UNSPECIFIED UpgradeDataplane_Action = 0
+	UpgradeDataplane_START              UpgradeDataplane_Action = 1
+	UpgradeDataplane_COMMIT             UpgradeDataplane_Action = 2
+	UpgradeDataplane_ABORT              UpgradeDataplane_Action = 3
+)
+
+// Enum value maps for UpgradeDataplane_Action.
+var (
+	UpgradeDataplane_Action_name = map[int32]string{
+		0: "ACTION_UNSPECIFIED",
+		1: "START",
+		2: "COMMIT",
+		3: "ABORT",
+	}
+	UpgradeDataplane_Action_value = map[string]int32{
+		"ACTION_UNSPECIFIED": 0,
+		"START":              1,
+		"COMMIT":             2,
+		"ABORT":              3,
+	}
+)
+
+func (x UpgradeDataplane_Action) Enum() *UpgradeDataplane_Action {
+	p := new(UpgradeDataplane_Action)
+	*p = x
+	return p
+}
+
+func (x UpgradeDataplane_Action) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UpgradeDataplane_Action) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_v1_agent_proto_enumTypes[4].Descriptor()
+}
+
+func (UpgradeDataplane_Action) Type() protoreflect.EnumType {
+	return &file_agent_v1_agent_proto_enumTypes[4]
+}
+
+func (x UpgradeDataplane_Action) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UpgradeDataplane_Action.Descriptor instead.
+func (UpgradeDataplane_Action) EnumDescriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18, 0}
+}
+
 type EnrollRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	EnrollToken        string                 `protobuf:"bytes,1,opt,name=enroll_token,json=enrollToken,proto3" json:"enroll_token,omitempty"`
@@ -337,6 +441,7 @@ type AgentMessage struct {
 	//	*AgentMessage_Heartbeat
 	//	*AgentMessage_Result
 	//	*AgentMessage_Log
+	//	*AgentMessage_Drift
 	Body          isAgentMessage_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -422,6 +527,15 @@ func (x *AgentMessage) GetLog() *LogChunk {
 	return nil
 }
 
+func (x *AgentMessage) GetDrift() *DriftReport {
+	if x != nil {
+		if x, ok := x.Body.(*AgentMessage_Drift); ok {
+			return x.Drift
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Body interface {
 	isAgentMessage_Body()
 }
@@ -442,6 +556,10 @@ type AgentMessage_Log struct {
 	Log *LogChunk `protobuf:"bytes,13,opt,name=log,proto3,oneof"`
 }
 
+type AgentMessage_Drift struct {
+	Drift *DriftReport `protobuf:"bytes,14,opt,name=drift,proto3,oneof"`
+}
+
 func (*AgentMessage_Hello) isAgentMessage_Body() {}
 
 func (*AgentMessage_Heartbeat) isAgentMessage_Body() {}
@@ -449,6 +567,8 @@ func (*AgentMessage_Heartbeat) isAgentMessage_Body() {}
 func (*AgentMessage_Result) isAgentMessage_Body() {}
 
 func (*AgentMessage_Log) isAgentMessage_Body() {}
+
+func (*AgentMessage_Drift) isAgentMessage_Body() {}
 
 type Hello struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -875,6 +995,8 @@ type ServerMessage struct {
 	//	*ServerMessage_Tail
 	//	*ServerMessage_Signal
 	//	*ServerMessage_License
+	//	*ServerMessage_Upgrade
+	//	*ServerMessage_UpgradeAgent
 	Body          isServerMessage_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -992,6 +1114,24 @@ func (x *ServerMessage) GetLicense() *LicenseUpdate {
 	return nil
 }
 
+func (x *ServerMessage) GetUpgrade() *UpgradeDataplane {
+	if x != nil {
+		if x, ok := x.Body.(*ServerMessage_Upgrade); ok {
+			return x.Upgrade
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetUpgradeAgent() *UpgradeAgent {
+	if x != nil {
+		if x, ok := x.Body.(*ServerMessage_UpgradeAgent); ok {
+			return x.UpgradeAgent
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Body interface {
 	isServerMessage_Body()
 }
@@ -1020,6 +1160,14 @@ type ServerMessage_License struct {
 	License *LicenseUpdate `protobuf:"bytes,15,opt,name=license,proto3,oneof"`
 }
 
+type ServerMessage_Upgrade struct {
+	Upgrade *UpgradeDataplane `protobuf:"bytes,16,opt,name=upgrade,proto3,oneof"`
+}
+
+type ServerMessage_UpgradeAgent struct {
+	UpgradeAgent *UpgradeAgent `protobuf:"bytes,17,opt,name=upgrade_agent,json=upgradeAgent,proto3,oneof"`
+}
+
 func (*ServerMessage_Apply) isServerMessage_Body() {}
 
 func (*ServerMessage_Rollback) isServerMessage_Body() {}
@@ -1031,6 +1179,10 @@ func (*ServerMessage_Tail) isServerMessage_Body() {}
 func (*ServerMessage_Signal) isServerMessage_Body() {}
 
 func (*ServerMessage_License) isServerMessage_Body() {}
+
+func (*ServerMessage_Upgrade) isServerMessage_Body() {}
+
+func (*ServerMessage_UpgradeAgent) isServerMessage_Body() {}
 
 type ApplyRevision struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -1412,6 +1564,368 @@ func (x *LicenseUpdate) GetRaw() string {
 	return ""
 }
 
+// 漂移 diff 上报（规格书 12.7 路径 B，CLAUDE.md“agent 与安全”）：agent 发现当前版本目录被手工改动时主动上报。
+// 只限受管版本目录 /opt/syapp/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
+// 协议中没有任何“读取文件”的请求：控制台不能让 agent 读取指定路径。
+type DriftReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RevisionId    string                 `protobuf:"bytes,1,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
+	TreeHash      string                 `protobuf:"bytes,2,opt,name=tree_hash,json=treeHash,proto3" json:"tree_hash,omitempty"`
+	Files         []*DriftFile           `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DriftReport) Reset() {
+	*x = DriftReport{}
+	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DriftReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DriftReport) ProtoMessage() {}
+
+func (x *DriftReport) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DriftReport.ProtoReflect.Descriptor instead.
+func (*DriftReport) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *DriftReport) GetRevisionId() string {
+	if x != nil {
+		return x.RevisionId
+	}
+	return ""
+}
+
+func (x *DriftReport) GetTreeHash() string {
+	if x != nil {
+		return x.TreeHash
+	}
+	return ""
+}
+
+func (x *DriftReport) GetFiles() []*DriftFile {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+type DriftFile struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Path           string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // 相对版本目录，不含 ..
+	Change         DriftFile_Change       `protobuf:"varint,2,opt,name=change,proto3,enum=edgetraffic.agent.v1.DriftFile_Change" json:"change,omitempty"`
+	Sha256         string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"` // 现在的内容哈希（REMOVED 时为空）
+	Size           int64                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	Content        []byte                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"` // 现在的内容；私钥或超过上限时为空
+	ContentOmitted bool                   `protobuf:"varint,6,opt,name=content_omitted,json=contentOmitted,proto3" json:"content_omitted,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DriftFile) Reset() {
+	*x = DriftFile{}
+	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DriftFile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DriftFile) ProtoMessage() {}
+
+func (x *DriftFile) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DriftFile.ProtoReflect.Descriptor instead.
+func (*DriftFile) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *DriftFile) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *DriftFile) GetChange() DriftFile_Change {
+	if x != nil {
+		return x.Change
+	}
+	return DriftFile_CHANGE_UNSPECIFIED
+}
+
+func (x *DriftFile) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *DriftFile) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *DriftFile) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *DriftFile) GetContentOmitted() bool {
+	if x != nil {
+		return x.ContentOmitted
+	}
+	return false
+}
+
+// 数据面二进制热升级（规格书 12.6）。START：agent 下载升级包与签名到投放目录，经 wrapper upgrade-start 验签、
+// 切换并发 USR2 / WINCH，然后按 post_checks 探活，结果在 CommandResult 中返回；COMMIT / ABORT 对应 wrapper 子命令。
+type UpgradeDataplane struct {
+	state          protoimpl.MessageState  `protogen:"open.v1"`
+	Action         UpgradeDataplane_Action `protobuf:"varint,1,opt,name=action,proto3,enum=edgetraffic.agent.v1.UpgradeDataplane_Action" json:"action,omitempty"`
+	Version        string                  `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$
+	PackageSha256  string                  `protobuf:"bytes,3,opt,name=package_sha256,json=packageSha256,proto3" json:"package_sha256,omitempty"`
+	SignatureJson  []byte                  `protobuf:"bytes,4,opt,name=signature_json,json=signatureJson,proto3" json:"signature_json,omitempty"` // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
+	PostChecks     []*PostCheck            `protobuf:"bytes,5,rep,name=post_checks,json=postChecks,proto3" json:"post_checks,omitempty"`
+	TimeoutSeconds int32                   `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UpgradeDataplane) Reset() {
+	*x = UpgradeDataplane{}
+	mi := &file_agent_v1_agent_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpgradeDataplane) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpgradeDataplane) ProtoMessage() {}
+
+func (x *UpgradeDataplane) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpgradeDataplane.ProtoReflect.Descriptor instead.
+func (*UpgradeDataplane) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *UpgradeDataplane) GetAction() UpgradeDataplane_Action {
+	if x != nil {
+		return x.Action
+	}
+	return UpgradeDataplane_ACTION_UNSPECIFIED
+}
+
+func (x *UpgradeDataplane) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *UpgradeDataplane) GetPackageSha256() string {
+	if x != nil {
+		return x.PackageSha256
+	}
+	return ""
+}
+
+func (x *UpgradeDataplane) GetSignatureJson() []byte {
+	if x != nil {
+		return x.SignatureJson
+	}
+	return nil
+}
+
+func (x *UpgradeDataplane) GetPostChecks() []*PostCheck {
+	if x != nil {
+		return x.PostChecks
+	}
+	return nil
+}
+
+func (x *UpgradeDataplane) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
+type UpgradeAgent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	PackageSha256 string                 `protobuf:"bytes,2,opt,name=package_sha256,json=packageSha256,proto3" json:"package_sha256,omitempty"`
+	SignatureJson []byte                 `protobuf:"bytes,3,opt,name=signature_json,json=signatureJson,proto3" json:"signature_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpgradeAgent) Reset() {
+	*x = UpgradeAgent{}
+	mi := &file_agent_v1_agent_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpgradeAgent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpgradeAgent) ProtoMessage() {}
+
+func (x *UpgradeAgent) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpgradeAgent.ProtoReflect.Descriptor instead.
+func (*UpgradeAgent) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *UpgradeAgent) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *UpgradeAgent) GetPackageSha256() string {
+	if x != nil {
+		return x.PackageSha256
+	}
+	return ""
+}
+
+func (x *UpgradeAgent) GetSignatureJson() []byte {
+	if x != nil {
+		return x.SignatureJson
+	}
+	return nil
+}
+
+type FetchPackageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // syapp | syapp-agent
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	Arch          string                 `protobuf:"bytes,3,opt,name=arch,proto3" json:"arch,omitempty"`       // amd64 | arm64
+	Variant       string                 `protobuf:"bytes,4,opt,name=variant,proto3" json:"variant,omitempty"` // standard | gmssl | lua
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchPackageRequest) Reset() {
+	*x = FetchPackageRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchPackageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchPackageRequest) ProtoMessage() {}
+
+func (x *FetchPackageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchPackageRequest.ProtoReflect.Descriptor instead.
+func (*FetchPackageRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *FetchPackageRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FetchPackageRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *FetchPackageRequest) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+func (x *FetchPackageRequest) GetVariant() string {
+	if x != nil {
+		return x.Variant
+	}
+	return ""
+}
+
 type FetchBundleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RevisionId    string                 `protobuf:"bytes,1,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
@@ -1421,7 +1935,7 @@ type FetchBundleRequest struct {
 
 func (x *FetchBundleRequest) Reset() {
 	*x = FetchBundleRequest{}
-	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_agent_v1_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1947,7 @@ func (x *FetchBundleRequest) String() string {
 func (*FetchBundleRequest) ProtoMessage() {}
 
 func (x *FetchBundleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_agent_v1_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1960,7 @@ func (x *FetchBundleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchBundleRequest.ProtoReflect.Descriptor instead.
 func (*FetchBundleRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *FetchBundleRequest) GetRevisionId() string {
@@ -1467,7 +1981,7 @@ type BundleChunk struct {
 
 func (x *BundleChunk) Reset() {
 	*x = BundleChunk{}
-	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_agent_v1_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1479,7 +1993,7 @@ func (x *BundleChunk) String() string {
 func (*BundleChunk) ProtoMessage() {}
 
 func (x *BundleChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_agent_v1_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1492,7 +2006,7 @@ func (x *BundleChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BundleChunk.ProtoReflect.Descriptor instead.
 func (*BundleChunk) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BundleChunk) GetData() []byte {
@@ -1531,14 +2045,15 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12&\n" +
 	"\x0fclient_cert_der\x18\x02 \x01(\fR\rclientCertDer\x12\x1e\n" +
 	"\vca_cert_der\x18\x03 \x01(\fR\tcaCertDer\x12%\n" +
-	"\x0ecommand_pubkey\x18\x04 \x01(\fR\rcommandPubkey\"\x96\x02\n" +
+	"\x0ecommand_pubkey\x18\x04 \x01(\fR\rcommandPubkey\"\xd1\x02\n" +
 	"\fAgentMessage\x12\x15\n" +
 	"\x06msg_id\x18\x01 \x01(\tR\x05msgId\x123\n" +
 	"\x05hello\x18\n" +
 	" \x01(\v2\x1b.edgetraffic.agent.v1.HelloH\x00R\x05hello\x12?\n" +
 	"\theartbeat\x18\v \x01(\v2\x1f.edgetraffic.agent.v1.HeartbeatH\x00R\theartbeat\x12=\n" +
 	"\x06result\x18\f \x01(\v2#.edgetraffic.agent.v1.CommandResultH\x00R\x06result\x122\n" +
-	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03logB\x06\n" +
+	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03log\x129\n" +
+	"\x05drift\x18\x0e \x01(\v2!.edgetraffic.agent.v1.DriftReportH\x00R\x05driftB\x06\n" +
 	"\x04body\"\xe2\x01\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x120\n" +
@@ -1590,7 +2105,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\bLogChunk\x12\x17\n" +
 	"\atail_id\x18\x01 \x01(\tR\x06tailId\x12\x12\n" +
 	"\x04file\x18\x02 \x01(\tR\x04file\x12\x14\n" +
-	"\x05lines\x18\x03 \x03(\tR\x05lines\"\xd0\x03\n" +
+	"\x05lines\x18\x03 \x03(\tR\x05lines\"\xdf\x04\n" +
 	"\rServerMessage\x12\x15\n" +
 	"\x06cmd_id\x18\x01 \x01(\tR\x05cmdId\x12$\n" +
 	"\x0eissued_at_unix\x18\x02 \x01(\x03R\fissuedAtUnix\x12\x1c\n" +
@@ -1601,7 +2116,9 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x05probe\x18\f \x01(\v2\x1b.edgetraffic.agent.v1.ProbeH\x00R\x05probe\x123\n" +
 	"\x04tail\x18\r \x01(\v2\x1d.edgetraffic.agent.v1.TailLogH\x00R\x04tail\x126\n" +
 	"\x06signal\x18\x0e \x01(\v2\x1c.edgetraffic.agent.v1.SignalH\x00R\x06signal\x12?\n" +
-	"\alicense\x18\x0f \x01(\v2#.edgetraffic.agent.v1.LicenseUpdateH\x00R\alicenseB\x06\n" +
+	"\alicense\x18\x0f \x01(\v2#.edgetraffic.agent.v1.LicenseUpdateH\x00R\alicense\x12B\n" +
+	"\aupgrade\x18\x10 \x01(\v2&.edgetraffic.agent.v1.UpgradeDataplaneH\x00R\aupgrade\x12I\n" +
+	"\rupgrade_agent\x18\x11 \x01(\v2\".edgetraffic.agent.v1.UpgradeAgentH\x00R\fupgradeAgentB\x06\n" +
 	"\x04body\"\xee\x01\n" +
 	"\rApplyRevision\x12\x1f\n" +
 	"\vrevision_id\x18\x01 \x01(\tR\n" +
@@ -1638,18 +2155,59 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06REOPEN\x10\x01\x12\b\n" +
 	"\x04QUIT\x10\x02\"!\n" +
 	"\rLicenseUpdate\x12\x10\n" +
-	"\x03raw\x18\x01 \x01(\tR\x03raw\"5\n" +
+	"\x03raw\x18\x01 \x01(\tR\x03raw\"\x82\x01\n" +
+	"\vDriftReport\x12\x1f\n" +
+	"\vrevision_id\x18\x01 \x01(\tR\n" +
+	"revisionId\x12\x1b\n" +
+	"\ttree_hash\x18\x02 \x01(\tR\btreeHash\x125\n" +
+	"\x05files\x18\x03 \x03(\v2\x1f.edgetraffic.agent.v1.DriftFileR\x05files\"\x96\x02\n" +
+	"\tDriftFile\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12>\n" +
+	"\x06change\x18\x02 \x01(\x0e2&.edgetraffic.agent.v1.DriftFile.ChangeR\x06change\x12\x16\n" +
+	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x18\n" +
+	"\acontent\x18\x05 \x01(\fR\acontent\x12'\n" +
+	"\x0fcontent_omitted\x18\x06 \x01(\bR\x0econtentOmitted\"F\n" +
+	"\x06Change\x12\x16\n" +
+	"\x12CHANGE_UNSPECIFIED\x10\x00\x12\f\n" +
+	"\bMODIFIED\x10\x01\x12\t\n" +
+	"\x05ADDED\x10\x02\x12\v\n" +
+	"\aREMOVED\x10\x03\"\xf0\x02\n" +
+	"\x10UpgradeDataplane\x12E\n" +
+	"\x06action\x18\x01 \x01(\x0e2-.edgetraffic.agent.v1.UpgradeDataplane.ActionR\x06action\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12%\n" +
+	"\x0epackage_sha256\x18\x03 \x01(\tR\rpackageSha256\x12%\n" +
+	"\x0esignature_json\x18\x04 \x01(\fR\rsignatureJson\x12@\n" +
+	"\vpost_checks\x18\x05 \x03(\v2\x1f.edgetraffic.agent.v1.PostCheckR\n" +
+	"postChecks\x12'\n" +
+	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\"B\n" +
+	"\x06Action\x12\x16\n" +
+	"\x12ACTION_UNSPECIFIED\x10\x00\x12\t\n" +
+	"\x05START\x10\x01\x12\n" +
+	"\n" +
+	"\x06COMMIT\x10\x02\x12\t\n" +
+	"\x05ABORT\x10\x03\"v\n" +
+	"\fUpgradeAgent\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12%\n" +
+	"\x0epackage_sha256\x18\x02 \x01(\tR\rpackageSha256\x12%\n" +
+	"\x0esignature_json\x18\x03 \x01(\fR\rsignatureJson\"q\n" +
+	"\x13FetchPackageRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x12\n" +
+	"\x04arch\x18\x03 \x01(\tR\x04arch\x12\x18\n" +
+	"\avariant\x18\x04 \x01(\tR\avariant\"5\n" +
 	"\x12FetchBundleRequest\x12\x1f\n" +
 	"\vrevision_id\x18\x01 \x01(\tR\n" +
 	"revisionId\"M\n" +
 	"\vBundleChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
-	"\x04last\x18\x03 \x01(\bR\x04last2\x99\x02\n" +
+	"\x04last\x18\x03 \x01(\bR\x04last2\xf9\x02\n" +
 	"\fAgentGateway\x12S\n" +
 	"\x06Enroll\x12#.edgetraffic.agent.v1.EnrollRequest\x1a$.edgetraffic.agent.v1.EnrollResponse\x12V\n" +
 	"\aConnect\x12\".edgetraffic.agent.v1.AgentMessage\x1a#.edgetraffic.agent.v1.ServerMessage(\x010\x01\x12\\\n" +
-	"\vFetchBundle\x12(.edgetraffic.agent.v1.FetchBundleRequest\x1a!.edgetraffic.agent.v1.BundleChunk0\x01B@Z>github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1;agentv1b\x06proto3"
+	"\vFetchBundle\x12(.edgetraffic.agent.v1.FetchBundleRequest\x1a!.edgetraffic.agent.v1.BundleChunk0\x01\x12^\n" +
+	"\fFetchPackage\x12).edgetraffic.agent.v1.FetchPackageRequest\x1a!.edgetraffic.agent.v1.BundleChunk0\x01B@Z>github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -1663,58 +2221,74 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_agent_v1_agent_proto_rawDescData
 }
 
-var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(CommandResult_Status)(0),  // 0: edgetraffic.agent.v1.CommandResult.Status
-	(TailLog_File)(0),          // 1: edgetraffic.agent.v1.TailLog.File
-	(Signal_Kind)(0),           // 2: edgetraffic.agent.v1.Signal.Kind
-	(*EnrollRequest)(nil),      // 3: edgetraffic.agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),     // 4: edgetraffic.agent.v1.EnrollResponse
-	(*AgentMessage)(nil),       // 5: edgetraffic.agent.v1.AgentMessage
-	(*Hello)(nil),              // 6: edgetraffic.agent.v1.Hello
-	(*Heartbeat)(nil),          // 7: edgetraffic.agent.v1.Heartbeat
-	(*SiteMinute)(nil),         // 8: edgetraffic.agent.v1.SiteMinute
-	(*CommandResult)(nil),      // 9: edgetraffic.agent.v1.CommandResult
-	(*LogChunk)(nil),           // 10: edgetraffic.agent.v1.LogChunk
-	(*ServerMessage)(nil),      // 11: edgetraffic.agent.v1.ServerMessage
-	(*ApplyRevision)(nil),      // 12: edgetraffic.agent.v1.ApplyRevision
-	(*PostCheck)(nil),          // 13: edgetraffic.agent.v1.PostCheck
-	(*Rollback)(nil),           // 14: edgetraffic.agent.v1.Rollback
-	(*Probe)(nil),              // 15: edgetraffic.agent.v1.Probe
-	(*TailLog)(nil),            // 16: edgetraffic.agent.v1.TailLog
-	(*Signal)(nil),             // 17: edgetraffic.agent.v1.Signal
-	(*LicenseUpdate)(nil),      // 18: edgetraffic.agent.v1.LicenseUpdate
-	(*FetchBundleRequest)(nil), // 19: edgetraffic.agent.v1.FetchBundleRequest
-	(*BundleChunk)(nil),        // 20: edgetraffic.agent.v1.BundleChunk
+	(CommandResult_Status)(0),    // 0: edgetraffic.agent.v1.CommandResult.Status
+	(TailLog_File)(0),            // 1: edgetraffic.agent.v1.TailLog.File
+	(Signal_Kind)(0),             // 2: edgetraffic.agent.v1.Signal.Kind
+	(DriftFile_Change)(0),        // 3: edgetraffic.agent.v1.DriftFile.Change
+	(UpgradeDataplane_Action)(0), // 4: edgetraffic.agent.v1.UpgradeDataplane.Action
+	(*EnrollRequest)(nil),        // 5: edgetraffic.agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),       // 6: edgetraffic.agent.v1.EnrollResponse
+	(*AgentMessage)(nil),         // 7: edgetraffic.agent.v1.AgentMessage
+	(*Hello)(nil),                // 8: edgetraffic.agent.v1.Hello
+	(*Heartbeat)(nil),            // 9: edgetraffic.agent.v1.Heartbeat
+	(*SiteMinute)(nil),           // 10: edgetraffic.agent.v1.SiteMinute
+	(*CommandResult)(nil),        // 11: edgetraffic.agent.v1.CommandResult
+	(*LogChunk)(nil),             // 12: edgetraffic.agent.v1.LogChunk
+	(*ServerMessage)(nil),        // 13: edgetraffic.agent.v1.ServerMessage
+	(*ApplyRevision)(nil),        // 14: edgetraffic.agent.v1.ApplyRevision
+	(*PostCheck)(nil),            // 15: edgetraffic.agent.v1.PostCheck
+	(*Rollback)(nil),             // 16: edgetraffic.agent.v1.Rollback
+	(*Probe)(nil),                // 17: edgetraffic.agent.v1.Probe
+	(*TailLog)(nil),              // 18: edgetraffic.agent.v1.TailLog
+	(*Signal)(nil),               // 19: edgetraffic.agent.v1.Signal
+	(*LicenseUpdate)(nil),        // 20: edgetraffic.agent.v1.LicenseUpdate
+	(*DriftReport)(nil),          // 21: edgetraffic.agent.v1.DriftReport
+	(*DriftFile)(nil),            // 22: edgetraffic.agent.v1.DriftFile
+	(*UpgradeDataplane)(nil),     // 23: edgetraffic.agent.v1.UpgradeDataplane
+	(*UpgradeAgent)(nil),         // 24: edgetraffic.agent.v1.UpgradeAgent
+	(*FetchPackageRequest)(nil),  // 25: edgetraffic.agent.v1.FetchPackageRequest
+	(*FetchBundleRequest)(nil),   // 26: edgetraffic.agent.v1.FetchBundleRequest
+	(*BundleChunk)(nil),          // 27: edgetraffic.agent.v1.BundleChunk
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	6,  // 0: edgetraffic.agent.v1.AgentMessage.hello:type_name -> edgetraffic.agent.v1.Hello
-	7,  // 1: edgetraffic.agent.v1.AgentMessage.heartbeat:type_name -> edgetraffic.agent.v1.Heartbeat
-	9,  // 2: edgetraffic.agent.v1.AgentMessage.result:type_name -> edgetraffic.agent.v1.CommandResult
-	10, // 3: edgetraffic.agent.v1.AgentMessage.log:type_name -> edgetraffic.agent.v1.LogChunk
-	8,  // 4: edgetraffic.agent.v1.Heartbeat.site_minutes:type_name -> edgetraffic.agent.v1.SiteMinute
-	0,  // 5: edgetraffic.agent.v1.CommandResult.status:type_name -> edgetraffic.agent.v1.CommandResult.Status
-	12, // 6: edgetraffic.agent.v1.ServerMessage.apply:type_name -> edgetraffic.agent.v1.ApplyRevision
-	14, // 7: edgetraffic.agent.v1.ServerMessage.rollback:type_name -> edgetraffic.agent.v1.Rollback
-	15, // 8: edgetraffic.agent.v1.ServerMessage.probe:type_name -> edgetraffic.agent.v1.Probe
-	16, // 9: edgetraffic.agent.v1.ServerMessage.tail:type_name -> edgetraffic.agent.v1.TailLog
-	17, // 10: edgetraffic.agent.v1.ServerMessage.signal:type_name -> edgetraffic.agent.v1.Signal
-	18, // 11: edgetraffic.agent.v1.ServerMessage.license:type_name -> edgetraffic.agent.v1.LicenseUpdate
-	13, // 12: edgetraffic.agent.v1.ApplyRevision.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
-	1,  // 13: edgetraffic.agent.v1.TailLog.file:type_name -> edgetraffic.agent.v1.TailLog.File
-	2,  // 14: edgetraffic.agent.v1.Signal.kind:type_name -> edgetraffic.agent.v1.Signal.Kind
-	3,  // 15: edgetraffic.agent.v1.AgentGateway.Enroll:input_type -> edgetraffic.agent.v1.EnrollRequest
-	5,  // 16: edgetraffic.agent.v1.AgentGateway.Connect:input_type -> edgetraffic.agent.v1.AgentMessage
-	19, // 17: edgetraffic.agent.v1.AgentGateway.FetchBundle:input_type -> edgetraffic.agent.v1.FetchBundleRequest
-	4,  // 18: edgetraffic.agent.v1.AgentGateway.Enroll:output_type -> edgetraffic.agent.v1.EnrollResponse
-	11, // 19: edgetraffic.agent.v1.AgentGateway.Connect:output_type -> edgetraffic.agent.v1.ServerMessage
-	20, // 20: edgetraffic.agent.v1.AgentGateway.FetchBundle:output_type -> edgetraffic.agent.v1.BundleChunk
-	18, // [18:21] is the sub-list for method output_type
-	15, // [15:18] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	8,  // 0: edgetraffic.agent.v1.AgentMessage.hello:type_name -> edgetraffic.agent.v1.Hello
+	9,  // 1: edgetraffic.agent.v1.AgentMessage.heartbeat:type_name -> edgetraffic.agent.v1.Heartbeat
+	11, // 2: edgetraffic.agent.v1.AgentMessage.result:type_name -> edgetraffic.agent.v1.CommandResult
+	12, // 3: edgetraffic.agent.v1.AgentMessage.log:type_name -> edgetraffic.agent.v1.LogChunk
+	21, // 4: edgetraffic.agent.v1.AgentMessage.drift:type_name -> edgetraffic.agent.v1.DriftReport
+	10, // 5: edgetraffic.agent.v1.Heartbeat.site_minutes:type_name -> edgetraffic.agent.v1.SiteMinute
+	0,  // 6: edgetraffic.agent.v1.CommandResult.status:type_name -> edgetraffic.agent.v1.CommandResult.Status
+	14, // 7: edgetraffic.agent.v1.ServerMessage.apply:type_name -> edgetraffic.agent.v1.ApplyRevision
+	16, // 8: edgetraffic.agent.v1.ServerMessage.rollback:type_name -> edgetraffic.agent.v1.Rollback
+	17, // 9: edgetraffic.agent.v1.ServerMessage.probe:type_name -> edgetraffic.agent.v1.Probe
+	18, // 10: edgetraffic.agent.v1.ServerMessage.tail:type_name -> edgetraffic.agent.v1.TailLog
+	19, // 11: edgetraffic.agent.v1.ServerMessage.signal:type_name -> edgetraffic.agent.v1.Signal
+	20, // 12: edgetraffic.agent.v1.ServerMessage.license:type_name -> edgetraffic.agent.v1.LicenseUpdate
+	23, // 13: edgetraffic.agent.v1.ServerMessage.upgrade:type_name -> edgetraffic.agent.v1.UpgradeDataplane
+	24, // 14: edgetraffic.agent.v1.ServerMessage.upgrade_agent:type_name -> edgetraffic.agent.v1.UpgradeAgent
+	15, // 15: edgetraffic.agent.v1.ApplyRevision.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
+	1,  // 16: edgetraffic.agent.v1.TailLog.file:type_name -> edgetraffic.agent.v1.TailLog.File
+	2,  // 17: edgetraffic.agent.v1.Signal.kind:type_name -> edgetraffic.agent.v1.Signal.Kind
+	22, // 18: edgetraffic.agent.v1.DriftReport.files:type_name -> edgetraffic.agent.v1.DriftFile
+	3,  // 19: edgetraffic.agent.v1.DriftFile.change:type_name -> edgetraffic.agent.v1.DriftFile.Change
+	4,  // 20: edgetraffic.agent.v1.UpgradeDataplane.action:type_name -> edgetraffic.agent.v1.UpgradeDataplane.Action
+	15, // 21: edgetraffic.agent.v1.UpgradeDataplane.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
+	5,  // 22: edgetraffic.agent.v1.AgentGateway.Enroll:input_type -> edgetraffic.agent.v1.EnrollRequest
+	7,  // 23: edgetraffic.agent.v1.AgentGateway.Connect:input_type -> edgetraffic.agent.v1.AgentMessage
+	26, // 24: edgetraffic.agent.v1.AgentGateway.FetchBundle:input_type -> edgetraffic.agent.v1.FetchBundleRequest
+	25, // 25: edgetraffic.agent.v1.AgentGateway.FetchPackage:input_type -> edgetraffic.agent.v1.FetchPackageRequest
+	6,  // 26: edgetraffic.agent.v1.AgentGateway.Enroll:output_type -> edgetraffic.agent.v1.EnrollResponse
+	13, // 27: edgetraffic.agent.v1.AgentGateway.Connect:output_type -> edgetraffic.agent.v1.ServerMessage
+	27, // 28: edgetraffic.agent.v1.AgentGateway.FetchBundle:output_type -> edgetraffic.agent.v1.BundleChunk
+	27, // 29: edgetraffic.agent.v1.AgentGateway.FetchPackage:output_type -> edgetraffic.agent.v1.BundleChunk
+	26, // [26:30] is the sub-list for method output_type
+	22, // [22:26] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -1727,6 +2301,7 @@ func file_agent_v1_agent_proto_init() {
 		(*AgentMessage_Heartbeat)(nil),
 		(*AgentMessage_Result)(nil),
 		(*AgentMessage_Log)(nil),
+		(*AgentMessage_Drift)(nil),
 	}
 	file_agent_v1_agent_proto_msgTypes[8].OneofWrappers = []any{
 		(*ServerMessage_Apply)(nil),
@@ -1735,14 +2310,16 @@ func file_agent_v1_agent_proto_init() {
 		(*ServerMessage_Tail)(nil),
 		(*ServerMessage_Signal)(nil),
 		(*ServerMessage_License)(nil),
+		(*ServerMessage_Upgrade)(nil),
+		(*ServerMessage_UpgradeAgent)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   18,
+			NumEnums:      5,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
