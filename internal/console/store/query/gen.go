@@ -41,6 +41,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		Revision:         newRevision(db, opts...),
 		Site:             newSite(db, opts...),
 		Snippet:          newSnippet(db, opts...),
+		StreamService:    newStreamService(db, opts...),
 		SystemKV:         newSystemKV(db, opts...),
 		Upstream:         newUpstream(db, opts...),
 		User:             newUser(db, opts...),
@@ -73,6 +74,7 @@ type Query struct {
 	Revision         revision
 	Site             site
 	Snippet          snippet
+	StreamService    streamService
 	SystemKV         systemKV
 	Upstream         upstream
 	User             user
@@ -108,6 +110,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		Revision:         q.Revision.clone(db),
 		Site:             q.Site.clone(db),
 		Snippet:          q.Snippet.clone(db),
+		StreamService:    q.StreamService.clone(db),
 		SystemKV:         q.SystemKV.clone(db),
 		Upstream:         q.Upstream.clone(db),
 		User:             q.User.clone(db),
@@ -148,6 +151,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		Revision:         q.Revision.replaceDB(db),
 		Site:             q.Site.replaceDB(db),
 		Snippet:          q.Snippet.replaceDB(db),
+		StreamService:    q.StreamService.replaceDB(db),
 		SystemKV:         q.SystemKV.replaceDB(db),
 		Upstream:         q.Upstream.replaceDB(db),
 		User:             q.User.replaceDB(db),
@@ -178,6 +182,7 @@ type queryCtx struct {
 	Revision         IRevisionDo
 	Site             ISiteDo
 	Snippet          ISnippetDo
+	StreamService    IStreamServiceDo
 	SystemKV         ISystemKVDo
 	Upstream         IUpstreamDo
 	User             IUserDo
@@ -208,6 +213,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		Revision:         q.Revision.WithContext(ctx),
 		Site:             q.Site.WithContext(ctx),
 		Snippet:          q.Snippet.WithContext(ctx),
+		StreamService:    q.StreamService.WithContext(ctx),
 		SystemKV:         q.SystemKV.WithContext(ctx),
 		Upstream:         q.Upstream.WithContext(ctx),
 		User:             q.User.WithContext(ctx),

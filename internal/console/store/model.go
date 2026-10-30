@@ -279,6 +279,18 @@ type DataplaneUpgrade struct {
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
+// StreamService 是节点组内的一个四层代理服务（P9，授权功能 stream）。
+type StreamService struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	GroupID   uint      `gorm:"uniqueIndex:idx_stream_group_name" json:"group_id"`
+	Name      string    `gorm:"uniqueIndex:idx_stream_group_name;size:64" json:"name"`
+	Spec      string    `json:"-"` // render.StreamProxy 的 JSON
+	Enabled   bool      `json:"enabled"`
+	UpdatedBy string    `gorm:"size:64" json:"updated_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -378,5 +390,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &Snippet{}, &ConfigImport{}, &APIToken{}, &AlertChannel{}, &AlertRule{}, &AlertEvent{}, &NodeDrift{}, &DataplanePackage{}, &DataplaneUpgrade{}, &StreamService{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }

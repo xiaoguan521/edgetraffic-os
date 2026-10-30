@@ -3,6 +3,7 @@ import { computed, h, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlertOutlined,
+  ApiOutlined,
   AuditOutlined,
   ClusterOutlined,
   CloudUploadOutlined,
@@ -26,6 +27,7 @@ const items = [
   { key: 'dashboard', icon: () => h(DashboardOutlined), label: '总览' },
   { key: 'nodes', icon: () => h(ClusterOutlined), label: '节点' },
   { key: 'sites', icon: () => h(GlobalOutlined), label: '站点与上游' },
+  { key: 'streams', icon: () => h(ApiOutlined), label: '四层代理' },
   { key: 'certificates', icon: () => h(LockOutlined), label: '证书' },
   { key: 'imports', icon: () => h(ImportOutlined), label: '配置导入' },
   { key: 'snippets', icon: () => h(CodeOutlined), label: '自定义片段' },

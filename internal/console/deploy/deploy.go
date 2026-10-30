@@ -37,6 +37,7 @@ type Service struct {
 	Log       *slog.Logger
 	MimeTypes []byte
 
+	Feature     func(name string) bool       // 授权功能检查（为空表示不检查）
 	Agents      Agents                       // 数据面升级用；为空时使用 GW
 	PackageKeys map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
 
@@ -130,8 +131,26 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 	if err := d.applySnippets(groupID, &in, siteIDs); err != nil {
 		return in, err
 	}
+	sts, err := q.StreamService.WithContext(bg).Where(q.StreamService.GroupID.Eq(groupID), q.StreamService.Enabled.Is(true)).Order(q.StreamService.Name).Find()
+	if err != nil {
+		return in, fmt.Errorf("load streams: %w", err)
+	}
+	if len(sts) > 0 && d.Feature != nil && !d.Feature("stream") {
+		return in, ErrStreamNotLicensed
+	}
+	for _, st := range sts {
+		var sp render.StreamProxy
+		if err := json.Unmarshal([]byte(st.Spec), &sp); err != nil {
+			return in, fmt.Errorf("stream %s: %w", st.Name, err)
+		}
+		sp.Name = st.Name
+		in.Streams = append(in.Streams, sp)
+	}
 	return in, nil
 }
+
+// ErrStreamNotLicensed 表示节点组配置了四层代理，但授权不包含 stream 功能（规格书 6.5）。
+var ErrStreamNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含四层代理（stream），请停用节点组中的四层代理服务")
 
 // bg：发布在后台 goroutine 中执行，不随发起请求的结束而取消。
 var bg = context.Background()

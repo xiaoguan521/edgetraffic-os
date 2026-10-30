@@ -26,6 +26,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300006_node_drifts", Migrate: migrateNodeDrifts},
 		{ID: "202610300007_dataplane_upgrades", Migrate: migrateDataplaneUpgrades},
 		{ID: "202610300008_account_security", Migrate: migrateAccountSecurity},
+		{ID: "202610300009_streams", Migrate: migrateStreams},
 	}
 }
 
@@ -455,4 +456,20 @@ func migrateAccountSecurity(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// ---- 202610300009_streams：四层代理（P9）----
+
+func migrateStreams(tx *gorm.DB) error {
+	type StreamService struct {
+		ID        uint   `gorm:"primaryKey"`
+		GroupID   uint   `gorm:"uniqueIndex:idx_stream_group_name"`
+		Name      string `gorm:"uniqueIndex:idx_stream_group_name;size:64"`
+		Spec      string
+		Enabled   bool
+		UpdatedBy string `gorm:"size:64"`
+		CreatedAt time.Time
+		UpdatedAt time.Time
+	}
+	return tx.AutoMigrate(&StreamService{})
 }

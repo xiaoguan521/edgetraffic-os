@@ -178,6 +178,12 @@ expect "登录页显示单点登录" "$("${C[@]}" "$B/setup/status")" '"oidc":tr
 "${C[@]}" -X PUT "$B/sso/oidc" -d '{"enabled":false,"issuer":"https://sso.invalid","client_id":"console","redirect_url":"https://console.invalid/api/v1/auth/oidc/callback"}' >/dev/null
 expect "LDAP 设置（需 ldaps 或 StartTLS）" "$("${C[@]}" -X PUT "$B/sso/ldap" -d '{"enabled":true,"url":"http://x","base_dn":"dc=x","user_filter":"(uid=%s)"}')" "BAD_LDAP"
 
+echo "== 四层代理（P9）"
+expect "保留端口被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":443,"servers":[{"addr":"10.0.0.41:3306"}]}}')" "INVALID_STREAM"
+expect "回源网段之外被拒绝" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"bad","listen":3306,"servers":[{"addr":"169.254.169.254:80"}]}}')" "INVALID_STREAM"
+expect "创建四层代理" "$("${C[@]}" -X POST "$B/streams" -d '{"group_id":1,"spec":{"name":"mysql","listen":3306,"servers":[{"addr":"10.0.0.41:3306"}]}}')" '"listen":3306'
+expect "四层代理进入待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" "stream.d/streams.conf"
+
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'
 if grep -q "PRIVATE KEY" "$W/console.log"; then bad "日志中出现私钥"; else ok "日志中没有私钥"; fi

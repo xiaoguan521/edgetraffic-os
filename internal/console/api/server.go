@@ -183,6 +183,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/acme", s.acmeGet)
 	a.PUT("/acme", role(store.RoleAdmin), s.writable, s.acmePut)
 
+	// 四层代理（P9）：新增与修改需要授权功能 stream；删除任何时候都可以（授权失效时可移除后继续发布）
+	a.GET("/streams", s.listStreams)
+	a.POST("/streams", role(store.RoleOperator), s.writable, s.feature(license.FeatureStream), s.saveStream)
+	a.PUT("/streams/:id", role(store.RoleOperator), s.writable, s.feature(license.FeatureStream), s.saveStream)
+	a.DELETE("/streams/:id", role(store.RoleOperator), s.deleteStream)
+
 	a.GET("/upstreams", s.listUpstreams)
 	a.POST("/upstreams", role(store.RoleOperator), s.writable, s.createUpstream)
 	a.PUT("/upstreams/:id", role(store.RoleOperator), s.writable, s.updateUpstream)
@@ -283,6 +289,8 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "STALE_REQUEST", "提交后线上版本已变化（例如有人回滚），该申请已过期，请重新提交")
 	case errors.Is(err, deploy.ErrSelfApproval):
 		fail(c, http.StatusForbidden, "SELF_APPROVAL", "提交人不能审批自己的发布申请")
+	case errors.Is(err, deploy.ErrStreamNotLicensed):
+		fail(c, http.StatusPaymentRequired, "LICENSE_FEATURE_DENIED", err.Error())
 	case errors.Is(err, deploy.ErrUpgradeRunning):
 		fail(c, http.StatusConflict, "UPGRADE_RUNNING", "该节点组正在升级")
 	case errors.Is(err, deploy.ErrNoDriftReport):

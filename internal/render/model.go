@@ -20,6 +20,7 @@ type Input struct {
 	AcmeChallenges []AcmeChallenge // 进行中的 ACME HTTP-01 挑战，渲染进 snippets/acme-challenge.conf
 
 	HTTPSnippets []NamedSnippet // 已审批的 http 层自定义片段（12.7）
+	Streams      []StreamProxy  // 四层代理（P9，授权功能 stream）
 }
 
 // AcmeChallenge 是一个 HTTP-01 挑战：节点对 /.well-known/acme-challenge/<Token> 返回 KeyAuth。

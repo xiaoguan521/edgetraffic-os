@@ -26,6 +26,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"join":     strings.Join,
 	"routeDir": routeDir,
 	"indent":   indentSnippet,
+	"ident":    func(s string) string { return strings.ReplaceAll(s, "-", "_") }, // 变量名不能含 -
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
 // routeDir 为静态路由生成稳定的目录名，与路由在列表中的位置无关。
@@ -65,6 +66,10 @@ func Render(in Input) (*Bundle, error) {
 	if err := in.validateInputSnippets(); err != nil {
 		return nil, err
 	}
+	in.Streams = append([]StreamProxy(nil), in.Streams...)
+	if err := in.validateStreams(); err != nil {
+		return nil, err
+	}
 	if len(in.MimeTypes) == 0 {
 		return nil, fmt.Errorf("render: mime.types content is required")
 	}
@@ -97,6 +102,12 @@ func Render(in Input) (*Bundle, error) {
 			Revision  string
 			Upstreams []UpstreamGroup
 		}{in.Revision, ups}); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(in.Streams) > 0 {
+		if files["stream.d/streams.conf"], err = exec("stream.conf.tmpl", in); err != nil {
 			return nil, err
 		}
 	}

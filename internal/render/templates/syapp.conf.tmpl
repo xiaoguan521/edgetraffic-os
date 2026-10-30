@@ -90,3 +90,10 @@ http {
 
     include  conf.d/*.conf;
 }
+{{- if .Streams }}
+
+# 四层代理（P9）
+stream {
+    include  stream.d/*.conf;
+}
+{{- end }}

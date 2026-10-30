@@ -1,0 +1,48 @@
+# 四层代理（渲染器生成，禁止手改）
+log_format  edge_stream  '$remote_addr [$time_iso8601] $protocol $server_port $status $bytes_sent $bytes_received $session_time "$upstream_addr"';
+access_log  /var/log/syapp/stream.log  edge_stream;
+{{- range $s := .Streams }}
+
+upstream st_{{ $s.Name }} {
+{{- if eq $s.Algorithm "least_conn" }}
+    least_conn;
+{{- else if eq $s.Algorithm "hash" }}
+    hash  $remote_addr  consistent;
+{{- end }}
+{{- range $s.Servers }}
+    server  {{ .Addr }}{{ if gt .Weight 0 }}  weight={{ .Weight }}{{ end }}  max_fails=3  fail_timeout=10s;
+{{- end }}
+}
+{{- range $i, $r := $s.SNIRoutes }}
+
+upstream st_{{ $s.Name }}_sni{{ $i }} {
+{{- range $r.Servers }}
+    server  {{ .Addr }}{{ if gt .Weight 0 }}  weight={{ .Weight }}{{ end }}  max_fails=3  fail_timeout=10s;
+{{- end }}
+}
+{{- end }}
+{{- if $s.SNIRoutes }}
+
+map  $ssl_preread_server_name  $st_{{ ident $s.Name }}_target {
+{{- range $i, $r := $s.SNIRoutes }}
+    {{ $r.Domain }}  st_{{ $s.Name }}_sni{{ $i }};
+{{- end }}
+    default  st_{{ $s.Name }};
+}
+{{- end }}
+
+server {
+    listen  {{ $s.Listen }}{{ if eq $s.Protocol "udp" }}  udp{{ end }};
+{{- if $s.SNIRoutes }}
+    ssl_preread  on;
+    proxy_pass  $st_{{ ident $s.Name }}_target;
+{{- else }}
+    proxy_pass  st_{{ $s.Name }};
+{{- end }}
+    proxy_connect_timeout  {{ $s.ConnectTimeout }}s;
+    proxy_timeout  {{ $s.IdleTimeout }}s;
+{{- if $s.ProxyProtocol }}
+    proxy_protocol  on;
+{{- end }}
+}
+{{- end }}

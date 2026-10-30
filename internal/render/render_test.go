@@ -123,6 +123,20 @@ func TestRenderRejects(t *testing.T) {
 		{"http2 without https", func(in *Input) { in.Sites[1].HTTP2 = true }},
 		{"bad revision", func(in *Input) { in.Revision = "r1/../x" }},
 		{"bad site name", func(in *Input) { in.Sites[1].Name = "Blog_1" }},
+		{"stream reserved port", func(in *Input) {
+			in.Streams = []StreamProxy{{Name: "x1", Listen: 443, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}}}
+		}},
+		{"stream ssrf", func(in *Input) {
+			in.Streams = []StreamProxy{{Name: "x1", Listen: 3306, Servers: []UpstreamServer{{Addr: "169.254.169.254:80"}}}}
+		}},
+		{"stream duplicate port", func(in *Input) {
+			in.Streams = []StreamProxy{{Name: "x1", Listen: 3306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}},
+				{Name: "x2", Listen: 3306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}}}
+		}},
+		{"stream sni on udp", func(in *Input) {
+			in.Streams = []StreamProxy{{Name: "x1", Listen: 53, Protocol: "udp", Servers: []UpstreamServer{{Addr: "10.0.1.21:53"}},
+				SNIRoutes: []SNIRoute{{Domain: "a.example.com", Servers: []UpstreamServer{{Addr: "10.0.1.21:53"}}}}}}
+		}},
 	}
 	for _, m := range mut {
 		in := sampleInput(t)
@@ -161,6 +175,13 @@ if ($request_method = TRACE) { return 405; }`
 		if in.Sites[0].Routes[i].Mode == "proxy" {
 			in.Sites[0].Routes[i].Snippet = `limit_req zone=api_rl burst=20 nodelay; proxy_read_timeout 300s; proxy_set_header X-Tenant "a b";`
 		}
+	}
+	// 四层代理（含 SNI 分流与 UDP）也要通过真实 syapp -t
+	in.Streams = []StreamProxy{
+		{Name: "mysql", Listen: 3306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}, Algorithm: "least_conn", ProxyProtocol: true},
+		{Name: "tls-sni", Listen: 8443, Servers: []UpstreamServer{{Addr: "10.0.1.22:443"}},
+			SNIRoutes: []SNIRoute{{Domain: "a.example.com", Servers: []UpstreamServer{{Addr: "10.0.1.23:443"}}}}},
+		{Name: "dns", Listen: 5353, Protocol: "udp", Servers: []UpstreamServer{{Addr: "10.0.1.24:53"}}, Algorithm: "hash"},
 	}
 	b, err := Render(in)
 	if err != nil {
