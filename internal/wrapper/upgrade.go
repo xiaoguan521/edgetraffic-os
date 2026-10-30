@@ -36,6 +36,7 @@ import (
 // Paths 是升级涉及的路径与参数（生产值见 DefaultPaths；测试可替换）。
 type Paths struct {
 	Bin      string // 数据面二进制路径（首次升级后为指向 versions/<版本>/sbin/syapp 的软链）
+	Modules  string // 动态模块目录（syapp-lua 附加包，见 lua.go）；为空表示不处理附加包
 	Versions string // 已安装版本目录（root 所有）
 	Incoming string // 升级包投放目录（agent 可写）
 	PidFile  string
@@ -47,7 +48,7 @@ type Paths struct {
 
 // DefaultPaths 是生产环境的路径。
 func DefaultPaths() Paths {
-	return Paths{Bin: SyappBin, Versions: "/opt/syapp/versions", Incoming: "/var/lib/syapp-agent/upgrade",
+	return Paths{Bin: SyappBin, Modules: "/opt/syapp/modules", Versions: "/opt/syapp/versions", Incoming: "/var/lib/syapp-agent/upgrade",
 		PidFile: "/run/syapp/syapp.pid", Conf: "/opt/syapp/conf/current/syapp.conf", Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second}
 }
 
@@ -66,9 +67,10 @@ var (
 
 // State 记录上一次升级，用于中止时切回与一键回退。
 type State struct {
-	Previous string    `json:"previous"` // 升级前的二进制路径
-	Target   string    `json:"target"`   // 目标版本
-	Phase    string    `json:"phase"`    // started | committed | aborted
+	Previous string    `json:"previous"`           // 升级前的二进制路径
+	PrevLua  string    `json:"prev_lua,omitempty"` // 升级前 syapp-lua 软链的目标（未装附加包为空）
+	Target   string    `json:"target"`             // 目标版本
+	Phase    string    `json:"phase"`              // started | committed | aborted
 	At       time.Time `json:"at"`
 }
 
@@ -351,24 +353,40 @@ func UpgradeStart(p Paths, ver string) error {
 		}
 	}
 	newBin := filepath.Join(p.Versions, ver, "sbin/syapp")
+	// 装有 syapp-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
+	prevLua, err := p.prepareLua(ver, newBin)
+	if err != nil {
+		return err
+	}
+	restoreLua := func() {
+		if prevLua != "" {
+			_ = p.swapLua(prevLua)
+		}
+	}
 	if out, err := exec.Command(newBin, "-t", "-q", "-c", p.Conf).CombinedOutput(); err != nil {
+		restoreLua()
 		return fail("new binary rejects the current configuration: %s", strings.TrimSpace(string(out)))
 	}
 	prev, err := p.current()
 	if err != nil {
+		restoreLua()
 		return err
 	}
 	if prev == newBin {
+		restoreLua()
 		return fail("version %s is already running", ver)
 	}
-	if err := p.saveState(State{Previous: prev, Target: ver, Phase: "started"}); err != nil {
+	if err := p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "started"}); err != nil {
+		restoreLua()
 		return err
 	}
 	if err := p.swapLink(newBin); err != nil {
+		restoreLua()
 		return err
 	}
 	if err := signal(oldPid, syscall.SIGUSR2); err != nil {
 		_ = p.swapLink(prev)
+		restoreLua()
 		return err
 	}
 	var newPid int
@@ -386,7 +404,8 @@ func UpgradeStart(p Paths, ver string) error {
 	if !started {
 		// 新 master 没有起来：旧 master 仍在服务，切回软链即可（syapp 会自行恢复 pid 文件）
 		_ = p.swapLink(prev)
-		_ = p.saveState(State{Previous: prev, Target: ver, Phase: "aborted"})
+		restoreLua()
+		_ = p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "aborted"})
 		return fail("new master did not start within %s; switched back to the previous binary", p.Timeout)
 	}
 	if err := signal(oldPid, syscall.SIGWINCH); err != nil {
@@ -422,6 +441,12 @@ func UpgradeAbort(p Paths) error {
 		return err
 	}
 	before := workerPids(oldPid) // 收到 WINCH 后可能还没退完的旧 worker，不能算作“已重新拉起”
+	// HUP 会让旧 master 重新加载配置（含 load_module）：先把 syapp-lua 软链切回旧版本
+	if st, err := p.loadState(); err == nil && st.PrevLua != "" {
+		if err := p.swapLua(st.PrevLua); err != nil {
+			return err
+		}
+	}
 	if err := signal(oldPid, syscall.SIGHUP); err != nil {
 		return err
 	}

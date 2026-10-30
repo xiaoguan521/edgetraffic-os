@@ -34,7 +34,7 @@ var (
 
 // 允许的包名、架构与变体。
 var (
-	Names    = map[string]bool{"syapp": true, "syapp-agent": true}
+	Names    = map[string]bool{"syapp": true, "syapp-agent": true, "syapp-lua": true} // syapp-lua：P10 附加包（变体固定为 lua）
 	Arches   = map[string]bool{"amd64": true, "arm64": true}
 	Variants = map[string]bool{"standard": true, "gmssl": true, "lua": true}
 )
@@ -65,6 +65,8 @@ func (s *Sig) validFields() error {
 		return fmt.Errorf("%w: bad version %q", ErrSignature, s.Version)
 	case !Arches[s.Arch]:
 		return fmt.Errorf("%w: bad arch %q", ErrSignature, s.Arch)
+	case s.Name == "syapp-lua" && s.Variant != "lua":
+		return fmt.Errorf("%w: syapp-lua must use variant lua", ErrSignature)
 	case !Variants[s.Variant]:
 		return fmt.Errorf("%w: bad variant %q", ErrSignature, s.Variant)
 	case !kidAnyRe.MatchString(s.KID):

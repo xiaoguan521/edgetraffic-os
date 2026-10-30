@@ -124,6 +124,29 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 		reply(agentv1.CommandResult_REJECTED, "write package failed", "")
 		return
 	}
+	// 节点装有 syapp-lua 时，控制台同时下发目标版本附加包的签名：一起投放，由 wrapper 验签后与二进制一起切换
+	if len(u.LuaSignatureJson) > 0 {
+		ls, err := pkgsig.Parse(u.LuaSignatureJson)
+		if err != nil || ls.Name != "syapp-lua" || ls.Version != u.Version || ls.Arch != runtime.GOARCH || ls.Variant != "lua" {
+			reply(agentv1.CommandResult_REJECTED, "add-on signature does not match this upgrade", "")
+			return
+		}
+		ld, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: "syapp-lua", Version: u.Version, Arch: runtime.GOARCH, Variant: "lua"})
+		if err != nil {
+			reply(agentv1.CommandResult_REJECTED, "fetch add-on package: "+err.Error(), "")
+			return
+		}
+		if sum := sha256.Sum256(ld); hex.EncodeToString(sum[:]) != ls.SHA256 {
+			reply(agentv1.CommandResult_REJECTED, "add-on package sha256 mismatch", "")
+			return
+		}
+		lb := filepath.Join(a.upgradeDir(), "syapp-lua-"+u.Version+".tar.gz")
+		if err := os.WriteFile(lb+".part", ld, 0o644); err != nil || os.Rename(lb+".part", lb) != nil ||
+			os.WriteFile(lb+".sig", u.LuaSignatureJson, 0o644) != nil {
+			reply(agentv1.CommandResult_REJECTED, "write add-on package failed", "")
+			return
+		}
+	}
 	a.log.Info("starting data-plane hot upgrade", "version", u.Version)
 	out, err := a.wrapperRun(ctx, "upgrade-start", u.Version)
 	if err != nil {

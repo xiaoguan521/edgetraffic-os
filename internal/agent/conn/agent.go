@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -51,6 +52,7 @@ type Config struct {
 	AccessLog string // /var/log/syapp/access.json
 	Heartbeat time.Duration
 	Apply     apply.Config
+	Modules   string // /opt/syapp/modules（syapp-lua 附加包，只读取版本信息上报）
 }
 
 // state 是注册后持久化的身份信息。
@@ -343,7 +345,31 @@ func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
 	if b, err := os.ReadFile(a.C.SyappBin); err == nil {
 		h.SyappSha256 = fp(b)
 	}
+	h.LuaAddon = a.luaAddon()
 	return h
+}
+
+var luaVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$`)
+
+// luaAddon 返回已安装的 syapp-lua 附加包：<包版本>/<基础变体>；未安装或不完整时为空。
+func (a *Agent) luaAddon() string {
+	dir := a.C.Modules
+	if dir == "" {
+		dir = "/opt/syapp/modules"
+	}
+	vb, err := os.ReadFile(filepath.Join(dir, "lua", "VERSION"))
+	if err != nil {
+		return ""
+	}
+	bb, _ := os.ReadFile(filepath.Join(dir, "lua", "BASE"))
+	var v struct {
+		Version string `json:"version"`
+	}
+	base := strings.TrimSpace(string(bb))
+	if json.Unmarshal(vb, &v) != nil || !luaVersionRe.MatchString(v.Version) || (base != "standard" && base != "gmssl") {
+		return ""
+	}
+	return v.Version + "/" + base
 }
 
 func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage)) {
@@ -359,7 +385,7 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 			return
 		case now := <-t.C:
 			cpu, mem := host.Sample()
-			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem}
+			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem, LuaAddon: a.luaAddon()}
 			if st, err := collect.ReadStub(ctx, a.C.StatusURL); err == nil {
 				hb.ActiveConnections, hb.RequestsTotal = st.Active, st.Requests
 			}
