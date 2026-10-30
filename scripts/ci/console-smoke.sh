@@ -33,7 +33,7 @@ echo "== 初始化与授权"
 "${C[@]}" -X POST "$B/auth/login" -d '{"username":"admin","password":"Smoke@2026!"}' >/dev/null
 expect "登录后会话 Cookie 带 Secure" "$(awk '$6=="etos_session"{print $4}' "$JAR")" "TRUE"
 INST=$(sed -E 's/.*"installation_id":"([^"]+)".*/\1/' "$W/data/installation.json")
-"$LIC" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only -customer smoke -days 365 > "$W/l.lic"
+"$LIC" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only -customer smoke -edition professional -days 365 > "$W/l.lic"
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/l.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权有效" "$("${C[@]}" "$B/license" | j "d['state']")" "VALID"
 
@@ -53,6 +53,27 @@ for _ in $(seq 1 20); do st=$("${C[@]}" "$B/deployments/$id" | j "d['status']");
 expect "发布完成（节点组暂无节点）" "$st" "APPLIED"
 expect "生成版本 r000001" "$("${C[@]}" "$B/revisions?group_id=1")" "r000001"
 expect "无变更时拒绝重复发布" "$("${C[@]}" -X POST "$B/node-groups/1/publish" -d '{}')" "NO_CHANGES"
+
+echo "== 发布审批（P7）"
+expect "可开启发布审批" "$("${C[@]}" -X PUT "$B/release-approval" -d '{"enabled":true}')" '"enabled":true'
+"${C[@]}" -X POST "$B/users" -d '{"username":"rel2","password":"Smoke@2026!rel","role":"releaser"}' >/dev/null
+"${C[@]}" -X POST "$B/sites" -d '{"group_id":1,"spec":{"name":"blog","domains":["blog.example.com"],"routes":[{"path":"/","match":"prefix","mode":"deny"}]}}' >/dev/null
+expect "开启后不能直接发布" "$("${C[@]}" -X POST "$B/node-groups/1/publish" -d '{}')" "APPROVAL_REQUIRED"
+rq=$("${C[@]}" -X POST "$B/node-groups/1/release-requests" -d '{"note":"blog"}')
+expect "提交发布申请" "$rq" '"status":"pending"'
+rid=$(echo "$rq" | j "d['id']"); rrev=$(echo "$rq" | j "d['revision_id']")
+expect "申请详情含差异" "$("${C[@]}" "$B/release-requests/$rid")" "conf.d/site-blog.conf"
+expect "提交人不能自己批准" "$("${C[@]}" -X POST "$B/release-requests/$rid/approve" -d '{}')" "SELF_APPROVAL"
+JAR2=$W/jar2; C2=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR2" -c "$JAR2" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+"${C2[@]}" -X POST "$B/auth/login" -d '{"username":"rel2","password":"Smoke@2026!rel"}' >/dev/null
+d=$("${C2[@]}" -X POST "$B/release-requests/$rid/approve" -d '{"comment":"ok"}')
+expect "另一位发布员批准后下发冻结的版本" "$d" "\"revision_id\":\"$rrev\""
+id=$(echo "$d" | j "d['id']")
+for _ in $(seq 1 20); do st=$("${C[@]}" "$B/deployments/$id" | j "d['status']"); [[ "$st" != "APPLYING" ]] && break; sleep 0.5; done
+expect "审批后的发布完成" "$st" "APPLIED"
+expect "申请状态为已批准" "$("${C[@]}" "$B/release-requests/$rid")" '"status":"approved"'
+expect "审计记录审批" "$("${C[@]}" "$B/audit?limit=20")" "release.approve"
+expect "关闭发布审批" "$("${C[@]}" -X PUT "$B/release-approval" -d '{"enabled":false}')" '"enabled":false'
 
 echo "== 审计"
 expect "审计哈希链完好" "$("${C[@]}" "$B/audit/verify")" '"intact":true'

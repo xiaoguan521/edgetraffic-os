@@ -22,6 +22,12 @@ const deployments = ref<any[]>([])
 const revisions = ref<any[]>([])
 const active = ref<any>(null)
 const openFiles = ref<string[]>([])
+const approval = ref<{ enabled: boolean; licensed: boolean }>({ enabled: false, licensed: false })
+const pendingReq = ref<any>(null) // 当前组待审批的申请（含差异）
+const reqFiles = ref<string[]>([])
+const reviewComment = ref('')
+const reviewing = ref(false)
+const recentReqs = ref<any[]>([])
 
 async function loadGroups() {
   groups.value = await api.get('/node-groups')
@@ -44,9 +50,17 @@ async function loadHistory() {
     active.value = deployments.value.find((d) => d.id === want) || deployments.value[0]
   }
 }
+async function loadApproval() {
+  approval.value = await api.get('/release-approval')
+  const reqs = await api.get('/release-requests', { group_id: gid.value })
+  recentReqs.value = reqs.slice(0, 10)
+  const p = reqs.find((r: any) => r.status === 'pending')
+  pendingReq.value = p ? await api.get(`/release-requests/${p.id}`) : null
+  reqFiles.value = (pendingReq.value?.files ?? []).filter((f: any) => f.path.startsWith('conf.d/')).map((f: any) => f.path)
+}
 async function loadAll() {
   await loadGroups()
-  await Promise.all([loadPreview(), loadHistory()])
+  await Promise.all([loadPreview(), loadHistory(), loadApproval()])
 }
 
 let poll: number | undefined
@@ -70,6 +84,13 @@ function watchDeployment(id: number) {
 async function publish() {
   publishing.value = true
   try {
+    if (approval.value.enabled) {
+      await api.post(`/node-groups/${gid.value}/release-requests`, { note: note.value })
+      note.value = ''
+      message.success('已提交发布申请，等待另一位发布员审批')
+      await loadApproval()
+      return
+    }
     const d = await api.post(`/node-groups/${gid.value}/publish`, { note: note.value })
     note.value = ''
     active.value = d
@@ -79,6 +100,33 @@ async function publish() {
   } finally {
     publishing.value = false
   }
+}
+
+async function review(action: 'approve' | 'reject' | 'cancel') {
+  reviewing.value = true
+  try {
+    const r = await api.post(`/release-requests/${pendingReq.value.id}/${action}`, { comment: reviewComment.value })
+    reviewComment.value = ''
+    if (action === 'approve') {
+      active.value = r
+      watchDeployment(r.id)
+    } else {
+      message.success(action === 'reject' ? '已驳回' : '已撤回')
+    }
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    reviewing.value = false
+    await Promise.all([loadApproval(), loadPreview()])
+  }
+}
+const mine = computed(() => pendingReq.value?.requested_by === session.username)
+const reqStatus: Record<string, { text: string; color: string }> = {
+  pending: { text: '待审批', color: 'gold' },
+  approved: { text: '已批准', color: 'green' },
+  rejected: { text: '已驳回', color: 'red' },
+  cancelled: { text: '已撤回', color: 'default' },
+  stale: { text: '已过期', color: 'default' },
 }
 
 async function rollback(rev: string) {
@@ -106,6 +154,7 @@ watch(gid, () => {
   active.value = null
   loadPreview()
   loadHistory()
+  loadApproval()
 })
 
 const changeText: Record<string, string> = { added: '新增', removed: '删除', modified: '修改' }
@@ -128,6 +177,35 @@ function lastDeploy(rev: string) {
       <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
 
+    <section class="panel req" v-if="pendingReq">
+      <div class="phead">
+        <h2>待审批的发布申请 <span class="num">#{{ pendingReq.id }} · {{ pendingReq.revision_id }}</span></h2>
+        <span class="cur">{{ pendingReq.requested_by }} 提交于 {{ dayjs(pendingReq.requested_at).format('MM-DD HH:mm') }}<template v-if="pendingReq.note">，{{ pendingReq.note }}</template></span>
+      </div>
+      <a-alert v-if="pendingReq.stale" type="warning" show-icon style="margin-bottom: 12px"
+        message="提交后线上版本已变化（例如有人回滚），批准时会被拒绝；请撤回后重新提交。" />
+      <p class="hint">批准后下发的就是提交时冻结的版本 {{ pendingReq.revision_id }}；提交之后草稿里的修改不会混进来。</p>
+      <a-collapse v-model:active-key="reqFiles" :bordered="false" class="files">
+        <a-collapse-panel v-for="f in pendingReq.files" :key="f.path">
+          <template #header>
+            <span class="fchg" :class="f.change">{{ changeText[f.change] }}</span>
+            <span class="code">{{ f.path }}</span>
+          </template>
+          <DiffView v-if="f.diff && f.diff.startsWith('---')" :diff="f.diff" />
+          <div v-else class="nodiff">{{ f.diff || '内容较长，未展开' }}</div>
+        </a-collapse-panel>
+      </a-collapse>
+      <div class="pub" v-if="session.can('releaser')">
+        <a-input v-model:value="reviewComment" placeholder="审批意见（可选，写入审计）" :maxlength="200" />
+        <template v-if="!mine">
+          <a-button danger :loading="reviewing" @click="review('reject')">驳回</a-button>
+          <a-button type="primary" :loading="reviewing" :disabled="!session.writable || pendingReq.stale" @click="review('approve')">批准并发布</a-button>
+        </template>
+        <a-button v-if="mine || session.can('admin')" :loading="reviewing" @click="review('cancel')">撤回</a-button>
+      </div>
+      <div v-if="mine" class="hint">提交人不能审批自己的申请，请另一位发布员审批。</div>
+    </section>
+
     <section class="panel">
       <div class="phead">
         <h2>待发布变更</h2>
@@ -149,8 +227,11 @@ function lastDeploy(rev: string) {
           </a-collapse>
           <div class="pub" v-if="session.can('releaser')">
             <a-input v-model:value="note" placeholder="发布说明，例如：首页改版" :maxlength="120" />
-            <a-button type="primary" size="large" :loading="publishing" :disabled="!session.writable" @click="publish">发布到 {{ group?.name }}</a-button>
+            <a-button type="primary" size="large" :loading="publishing" :disabled="!session.writable || (approval.enabled && !!pendingReq)" @click="publish">
+              {{ approval.enabled ? '提交发布申请' : `发布到 ${group?.name}` }}
+            </a-button>
           </div>
+          <div v-if="approval.enabled" class="hint">已开启发布审批：提交后由另一位发布员审批，批准后才下发。{{ pendingReq ? '当前已有待审批的申请。' : '' }}</div>
           <div v-if="!session.writable" class="ro">授权已失效，暂不能发布新版本；回滚不受影响。</div>
         </template>
       </template>
@@ -195,6 +276,27 @@ function lastDeploy(rev: string) {
             <a-popconfirm v-if="session.can('releaser') && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
               <a-button size="small">回滚到此版本</a-button>
             </a-popconfirm>
+          </template>
+        </template>
+      </a-table>
+    </section>
+
+    <section class="panel" v-if="recentReqs.length">
+      <h2>发布申请记录</h2>
+      <a-table :data-source="recentReqs" row-key="id" :pagination="false" size="middle"
+        :columns="[{ title: '申请', key: 'id', width: 150 }, { title: '状态', key: 'st', width: 100 }, { title: '说明', dataIndex: 'note' }, { title: '提交', key: 'req', width: 170 }, { title: '审批', key: 'rev', width: 240 }]">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'id'"><span class="num">#{{ record.id }} · {{ record.revision_id }}</span></template>
+          <template v-else-if="column.key === 'st'"><a-tag :color="reqStatus[record.status]?.color">{{ reqStatus[record.status]?.text || record.status }}</a-tag></template>
+          <template v-else-if="column.key === 'req'">
+            <div>{{ record.requested_by }}</div>
+            <div class="sub">{{ dayjs(record.requested_at).format('MM-DD HH:mm') }}</div>
+          </template>
+          <template v-else-if="column.key === 'rev'">
+            <template v-if="record.reviewed_by">
+              <div>{{ record.reviewed_by }}<span v-if="record.review_comment" class="sub">：{{ record.review_comment }}</span></div>
+              <div class="sub">{{ dayjs(record.reviewed_at).format('MM-DD HH:mm') }}</div>
+            </template>
           </template>
         </template>
       </a-table>
@@ -251,6 +353,14 @@ function lastDeploy(rev: string) {
   margin-top: 10px;
   font-size: 13px;
   color: #a3332d;
+}
+.hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #6b7c80;
+}
+.req {
+  border-color: #e3c56b;
 }
 .rev {
   font-weight: 600;

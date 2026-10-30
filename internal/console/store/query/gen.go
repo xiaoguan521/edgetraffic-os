@@ -29,6 +29,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		MetricMinute:   newMetricMinute(db, opts...),
 		Node:           newNode(db, opts...),
 		NodeGroup:      newNodeGroup(db, opts...),
+		ReleaseRequest: newReleaseRequest(db, opts...),
 		Revision:       newRevision(db, opts...),
 		Site:           newSite(db, opts...),
 		SystemKV:       newSystemKV(db, opts...),
@@ -51,6 +52,7 @@ type Query struct {
 	MetricMinute   metricMinute
 	Node           node
 	NodeGroup      nodeGroup
+	ReleaseRequest releaseRequest
 	Revision       revision
 	Site           site
 	SystemKV       systemKV
@@ -76,6 +78,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		MetricMinute:   q.MetricMinute.clone(db),
 		Node:           q.Node.clone(db),
 		NodeGroup:      q.NodeGroup.clone(db),
+		ReleaseRequest: q.ReleaseRequest.clone(db),
 		Revision:       q.Revision.clone(db),
 		Site:           q.Site.clone(db),
 		SystemKV:       q.SystemKV.clone(db),
@@ -106,6 +109,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		MetricMinute:   q.MetricMinute.replaceDB(db),
 		Node:           q.Node.replaceDB(db),
 		NodeGroup:      q.NodeGroup.replaceDB(db),
+		ReleaseRequest: q.ReleaseRequest.replaceDB(db),
 		Revision:       q.Revision.replaceDB(db),
 		Site:           q.Site.replaceDB(db),
 		SystemKV:       q.SystemKV.replaceDB(db),
@@ -126,6 +130,7 @@ type queryCtx struct {
 	MetricMinute   IMetricMinuteDo
 	Node           INodeDo
 	NodeGroup      INodeGroupDo
+	ReleaseRequest IReleaseRequestDo
 	Revision       IRevisionDo
 	Site           ISiteDo
 	SystemKV       ISystemKVDo
@@ -146,6 +151,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		MetricMinute:   q.MetricMinute.WithContext(ctx),
 		Node:           q.Node.WithContext(ctx),
 		NodeGroup:      q.NodeGroup.WithContext(ctx),
+		ReleaseRequest: q.ReleaseRequest.WithContext(ctx),
 		Revision:       q.Revision.WithContext(ctx),
 		Site:           q.Site.WithContext(ctx),
 		SystemKV:       q.SystemKV.WithContext(ctx),

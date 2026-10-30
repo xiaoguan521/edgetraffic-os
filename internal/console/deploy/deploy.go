@@ -20,7 +20,6 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
-	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/textdiff"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"gorm.io/gen/field"
 )
@@ -164,43 +163,7 @@ func (d *Service) Preview(groupID uint) ([]FileDiff, string, error) {
 			old, _ = render.ReadTarGz(rev.Bundle)
 		}
 	}
-	out := []FileDiff{} // 无变更时序列化为 []，不是 null
-	names := map[string]bool{}
-	for n := range b.Files {
-		names[n] = true
-	}
-	for n := range old {
-		names[n] = true
-	}
-	var sorted []string
-	for n := range names {
-		if n != render.ManifestName {
-			sorted = append(sorted, n)
-		}
-	}
-	sort.Strings(sorted)
-	for _, n := range sorted {
-		nb, inNew := b.Files[n]
-		ob, inOld := old[n]
-		change := ""
-		switch {
-		case inNew && !inOld:
-			change = "added"
-		case !inNew && inOld:
-			change = "removed"
-		case string(nb) != string(ob):
-			change = "modified"
-		default:
-			continue
-		}
-		diff := ""
-		if strings.HasSuffix(n, ".key") {
-			diff = "（私钥内容不显示）"
-		} else if n != "mime.types" {
-			diff = textdiff.Unified(n, string(ob), string(nb))
-		}
-		out = append(out, FileDiff{Path: n, Change: change, Diff: diff})
-	}
+	out := diffFiles(old, b.Files) // 无变更时序列化为 []，不是 null
 	return out, b.Manifest.Digest, nil
 }
 
@@ -237,7 +200,11 @@ func (d *Service) newRevision(groupID uint, parent, note, user string) (*store.R
 }
 
 // Publish 生成新版本并异步下发到组内所有节点，立即返回发布记录。
+// 开启发布审批时返回 ErrApprovalRequired，改走 RequestRelease → Approve。
 func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deployment, error) {
+	if d.ApprovalEnabled() {
+		return nil, ErrApprovalRequired
+	}
 	lk := d.groupLock(groupID)
 	if !lk.TryLock() {
 		return nil, ErrBusy

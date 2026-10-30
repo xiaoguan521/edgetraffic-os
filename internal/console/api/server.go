@@ -105,6 +105,16 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/node-groups/:id/preview", s.preview)
 	a.POST("/node-groups/:id/publish", role(store.RoleReleaser), s.writable, s.publish)
 	a.POST("/node-groups/:id/rollback", role(store.RoleReleaser), s.rollback) // 过期状态下仍可用
+	a.POST("/node-groups/:id/release-requests", role(store.RoleReleaser), s.writable, s.requestRelease)
+
+	// 发布审批（P7）：开启需要 release_approval 功能，关闭任何时候都可以
+	a.GET("/release-approval", s.approvalGet)
+	a.PUT("/release-approval", role(store.RoleAdmin), s.approvalPut)
+	a.GET("/release-requests", s.listReleaseRequests)
+	a.GET("/release-requests/:id", s.getReleaseRequest)
+	a.POST("/release-requests/:id/approve", role(store.RoleReleaser), s.writable, s.approveRelease)
+	a.POST("/release-requests/:id/reject", role(store.RoleReleaser), s.rejectRelease)
+	a.POST("/release-requests/:id/cancel", role(store.RoleReleaser), s.cancelRelease)
 
 	a.GET("/nodes", s.listNodes)
 	a.POST("/nodes/:id/revoke", role(store.RoleAdmin), s.revokeNode)
@@ -200,6 +210,18 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "DEPLOY_BUSY", err.Error())
 	case errors.Is(err, deploy.ErrNoChanges):
 		fail(c, http.StatusConflict, "NO_CHANGES", err.Error())
+	case errors.Is(err, deploy.ErrApprovalRequired):
+		fail(c, http.StatusConflict, "APPROVAL_REQUIRED", "已开启发布审批：请提交发布申请，由另一位发布员批准后下发")
+	case errors.Is(err, deploy.ErrPendingRequest):
+		fail(c, http.StatusConflict, "PENDING_REQUEST", "该节点组已有待审批的发布申请")
+	case errors.Is(err, deploy.ErrRequestClosed):
+		fail(c, http.StatusConflict, "REQUEST_CLOSED", "该申请已处理")
+	case errors.Is(err, deploy.ErrStaleRequest):
+		fail(c, http.StatusConflict, "STALE_REQUEST", "提交后线上版本已变化（例如有人回滚），该申请已过期，请重新提交")
+	case errors.Is(err, deploy.ErrSelfApproval):
+		fail(c, http.StatusForbidden, "SELF_APPROVAL", "提交人不能审批自己的发布申请")
+	case errors.Is(err, deploy.ErrForbidden):
+		fail(c, http.StatusForbidden, "FORBIDDEN", "只有提交人或管理员可以撤回")
 	default:
 		fail(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 	}

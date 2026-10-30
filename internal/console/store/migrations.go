@@ -18,6 +18,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610270001_init", Migrate: migrateInit},
 		{ID: "202610280001_certificates", Migrate: migrateCertificates},
 		{ID: "202610290001_acme", Migrate: migrateAcme},
+		{ID: "202610300001_release_requests", Migrate: migrateReleaseRequests},
 	}
 }
 
@@ -241,4 +242,25 @@ func migrateAcme(tx *gorm.DB) error {
 		}
 	}
 	return tx.AutoMigrate(&AcmeOrder{}, &AcmeChallenge{})
+}
+
+// ---- 202610300001_release_requests：发布审批（P7）----
+
+func migrateReleaseRequests(tx *gorm.DB) error {
+	type ReleaseRequest struct {
+		ID             uint   `gorm:"primaryKey"`
+		GroupID        uint   `gorm:"index"`
+		RevisionID     string `gorm:"size:16"`
+		BaseRevisionID string `gorm:"size:16"`
+		Digest         string
+		Status         string `gorm:"index;size:16"`
+		Note           string
+		RequestedBy    string `gorm:"size:64"`
+		RequestedAt    time.Time
+		ReviewedBy     string `gorm:"size:64"`
+		ReviewedAt     *time.Time
+		ReviewComment  string
+		DeploymentID   uint
+	}
+	return tx.AutoMigrate(&ReleaseRequest{})
 }

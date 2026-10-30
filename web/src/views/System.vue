@@ -11,10 +11,20 @@ const lic = computed(() => session.license)
 const users = ref<any[]>([])
 const version = ref<any>({})
 
+const approval = ref<{ enabled: boolean; licensed: boolean }>({ enabled: false, licensed: false })
 onMounted(async () => {
   await session.loadLicense()
+  approval.value = await api.get('/release-approval')
   if (session.can('admin')) users.value = await api.get('/users')
 })
+async function setApproval(on: boolean) {
+  try {
+    approval.value = await api.put('/release-approval', { enabled: on })
+    message.success(on ? '已开启发布审批' : '已关闭发布审批')
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 
 const featureName: Record<string, string> = {
   core: '站点、证书、发布、回滚、监控',
@@ -104,6 +114,17 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <LicenseImport />
       </section>
     </div>
+
+    <section class="panel" v-if="session.can('admin')">
+      <div class="uhead">
+        <h2>发布审批</h2>
+        <a-switch :checked="approval.enabled" :disabled="!approval.enabled && (!approval.licensed || !session.writable)" @change="(v: any) => setApproval(!!v)" />
+      </div>
+      <p class="muted">
+        开启后，每次发布都要由另一位发布员看过差异并批准才会下发（提交人不能批准自己的申请）。回滚、漂移恢复与证书续期不经审批，保证应急与授权过期时可用。
+        <template v-if="!approval.licensed">当前授权不包含“发布审批”（专业版及以上）。</template>
+      </p>
+    </section>
 
     <section class="panel" v-if="session.can('admin')">
       <div class="uhead">
@@ -260,5 +281,10 @@ h3 {
   .cols {
     grid-template-columns: 1fr;
   }
+}
+.muted {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #6b7c80;
 }
 </style>

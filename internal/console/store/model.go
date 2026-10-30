@@ -115,6 +115,23 @@ type Deployment struct {
 	Nodes      []DeploymentNode `gorm:"foreignKey:DeploymentID" json:"nodes,omitempty"`
 }
 
+// ReleaseRequest 是一次待审批的发布（规格书 12.3 P7 发布审批）：提交时冻结版本，批准后原样下发。
+type ReleaseRequest struct {
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	GroupID        uint       `gorm:"index" json:"group_id"`
+	RevisionID     string     `gorm:"size:16" json:"revision_id"`      // 提交时生成的不可变版本
+	BaseRevisionID string     `gorm:"size:16" json:"base_revision_id"` // 提交时组的线上版本
+	Digest         string     `json:"digest"`
+	Status         string     `gorm:"index;size:16" json:"status"` // pending | approved | rejected | cancelled | stale
+	Note           string     `json:"note"`
+	RequestedBy    string     `gorm:"size:64" json:"requested_by"`
+	RequestedAt    time.Time  `json:"requested_at"`
+	ReviewedBy     string     `gorm:"size:64" json:"reviewed_by"`
+	ReviewedAt     *time.Time `json:"reviewed_at"`
+	ReviewComment  string     `json:"review_comment"`
+	DeploymentID   uint       `json:"deployment_id"`
+}
+
 type DeploymentNode struct {
 	ID           uint       `gorm:"primaryKey" json:"-"`
 	DeploymentID uint       `gorm:"index" json:"-"`
@@ -214,5 +231,5 @@ type SystemKV struct {
 // Models 返回全部模型（gorm/gen 生成查询代码与迁移守卫测试使用）。
 func Models() []any {
 	return []any{&User{}, &NodeGroup{}, &Node{}, &EnrollToken{}, &Site{}, &Upstream{}, &Revision{}, &Deployment{},
-		&DeploymentNode{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
+		&DeploymentNode{}, &ReleaseRequest{}, &MetricMinute{}, &AuditLog{}, &LicenseStore{}, &Certificate{}, &AcmeOrder{}, &AcmeChallenge{}, &SystemKV{}}
 }
