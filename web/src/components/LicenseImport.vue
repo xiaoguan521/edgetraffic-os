@@ -50,11 +50,11 @@ async function submit() {
         下载激活申请文件，发给厂商。
         <a-button size="small" @click="downloadRequest">下载激活申请</a-button>
       </li>
-      <li>收到 .lic 授权文件后，选择文件或粘贴内容导入。</li>
+      <li>收到 .lic 授权文件后，选择文件或粘贴内容导入。厂商随附的吊销列表（etos-crl1. 开头的一行）可以一起粘贴，也可以单独导入。</li>
     </ol>
-    <input ref="fileEl" type="file" accept=".lic,.txt" hidden @change="readFile" />
+    <input ref="fileEl" type="file" accept=".lic,.crl,.txt" hidden @change="readFile" />
     <a-button size="small" style="margin-bottom: 10px" @click="fileEl?.click()">选择 .lic 文件</a-button>
-    <a-textarea v-model:value="raw" :rows="5" placeholder="粘贴 License 内容" class="code" />
+    <a-textarea v-model:value="raw" :rows="5" placeholder="粘贴 License 内容（可附带吊销列表，每行一项）" class="code" />
     <a-alert v-if="error" type="error" :message="error" show-icon style="margin-top: 12px" />
     <a-button type="primary" block size="large" style="margin-top: 16px" :disabled="!raw" :loading="loading" @click="submit">导入授权</a-button>
   </div>

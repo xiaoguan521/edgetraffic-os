@@ -44,6 +44,7 @@ type licenseView struct {
 	InstallationID string    `json:"installation_id"`
 	NodesUsed      int64     `json:"nodes_used"`
 	SitesUsed      int64     `json:"sites_used"`
+	CRL            any       `json:"crl"` // 当前吊销列表摘要，没有时为 null
 }
 
 func (s *Server) licView() licenseView {
@@ -56,6 +57,9 @@ func (s *Server) licView() licenseView {
 		}
 		v.Nodes, v.Sites, v.ExpiresAt, v.MaintUntil = p.Limits.Nodes, p.Limits.Sites, p.ExpiresAt, p.MaintenanceUntil
 		v.DaysLeft = int(time.Until(p.ExpiresAt).Hours() / 24)
+	}
+	if info := s.Lic.CRLInfo(); info != nil {
+		v.CRL = info
 	}
 	q := s.q()
 	v.NodesUsed, _ = q.Node.WithContext(bg).Where(q.Node.Status.Neq("revoked")).Count()
@@ -194,7 +198,30 @@ func (s *Server) licenseImport(c *gin.Context) {
 	if snap.Payload != nil {
 		id = snap.Payload.LicenseID
 	}
-	s.audit(c, "license.import", "license", id, map[string]string{"state": string(snap.State)})
+	detail := map[string]any{"state": string(snap.State)}
+	if info := s.Lic.CRLInfo(); info != nil {
+		detail["crl_serial"] = info.Serial
+	}
+	s.audit(c, "license.import", "license", id, detail)
+	go s.pushLicense()
+	c.JSON(http.StatusOK, s.licView())
+}
+
+// licenseCRL 单独导入吊销列表（授权过期 / 无效时仍可用）。
+func (s *Server) licenseCRL(c *gin.Context) {
+	var req struct {
+		Raw string `json:"raw" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	crl, err := s.Lic.ImportCRL(req.Raw)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "CRL_REJECTED", err.Error())
+		return
+	}
+	s.audit(c, "license.crl_import", "crl", fmt.Sprint(crl.Serial), map[string]any{"revoked": len(crl.RevokedLicenses), "revoked_kids": crl.RevokedKIDs})
 	go s.pushLicense()
 	c.JSON(http.StatusOK, s.licView())
 }

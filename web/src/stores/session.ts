@@ -17,6 +17,7 @@ export interface LicenseView {
   installation_id: string
   nodes_used: number
   sites_used: number
+  crl?: { serial: number; issued_at: string; revoked: number } | null
 }
 
 const rank: Record<string, number> = { viewer: 1, releaser: 2, operator: 3, admin: 4 }

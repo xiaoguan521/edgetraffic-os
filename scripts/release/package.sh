@@ -2,7 +2,7 @@
 # 发布打包：交叉编译 Go 程序并生成可直接下载使用的发布包。
 #
 #   scripts/release/package.sh console <goos> <goarch>
-#       控制台包：syapp-console + syapp-license-server（前端已嵌入，须先构建 web/dist）
+#       控制台包：syapp-console（前端已嵌入，须先构建 web/dist）；开发构建另带演示用的 syapp-license-server
 #       产物 edgetraffic-os-console-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
 #
 #   scripts/release/package.sh node <goarch> <syapp tarball>
@@ -12,10 +12,15 @@
 #   scripts/release/package.sh pkg <goarch> <syapp tarball>
 #       RPM / DEB 软件包（需要 nfpm）：syapp、syapp-agent、syapp-console（控制台须先构建 web/dist）
 #
+#   scripts/release/package.sh vendor-tools <goos> <goarch>
+#       厂商工具（不交付客户）：离线签名工具 syapp-license-signer + 运维手册
+#       产物 edgetraffic-os-vendor-tools-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
+#
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
-# 环境变量：VERSION（默认 0.0.0-dev）、COMMIT、BUILD_DATE、OUT（默认 dist/release）
+# 环境变量：VERSION（默认 0.0.0-dev）、COMMIT、BUILD_DATE、OUT（默认 dist/release）、
+#           GOTAGS（v* 正式版本为 release：不含演示签名密钥，也不带演示用的 syapp-license-server）
 # 正式与演示构建绝不注入 CI 临时授权公钥（license.ciKey）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -27,13 +32,14 @@ OUT="${OUT:-$ROOT/dist/release}"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 PKG=github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS="-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.BuildDate=$BUILD_DATE"
+GOTAGS="${GOTAGS:-}"
 export CGO_ENABLED=0 GOFLAGS=-mod=vendor
 
 gobuild() { # goos goarch outdir pkgs...
   local os=$1 arch=$2 dir=$3; shift 3
   for p in "$@"; do
     local name; name=$(basename "$p"); [[ $os == windows ]] && name+=.exe
-    GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" -o "$dir/$name" "$p"
+    GOOS=$os GOARCH=$arch go build -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$dir/$name" "$p"
   done
 }
 
@@ -45,7 +51,9 @@ case "${1:-}" in
     ls web/dist/index.html >/dev/null 2>&1 || { echo "web/dist 未构建：先执行 make web" >&2; exit 2; }
     name="edgetraffic-os-console-$VERSION-$os-$arch"
     d="$WORK/$name"; mkdir -p "$d"
-    gobuild "$os" "$arch" "$d" ./cmd/syapp-console ./cmd/syapp-license-server
+    gobuild "$os" "$arch" "$d" ./cmd/syapp-console
+    # 演示脚本在控制台容器里用它签发演示授权；正式版本不带（正式 License 由离线签名机签发）
+    [[ "$GOTAGS" == *release* ]] || gobuild "$os" "$arch" "$d" ./cmd/syapp-license-server
     cp docs/NOTICE "$d/NOTICE"
     cp scripts/release/README-console.txt "$d/README.txt"
     if [[ $os == windows ]]; then
@@ -54,6 +62,21 @@ case "${1:-}" in
     else
       [[ $os == linux ]] && cp deploy/systemd/syapp-console.service "$d/"
       tar -C "$WORK" -czf "$OUT/$name.tar.gz" "$name"
+      echo "$OUT/$name.tar.gz"
+    fi
+    ;;
+  vendor-tools)
+    os=${2:?goos}; arch=${3:?goarch}
+    name="edgetraffic-os-vendor-tools-$VERSION-$os-$arch"
+    d="$WORK/$name"; mkdir -p "$d"
+    gobuild "$os" "$arch" "$d" ./cmd/syapp-license-signer
+    cp docs/license-ops.md "$d/license-ops.md"
+    cp docs/NOTICE "$d/NOTICE"
+    if [[ $os == windows ]]; then
+      (cd "$WORK" && zip -qr "$OUT/$name.zip" "$name")
+      echo "$OUT/$name.zip"
+    else
+      tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
       echo "$OUT/$name.tar.gz"
     fi
     ;;

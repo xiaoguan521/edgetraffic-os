@@ -13,6 +13,7 @@ import (
 	_ "github.com/pquerna/otp/totp"
 	_ "golang.org/x/crypto/acme"
 	_ "golang.org/x/crypto/argon2"
+	_ "golang.org/x/term" // 离线签名工具读取口令时不回显
 	_ "google.golang.org/grpc"
 	_ "google.golang.org/protobuf/proto"
 	_ "gorm.io/driver/postgres"
