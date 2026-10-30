@@ -577,6 +577,7 @@ type Hello struct {
 	SyappSha256        string                 `protobuf:"bytes,3,opt,name=syapp_sha256,json=syappSha256,proto3" json:"syapp_sha256,omitempty"`
 	AppliedRevisionId  string                 `protobuf:"bytes,4,opt,name=applied_revision_id,json=appliedRevisionId,proto3" json:"applied_revision_id,omitempty"`
 	MachineFingerprint string                 `protobuf:"bytes,5,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
+	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"` // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -646,6 +647,13 @@ func (x *Hello) GetMachineFingerprint() string {
 	return ""
 }
 
+func (x *Hello) GetLuaAddon() string {
+	if x != nil {
+		return x.LuaAddon
+	}
+	return ""
+}
+
 type Heartbeat struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	TsUnix            int64                  `protobuf:"varint,1,opt,name=ts_unix,json=tsUnix,proto3" json:"ts_unix,omitempty"`
@@ -655,6 +663,7 @@ type Heartbeat struct {
 	RequestsTotal     uint64                 `protobuf:"varint,5,opt,name=requests_total,json=requestsTotal,proto3" json:"requests_total,omitempty"`
 	TreeHash          string                 `protobuf:"bytes,6,opt,name=tree_hash,json=treeHash,proto3" json:"tree_hash,omitempty"` // current 目录哈希，用于漂移检测
 	SiteMinutes       []*SiteMinute          `protobuf:"bytes,7,rep,name=site_minutes,json=siteMinutes,proto3" json:"site_minutes,omitempty"`
+	LuaAddon          string                 `protobuf:"bytes,8,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"` // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -736,6 +745,13 @@ func (x *Heartbeat) GetSiteMinutes() []*SiteMinute {
 		return x.SiteMinutes
 	}
 	return nil
+}
+
+func (x *Heartbeat) GetLuaAddon() string {
+	if x != nil {
+		return x.LuaAddon
+	}
+	return ""
 }
 
 type SiteMinute struct {
@@ -1714,15 +1730,16 @@ func (x *DriftFile) GetContentOmitted() bool {
 // 数据面二进制热升级（规格书 12.6）。START：agent 下载升级包与签名到投放目录，经 wrapper upgrade-start 验签、
 // 切换并发 USR2 / WINCH，然后按 post_checks 探活，结果在 CommandResult 中返回；COMMIT / ABORT 对应 wrapper 子命令。
 type UpgradeDataplane struct {
-	state          protoimpl.MessageState  `protogen:"open.v1"`
-	Action         UpgradeDataplane_Action `protobuf:"varint,1,opt,name=action,proto3,enum=edgetraffic.agent.v1.UpgradeDataplane_Action" json:"action,omitempty"`
-	Version        string                  `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$
-	PackageSha256  string                  `protobuf:"bytes,3,opt,name=package_sha256,json=packageSha256,proto3" json:"package_sha256,omitempty"`
-	SignatureJson  []byte                  `protobuf:"bytes,4,opt,name=signature_json,json=signatureJson,proto3" json:"signature_json,omitempty"` // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
-	PostChecks     []*PostCheck            `protobuf:"bytes,5,rep,name=post_checks,json=postChecks,proto3" json:"post_checks,omitempty"`
-	TimeoutSeconds int32                   `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState  `protogen:"open.v1"`
+	Action           UpgradeDataplane_Action `protobuf:"varint,1,opt,name=action,proto3,enum=edgetraffic.agent.v1.UpgradeDataplane_Action" json:"action,omitempty"`
+	Version          string                  `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$
+	PackageSha256    string                  `protobuf:"bytes,3,opt,name=package_sha256,json=packageSha256,proto3" json:"package_sha256,omitempty"`
+	SignatureJson    []byte                  `protobuf:"bytes,4,opt,name=signature_json,json=signatureJson,proto3" json:"signature_json,omitempty"` // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
+	PostChecks       []*PostCheck            `protobuf:"bytes,5,rep,name=post_checks,json=postChecks,proto3" json:"post_checks,omitempty"`
+	TimeoutSeconds   int32                   `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	LuaSignatureJson []byte                  `protobuf:"bytes,7,opt,name=lua_signature_json,json=luaSignatureJson,proto3" json:"lua_signature_json,omitempty"` // 节点装有 syapp-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syapp 包一起校验、一起切换
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *UpgradeDataplane) Reset() {
@@ -1797,6 +1814,13 @@ func (x *UpgradeDataplane) GetTimeoutSeconds() int32 {
 	return 0
 }
 
+func (x *UpgradeDataplane) GetLuaSignatureJson() []byte {
+	if x != nil {
+		return x.LuaSignatureJson
+	}
+	return nil
+}
+
 // agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
 type UpgradeAgent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1860,7 +1884,7 @@ func (x *UpgradeAgent) GetSignatureJson() []byte {
 
 type FetchPackageRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // syapp | syapp-agent
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // syapp | syapp-agent | syapp-lua
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	Arch          string                 `protobuf:"bytes,3,opt,name=arch,proto3" json:"arch,omitempty"`       // amd64 | arm64
 	Variant       string                 `protobuf:"bytes,4,opt,name=variant,proto3" json:"variant,omitempty"` // standard | gmssl | lua
@@ -2054,13 +2078,14 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06result\x18\f \x01(\v2#.edgetraffic.agent.v1.CommandResultH\x00R\x06result\x122\n" +
 	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03log\x129\n" +
 	"\x05drift\x18\x0e \x01(\v2!.edgetraffic.agent.v1.DriftReportH\x00R\x05driftB\x06\n" +
-	"\x04body\"\xe2\x01\n" +
+	"\x04body\"\xff\x01\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x120\n" +
 	"\x14syapp_version_output\x18\x02 \x01(\tR\x12syappVersionOutput\x12!\n" +
 	"\fsyapp_sha256\x18\x03 \x01(\tR\vsyappSha256\x12.\n" +
 	"\x13applied_revision_id\x18\x04 \x01(\tR\x11appliedRevisionId\x12/\n" +
-	"\x13machine_fingerprint\x18\x05 \x01(\tR\x12machineFingerprint\"\xa3\x02\n" +
+	"\x13machine_fingerprint\x18\x05 \x01(\tR\x12machineFingerprint\x12\x1b\n" +
+	"\tlua_addon\x18\x06 \x01(\tR\bluaAddon\"\xc0\x02\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -2069,7 +2094,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x12active_connections\x18\x04 \x01(\x04R\x11activeConnections\x12%\n" +
 	"\x0erequests_total\x18\x05 \x01(\x04R\rrequestsTotal\x12\x1b\n" +
 	"\ttree_hash\x18\x06 \x01(\tR\btreeHash\x12C\n" +
-	"\fsite_minutes\x18\a \x03(\v2 .edgetraffic.agent.v1.SiteMinuteR\vsiteMinutes\"\xa6\x02\n" +
+	"\fsite_minutes\x18\a \x03(\v2 .edgetraffic.agent.v1.SiteMinuteR\vsiteMinutes\x12\x1b\n" +
+	"\tlua_addon\x18\b \x01(\tR\bluaAddon\"\xa6\x02\n" +
 	"\n" +
 	"SiteMinute\x12\x12\n" +
 	"\x04site\x18\x01 \x01(\tR\x04site\x12\x1f\n" +
@@ -2172,7 +2198,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x12CHANGE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bMODIFIED\x10\x01\x12\t\n" +
 	"\x05ADDED\x10\x02\x12\v\n" +
-	"\aREMOVED\x10\x03\"\xf0\x02\n" +
+	"\aREMOVED\x10\x03\"\x9e\x03\n" +
 	"\x10UpgradeDataplane\x12E\n" +
 	"\x06action\x18\x01 \x01(\x0e2-.edgetraffic.agent.v1.UpgradeDataplane.ActionR\x06action\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12%\n" +
@@ -2180,7 +2206,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x0esignature_json\x18\x04 \x01(\fR\rsignatureJson\x12@\n" +
 	"\vpost_checks\x18\x05 \x03(\v2\x1f.edgetraffic.agent.v1.PostCheckR\n" +
 	"postChecks\x12'\n" +
-	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\"B\n" +
+	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\x12,\n" +
+	"\x12lua_signature_json\x18\a \x01(\fR\x10luaSignatureJson\"B\n" +
 	"\x06Action\x12\x16\n" +
 	"\x12ACTION_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05START\x10\x01\x12\n" +
