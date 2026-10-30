@@ -51,6 +51,7 @@ message Hello {
   string syapp_sha256 = 3;
   string applied_revision_id = 4;
   string machine_fingerprint = 5;
+  string lua_addon = 6;              // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
 }
 
 message Heartbeat {
@@ -61,6 +62,7 @@ message Heartbeat {
   uint64 requests_total = 5;
   string tree_hash = 6;             // current 目录哈希，用于漂移检测
   repeated SiteMinute site_minutes = 7;
+  string lua_addon = 8;             // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
 }
 
 message SiteMinute {
@@ -172,6 +174,7 @@ message UpgradeDataplane {
   bytes signature_json = 4;           // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
   repeated PostCheck post_checks = 5;
   int32 timeout_seconds = 6;
+  bytes lua_signature_json = 7;       // 节点装有 syapp-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syapp 包一起校验、一起切换
 }
 
 // agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
@@ -182,7 +185,7 @@ message UpgradeAgent {
 }
 
 message FetchPackageRequest {
-  string name = 1;      // syapp | syapp-agent
+  string name = 1;      // syapp | syapp-agent | syapp-lua
   string version = 2;
   string arch = 3;      // amd64 | arm64
   string variant = 4;   // standard | gmssl | lua
