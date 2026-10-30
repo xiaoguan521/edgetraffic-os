@@ -45,6 +45,15 @@ func waitDone(t *testing.T, d *Service, dep *store.Deployment) *store.Deployment
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 发布 goroutine 写完结果后才释放组锁；等锁释放，避免下一步操作得到 ErrBusy
+	lk := d.groupLock(dep.GroupID)
+	for !lk.TryLock() {
+		if ctx.Err() != nil {
+			t.Fatal("group lock not released")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	lk.Unlock()
 	return out
 }
 
