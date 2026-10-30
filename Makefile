@@ -6,7 +6,7 @@ DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
 
-.PHONY: all build console agent wrapper license-server test lint brand web proto clean
+.PHONY: all build console agent wrapper license-server test lint brand web proto clean gen gen-check
 
 all: test build
 
@@ -21,6 +21,15 @@ wrapper:
 test:
 	$(GO) vet ./...
 	$(GO) test -race -count=1 ./...
+
+# 由 model.go 重新生成 gorm/gen 查询代码（internal/console/store/query），结果需提交
+gen:
+	$(GO) generate ./internal/console/store/
+
+# CI：生成代码必须与模型同步
+gen-check: gen
+	git diff --exit-code -- internal/console/store/query || { echo "生成代码已过期：执行 make gen 并提交"; exit 1; }
+	test -z "$$(git status --porcelain -- internal/console/store/query)" || { echo "有未提交的生成文件：执行 make gen 并提交"; exit 1; }
 
 lint:
 	golangci-lint run ./...
