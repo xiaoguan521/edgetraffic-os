@@ -16,6 +16,35 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 )
 
+// 本包测试关注备份内容与一致性，用轻量的口令派生参数加快运行；生产参数由 TestProductionKDF 覆盖。
+func TestMain(m *testing.M) {
+	kdfTime, kdfMemoryKiB, kdfThreads = 1, 8*1024, 1
+	os.Exit(m.Run())
+}
+
+// 生产参数下完整备份、恢复一次；并确认用轻量参数无法解开生产参数的备份（参数确实生效）。
+func TestProductionKDF(t *testing.T) {
+	saved := [3]uint32{kdfTime, kdfMemoryKiB, kdfThreads}
+	kdfTime, kdfMemoryKiB, kdfThreads = 3, 64*1024, 4
+	defer func() { kdfTime, kdfMemoryKiB, kdfThreads = saved[0], saved[1], saved[2] }()
+	dir := t.TempDir()
+	src := storetest.Open(t)
+	seed(t, src, dir)
+	pass := []byte("production parameters")
+	var buf bytes.Buffer
+	if _, err := Create(&buf, src, dir, pass, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	kdfTime, kdfMemoryKiB, kdfThreads = 1, 8*1024, 1
+	if _, err := Restore(bytes.NewReader(buf.Bytes()), storetest.Open(t), t.TempDir(), pass, false); err == nil {
+		t.Fatal("backup made with production parameters opened with different parameters")
+	}
+	kdfTime, kdfMemoryKiB, kdfThreads = 3, 64*1024, 4
+	if _, err := Restore(bytes.NewReader(buf.Bytes()), storetest.Open(t), t.TempDir(), pass, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seed(t *testing.T, st *store.Store, dir string) {
 	t.Helper()
 	db := st.DB

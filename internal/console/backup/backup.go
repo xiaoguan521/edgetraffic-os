@@ -121,8 +121,12 @@ func tables() []table {
 	}
 }
 
+// 备份口令派生参数（Argon2id：3 轮、64 MiB、4 线程）。文件格式 ETOSBK1 固定使用这组参数；
+// 只有本包的测试会临时调低它们（见 TestMain），生产代码没有任何开关可以改变。
+var kdfTime, kdfMemoryKiB, kdfThreads uint32 = 3, 64 * 1024, 4
+
 func deriveKey(pass, salt []byte) []byte {
-	return argon2.IDKey(pass, salt, 3, 64*1024, 4, 32)
+	return argon2.IDKey(pass, salt, kdfTime, kdfMemoryKiB, uint8(kdfThreads), 32)
 }
 
 // Create 写出一份加密备份。

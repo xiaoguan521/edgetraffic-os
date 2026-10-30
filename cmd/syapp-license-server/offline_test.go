@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -16,16 +18,8 @@ import (
 // 正式签发全流程：在线侧生成请求 → 离线签名 → 在线侧核对导入 → 控制台可验证；吊销列表同理且是累积的。
 func TestOfflineIssuanceFlow(t *testing.T) {
 	dir := t.TempDir()
-	pass := []byte("correct horse battery staple")
-	kf, pub, err := signer.Generate("etos-prod-2027", pass, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	priv, err := kf.Open(pass)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer signer.Wipe(priv)
+	// 这里验证请求 / 导入的格式与核对，私钥文件本身由 internal/license/signer 的测试覆盖，所以直接用内存中的密钥
+	kf, pub, priv := testKey(t)
 	keys := license.KeyRing{kf.KID: pub}
 	act := filepath.Join(dir, "activation-request.json")
 	os.WriteFile(act, []byte(`{"installation_id":"inst_0123","fp_hashes":["a1","b2","c3","d4","e5"],"product":"EdgeTraffic OS"}`), 0o644)
@@ -116,9 +110,7 @@ func TestOfflineIssuanceFlow(t *testing.T) {
 // 第二份吊销列表以第一份为基础：序号加 1，保留之前的吊销项。
 func TestCRLRequestIsCumulative(t *testing.T) {
 	dir := t.TempDir()
-	pass := []byte("correct horse battery staple")
-	kf, pub, _ := signer.Generate("etos-prod-2027", pass, time.Now())
-	priv, _ := kf.Open(pass)
+	kf, pub, priv := testKey(t)
 	keys := license.KeyRing{kf.KID: pub}
 	prev, _ := license.SignCRL(&license.CRL{V: 1, KID: kf.KID, Serial: 7, RevokedLicenses: []license.RevokedLicense{{LicenseID: "LIC-OLD-1"}}}, priv)
 	base := filepath.Join(dir, "crl-7.crl")
@@ -137,8 +129,19 @@ func TestCRLRequestIsCumulative(t *testing.T) {
 		t.Fatalf("not cumulative: %+v", req.CRL)
 	}
 	// 伪造的 -base（未受信任的密钥签的）不能作为基础
-	_, other, _ := signer.Generate("etos-prod-2027", pass, time.Now())
+	_, other, _ := testKey(t)
 	if err := cmdCRLRequest([]string{"-batch", "B0004", "-kid", kf.KID, "-base", base, "-out", filepath.Join(dir, "r4.json")}, &out, license.KeyRing{kf.KID: other}); err == nil {
 		t.Fatal("untrusted base CRL accepted")
 	}
+}
+
+type testKF struct{ KID string }
+
+func testKey(t *testing.T) (testKF, ed25519.PublicKey, ed25519.PrivateKey) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testKF{KID: "etos-prod-2027"}, pub, priv
 }
