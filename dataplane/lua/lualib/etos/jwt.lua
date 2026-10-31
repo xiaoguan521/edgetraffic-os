@@ -144,28 +144,29 @@ function M.check(id)
     if r.subject_header ~= "" then
         ngx.req.clear_header(r.subject_header) -- 客户端不能伪造转发给上游的身份头
     end
-    local token
+    -- 快速路径：缓存键直接用取到的原始值（Authorization 头或 Cookie），命中时不再切分字符串
+    local raw
     if r.cookie_var then
-        token = ngx_var[r.cookie_var]
+        raw = ngx_var[r.cookie_var]
     else
-        local h = ngx_var.http_authorization
-        if h then
-            local p = sub(h, 1, 7)
-            if p == "Bearer " or p == "bearer " or p == "BEARER " then
-                token = sub(h, 8)
-            end
-        end
+        raw = ngx_var.http_authorization
     end
-    if not token or #token > MAX_TOKEN then
+    if not raw or #raw > MAX_TOKEN then
         return deny(r, "missing token")
     end
-    -- 快速路径：最近校验通过、尚未过期的令牌（缓存 TTL 不超过令牌剩余有效期）
-    local hit = r.cache:get(token)
+    local hit = r.cache:get(raw)
     if hit then
         set_subject(r, hit)
         return true
     end
-
+    local token = raw
+    if not r.cookie_var then
+        local p = sub(raw, 1, 7)
+        if p ~= "Bearer " and p ~= "bearer " and p ~= "BEARER " then
+            return deny(r, "missing token")
+        end
+        token = sub(raw, 8)
+    end
     if not find(token, "^[%w%-_%.]+$") then return deny(r, "malformed token") end
     local now = ngx_time()
     local _, _, h64, p64, s64 = find(token, "^([%w%-_]+)%.([%w%-_]+)%.([%w%-_]+)$")
@@ -192,7 +193,7 @@ function M.check(id)
 
     local ttl = exp - now
     if ttl > 60 then ttl = 60 end
-    if ttl > 0 then r.cache:set(token, type(claims.sub) == "string" and claims.sub or "", ttl) end
+    if ttl > 0 then r.cache:set(raw, type(claims.sub) == "string" and claims.sub or "", ttl) end
     set_subject(r, claims.sub)
     return true
 end

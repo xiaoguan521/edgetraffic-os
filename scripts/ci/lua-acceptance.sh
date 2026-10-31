@@ -154,7 +154,7 @@ http {
     server {
         listen 127.0.0.1:18099;
         location = /jit {
-            content_by_lua_block { ngx.say(jit and table.concat({jit.status()}, ",") or "no-jit", " ", jit and jit.arch or "") }
+            content_by_lua_block { if jit then local on = jit.status(); ngx.say(tostring(on), " ", jit.arch, " ", jit.version) else ngx.say("no-jit") end }
         }
         location / {
             content_by_lua_block {
