@@ -16,6 +16,8 @@ DC="docker compose"; NET=edgetraffic-demo_edge; IMG=${ETOS_REGISTRY:-edgetraffic
 B="http://127.0.0.1:${CONSOLE_PORT:-8443}/api/v1"
 W=$(mktemp -d); JAR=$W/jar
 C=(curl -s --noproxy '*' -b "$JAR" -c "$JAR" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
+# 并行的后台请求只读 Cookie：多个 curl 同时写同一个 cookie 文件会把会话写坏
+CR=(curl -s --noproxy '*' -b "$JAR" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
 HOSTH='Host: shop.scale.local'
 fail=0
 ok()   { echo "ok   $1"; }
@@ -49,7 +51,8 @@ start_node() {
   local i=$1 nn; nn=$(printf '%02d' "$i")
   docker run -d --name "etos-n$i" --hostname "$(name_of "$i")" --network "$NET" --ip "$(ip_of "$nn")" \
     --ulimit nofile=65535:65535 "$IMG" >/dev/null || return 1
-  local cmd; cmd=$("${C[@]}" -X POST "$B/node-groups/1/enroll" | j "d['command']")
+  local cmd; cmd=$("${CR[@]}" -X POST "$B/node-groups/1/enroll" | j "d['command']")
+  [[ -z "$cmd" ]] && { echo "::warning title=scale::enroll $(name_of "$i") failed" >&2; return 1; }
   cmd=${cmd#sudo }; cmd=${cmd%% && *}
   for _ in $(seq 1 30); do docker exec "etos-n$i" test -e /opt/syapp/conf/current && break; sleep 1; done
   # shellcheck disable=SC2086
@@ -66,7 +69,7 @@ for _ in $(seq 1 120); do
   online=$("${C[@]}" "$B/nodes" | j "sum(1 for n in d if n['status']=='online')")
   [[ "$online" == "$N" ]] && break; sleep 2
 done
-[[ "$online" == "$N" ]] && ok "$N 个节点全部在线（$(secs "$t0" "$(now)")s）" || { bad "只有 $online/$N 个节点在线"; exit 1; }
+[[ "$online" == "$N" ]] && ok "$N 个节点全部在线（$(secs "$t0" "$(now)")s）" || { bad "只有 $online/$N 个节点在线（/nodes：$("${C[@]}" "$B/nodes" | head -c 200)；容器 $(docker ps -q --filter name=etos-n | wc -l) 个；etos-n1：$(docker logs --tail 3 etos-n1 2>&1 | tr '\n' ' ')）"; exit 1; }
 
 echo "== 1. $N 节点并行发布 < 60 秒"
 "${C[@]}" -X POST "$B/upstreams" -d '{"group_id":1,"spec":{"name":"api","servers":[{"addr":"172.30.0.31:9001"},{"addr":"172.30.0.32:9001"}]}}' >/dev/null

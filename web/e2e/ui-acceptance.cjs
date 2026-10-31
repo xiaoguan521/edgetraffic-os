@@ -159,12 +159,14 @@ async function main() {
     }
 
     console.log('== 3. 发布进度实时刷新')
-    const sites = await (await admin.get('/api/v1/sites?group_id=1')).json()
     const groups = await (await admin.get('/api/v1/node-groups')).json()
     const g = groups.find((x) => x.id === 1)
-    const s = sites[0]
-    s.spec.domains = [...s.spec.domains.filter((d) => d !== 'ui-live.demo.local'), 'ui-live.demo.local']
-    check((await admin.put(`/api/v1/sites/${s.id}`, { data: { spec: s.spec, version: s.version } })).ok(), '准备待发布变更')
+    // 改一下上游权重，产生一处待发布变更（不碰站点域名与证书）
+    const ups = await (await admin.get('/api/v1/upstreams?group_id=1')).json()
+    const u = ups[0]
+    u.spec.servers[0].weight = ((u.spec.servers[0].weight || 1) % 9) + 1
+    const pr = await admin.put(`/api/v1/upstreams/${u.id}`, { data: { spec: u.spec, version: u.version } })
+    check(pr.ok(), '准备待发布变更', `HTTP ${pr.status()} ${(await pr.text()).slice(0, 200)}`)
     {
       const { ctx, page } = await login(browser, 'releaser')
       await page.goto(`${BASE}/releases`)
@@ -177,7 +179,9 @@ async function main() {
       const panel = page.locator('section.panel').filter({ has: page.locator('.cur', { hasText: 'UI 验收：实时刷新' }) })
       const done = await panel.getByText('已生效').first().waitFor({ timeout: 60000 }).then(() => true).catch(() => false)
       check(done, '发布后不刷新页面，状态自动变为“已生效”')
-      check(polls.length > 0, '页面自动轮询发布进度', `${polls.length} 次`)
+      // 没有在线节点时发布立即完成，不需要轮询；demo 环境有在线节点，必须看到轮询
+      if (g.online > 0) check(polls.length > 0, '页面自动轮询发布进度', `${polls.length} 次`)
+      else console.log('     （没有在线节点，跳过轮询检查）')
       check(await page.evaluate(() => window.__noReload === true), '整个过程没有刷新页面')
       const lanes = await panel.getByText('已生效').count()
       check(lanes >= 1 + g.online, `每个在线节点的结果都显示为“已生效”（${g.online} 个节点）`, `显示 ${lanes} 处`)
