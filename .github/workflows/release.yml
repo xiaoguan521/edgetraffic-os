@@ -135,6 +135,12 @@ jobs:
         run: |
           TLS_LIB=tongsuo scripts/release/build-syapp-static.sh dist/syapp-gm
           mkdir -p "$OUT" && cp dist/syapp-gm/syapp-*-gmssl-*.tar.gz "$OUT"/
+      # syapp-lua 附加包（P10）：同一个包适配标准版与国密版，只在正式标签构建；离线 sign-package -name syapp-lua -variant lua 签名
+      - name: build syapp-lua add-on (static, glibc 2.17)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          LUA=1 scripts/release/build-syapp-static.sh dist/syapp-lua
+          mkdir -p "$OUT" && cp dist/syapp-lua/syapp-lua-*.tar.gz "$OUT"/
       # 发布构建总是重新编译 syapp（从不读取缓存）；main 上把这次的新产物写入缓存，
       # 供拉取请求的 packages 工作流复用（PR 只能读取自己分支与 main 的缓存）。
       - name: save static syapp for pull requests

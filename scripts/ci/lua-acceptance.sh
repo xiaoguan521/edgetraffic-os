@@ -116,7 +116,7 @@ check "限速：超出 5 次/秒返回 429" "$codes" "429"
 check "外部鉴权：无凭据 401" "$(req -H "$H" http://127.0.0.1/auth/x)" "401"
 check "外部鉴权：鉴权服务放行 200" "$(req -H "$H" -H 'X-Token: good' http://127.0.0.1/auth/x)" "200"
 check "外部鉴权只作用于命中的路径" "$(req -H "$H" http://127.0.0.1/other)" "200"
-check "ACME 验证路径不受规则影响" "$(req -H "$H" -A BadBot http://127.0.0.1/.well-known/acme-challenge/none)" "404"
+check "ACME 验证路径不受规则影响（BadBot 也能访问）" "$(req -H "$H" -A BadBot http://127.0.0.1/.well-known/acme-challenge/none)" "200"
 
 echo "== JWT（Lua）"
 check "HS256：无令牌 401" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
