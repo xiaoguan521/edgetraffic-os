@@ -183,3 +183,112 @@ func TestAgentUpgrade(t *testing.T) {
 		t.Fatalf("agent upgrade %+v", v.Nodes)
 	}
 }
+
+// 慢速 agent：记录同时进行中的升级数与各节点开始时间，用于检查批内并行、批间串行。
+type fakeSlowAgents struct {
+	fakeAgents
+	delay     time.Duration
+	cur, max  int
+	started   map[uint]time.Time
+	committed map[uint]time.Time
+}
+
+func (f *fakeSlowAgents) Send(ctx context.Context, id uint, m *agentv1.ServerMessage, to time.Duration) (*agentv1.CommandResult, error) {
+	u := m.GetUpgrade()
+	f.mu.Lock()
+	if u.Action == agentv1.UpgradeDataplane_START {
+		f.started[id] = time.Now()
+		f.cur++
+		if f.cur > f.max {
+			f.max = f.cur
+		}
+	}
+	f.mu.Unlock()
+	if u.Action == agentv1.UpgradeDataplane_START {
+		time.Sleep(f.delay)
+		f.mu.Lock()
+		f.cur--
+		f.mu.Unlock()
+	} else {
+		f.mu.Lock()
+		f.committed[id] = time.Now()
+		f.mu.Unlock()
+	}
+	return f.fakeAgents.Send(ctx, id, m, to)
+}
+
+// 50 台节点的升级要在 10 分钟内完成（规格书 12.6）：批内节点并行（有上限），批与批之间串行。
+func TestUpgradeBatchRunsInParallel(t *testing.T) {
+	d, g := newTestService(t)
+	seedPackage(t, d, "1.30.7-1")
+	ids := addNodes(t, d, g, 20) // 批次 1 / 2 / 17
+	fa := &fakeSlowAgents{fakeAgents: fakeAgents{online: map[uint]bool{}}, delay: 150 * time.Millisecond,
+		started: map[uint]time.Time{}, committed: map[uint]time.Time{}}
+	for _, id := range ids {
+		fa.online[id] = true
+	}
+	d.Agents = fa
+	t0 := time.Now()
+	up, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitUpgrade(t, d, up.ID)
+	if v.Status != "done" {
+		t.Fatalf("status %s", v.Status)
+	}
+	if el := time.Since(t0); el > 20*fa.delay/2 {
+		t.Errorf("20 nodes took %s: batches are not parallel", el)
+	}
+	if fa.max < 2 || fa.max > UpgradeParallel {
+		t.Errorf("max concurrent upgrades %d, want 2..%d", fa.max, UpgradeParallel)
+	}
+	// 批次之间串行：后一批的节点都在前一批全部提交之后才开始
+	batchOf := map[uint]int{}
+	for _, n := range v.Nodes {
+		batchOf[n.NodeID] = n.Batch
+	}
+	for a, sa := range fa.started {
+		for b, cb := range fa.committed {
+			if batchOf[a] > batchOf[b] && sa.Before(cb) {
+				t.Fatalf("node %d (batch %d) started before node %d (batch %d) committed", a, batchOf[a], b, batchOf[b])
+			}
+		}
+	}
+}
+
+// 批内某台失败：同批已在进行的节点完成，同批尚未开始的与后续批次都不再执行。
+func TestUpgradeParallelBatchStopsOnFailure(t *testing.T) {
+	d, g := newTestService(t)
+	seedPackage(t, d, "1.30.7-1")
+	ids := addNodes(t, d, g, 50) // 批次 1 / 5 / 44
+	fa := &fakeSlowAgents{fakeAgents: fakeAgents{online: map[uint]bool{}, fail: map[uint]bool{ids[1]: true}}, delay: 30 * time.Millisecond,
+		started: map[uint]time.Time{}, committed: map[uint]time.Time{}}
+	for _, id := range ids {
+		fa.online[id] = true
+	}
+	d.Agents = fa
+	up, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitUpgrade(t, d, up.ID)
+	if v.Status != "failed" {
+		t.Fatalf("status %s", v.Status)
+	}
+	n3 := 0
+	for _, n := range v.Nodes {
+		if n.Batch == 3 {
+			if n.Status != "skipped" {
+				t.Fatalf("batch 3 node %d status %s", n.NodeID, n.Status)
+			}
+			n3++
+		}
+		if n.NodeID == ids[1] && n.Status != "rolled_back" {
+			t.Fatalf("failed node status %s", n.Status)
+		}
+	}
+	if n3 != 44 {
+		t.Fatalf("batch 3 has %d nodes", n3)
+	}
+}

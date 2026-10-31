@@ -30,6 +30,9 @@ type Agents interface {
 // UpgradeTimeout 是单台节点执行热升级（下载、验签、切换、探活）的上限。
 const UpgradeTimeout = 3 * time.Minute
 
+// UpgradeParallel 是同一批次内同时升级的节点数上限（批与批之间仍然串行）。
+var UpgradeParallel = 10
+
 var (
 	ErrUpgradeRunning = errors.New("this node group already has a data-plane upgrade in progress")
 	upgradeLocks      sync.Map // group id -> *sync.Mutex
@@ -209,22 +212,24 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 	}
 	sigFor := func(arch string) []byte { return sigOf("syapp", arch, up.Variant) }
 	ag := d.agents()
+	var mu sync.Mutex // 保护 plan、failed 与 save
 	failed := false
-	for i := range plan {
-		n := &plan[i]
-		if failed {
-			n.Status, n.Message = "skipped", "前面的节点失败，已停止"
-			continue
+	set := func(n *UpgradeNode, status, msg string, fail bool) {
+		mu.Lock()
+		n.Status, n.Message = status, msg
+		if fail {
+			failed = true
 		}
+		save("running", false)
+		mu.Unlock()
+	}
+	upgradeOne := func(n *UpgradeNode) {
 		node, err := store.First[store.Node](d.Store, n.NodeID)
 		if err != nil || !ag.Online(n.NodeID) {
-			n.Status, n.Message = "offline", "节点离线，未升级"
-			failed = true // 离线节点也停止：避免部分节点在新旧版本间混跑而无人察觉
-			save("running", false)
-			continue
+			set(n, "offline", "节点离线，未升级", true) // 离线节点也停止：避免部分节点在新旧版本间混跑而无人察觉
+			return
 		}
-		n.Status = "upgrading"
-		save("running", false)
+		set(n, "upgrading", "", false)
 		sig := sigFor(node.Arch)
 		var ps pkgsig.Sig
 		_ = json.Unmarshal(sig, &ps)
@@ -237,28 +242,63 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 		res, err := ag.Send(context.Background(), n.NodeID, msg, UpgradeTimeout)
 		switch {
 		case err != nil:
-			n.Status, n.Message, failed = "failed", err.Error(), true
+			set(n, "failed", err.Error(), true)
 		case res.Status == agentv1.CommandResult_APPLIED:
 			c, err := ag.Send(context.Background(), n.NodeID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Upgrade{Upgrade: &agentv1.UpgradeDataplane{
 				Action: agentv1.UpgradeDataplane_COMMIT, Version: up.Version}}}, time.Minute)
 			if err != nil || c.Status != agentv1.CommandResult_APPLIED {
-				msg := "提交失败"
+				m := "提交失败"
 				if err != nil {
-					msg += "：" + err.Error()
+					m += "：" + err.Error()
 				} else {
-					msg += "：" + c.Message
+					m += "：" + c.Message
 				}
-				n.Status, n.Message, failed = "failed", msg, true
+				set(n, "failed", m, true)
 			} else {
-				n.Status, n.Message = "upgraded", res.Message
+				set(n, "upgraded", res.Message, false)
 			}
 		case res.Status == agentv1.CommandResult_ROLLED_BACK:
-			n.Status, n.Message, failed = "rolled_back", res.Message, true
+			set(n, "rolled_back", res.Message, true)
 		default:
-			n.Status, n.Message, failed = "failed", res.Status.String()+" "+res.Message, true
+			set(n, "failed", res.Status.String()+" "+res.Message, true)
 		}
-		save("running", false)
 	}
+	// 批与批之间串行；批内最多 UpgradeParallel 台同时升级。任一台失败后，同批尚未开始的节点与后续批次都不再执行
+	for bi := 1; ; bi++ {
+		var batch []*UpgradeNode
+		for i := range plan {
+			if plan[i].Batch == bi {
+				batch = append(batch, &plan[i])
+			}
+		}
+		if len(batch) == 0 {
+			break
+		}
+		sem := make(chan struct{}, UpgradeParallel)
+		var wg sync.WaitGroup
+		for _, n := range batch {
+			sem <- struct{}{}
+			mu.Lock()
+			stop := failed
+			if stop {
+				n.Status, n.Message = "skipped", "前面的节点失败，已停止"
+			}
+			mu.Unlock()
+			if stop {
+				<-sem
+				continue
+			}
+			wg.Add(1)
+			go func(n *UpgradeNode) {
+				defer func() { <-sem; wg.Done() }()
+				upgradeOne(n)
+			}(n)
+		}
+		wg.Wait()
+	}
+	mu.Lock()
+	save("running", false)
+	mu.Unlock()
 	status := "done"
 	if failed {
 		status = "failed"
