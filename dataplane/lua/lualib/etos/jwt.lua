@@ -43,7 +43,7 @@ end
 local M = {}
 
 local rules = {}
-local cache = lrucache.new(10000)
+local CACHE_SIZE = 10000
 local md_out = ffi.new("unsigned char[32]")
 local md_len = ffi.new("unsigned int[1]")
 local MAX_TOKEN = 8192
@@ -89,6 +89,7 @@ function M.add(id, cfg, key)
         if not find(r.cookie or "", "^[%w_]+$") then error("etos.jwt: bad cookie name for " .. id) end
         r.cookie_var = "cookie_" .. r.cookie
     end
+    r.cache = lrucache.new(CACHE_SIZE) -- 每条规则独立缓存，键就是令牌本身（不拼接字符串）
     rules[id] = r
 end
 
@@ -149,21 +150,24 @@ function M.check(id)
     else
         local h = ngx_var.http_authorization
         if h then
-            local _, _, t = find(h, "^[Bb][Ee][Aa][Rr][Ee][Rr] +([%w%-_%.]+) *$")
-            token = t
+            local p = sub(h, 1, 7)
+            if p == "Bearer " or p == "bearer " or p == "BEARER " then
+                token = sub(h, 8)
+            end
         end
     end
     if not token or #token > MAX_TOKEN then
         return deny(r, "missing token")
     end
-    local now = ngx_time()
-    local key = id .. " " .. token
-    local hit = cache:get(key)
+    -- 快速路径：最近校验通过、尚未过期的令牌（缓存 TTL 不超过令牌剩余有效期）
+    local hit = r.cache:get(token)
     if hit then
         set_subject(r, hit)
         return true
     end
 
+    if not find(token, "^[%w%-_%.]+$") then return deny(r, "malformed token") end
+    local now = ngx_time()
     local _, _, h64, p64, s64 = find(token, "^([%w%-_]+)%.([%w%-_]+)%.([%w%-_]+)$")
     if not h64 then return deny(r, "malformed token") end
     local header = json.decode(b64url(h64) or "")
@@ -188,7 +192,7 @@ function M.check(id)
 
     local ttl = exp - now
     if ttl > 60 then ttl = 60 end
-    if ttl > 0 then cache:set(key, type(claims.sub) == "string" and claims.sub or "", ttl) end
+    if ttl > 0 then r.cache:set(token, type(claims.sub) == "string" and claims.sub or "", ttl) end
     set_subject(r, claims.sub)
     return true
 end

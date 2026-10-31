@@ -265,7 +265,8 @@ echo "== 品牌：上游名只允许出现在 /opt/syapp/modules/lua-*/（附加
 out=$(sudo bash "$W/lua/install.sh" 2>&1) || bad "re-install failed: $out"
 # NOTICE 等文件中 BSD 许可要求保留的归因句 “Based on NGINX Open Source (BSD-2-Clause)” 不算泄漏
 leaks=""
-for f in $(sudo grep -rlai 'ngi''nx' /opt/syapp /var/log/syapp 2>/dev/null | grep -v '^/opt/syapp/modules/lua-[^/]*/'); do
+# NOTICE 文件保留 BSD 许可要求的上游版权与归因，属于允许范围
+for f in $(sudo grep -rlai 'ngi''nx' /opt/syapp /var/log/syapp 2>/dev/null | grep -v '^/opt/syapp/modules/lua-[^/]*/' | grep -v '/NOTICE$'); do
   sudo grep -ai 'ngi''nx' "$f" | grep -vq 'NGINX Open Source (BSD-2-Clause)' && leaks+=" $f"
 done
 [[ -z "$leaks" ]] && ok "模块目录之外没有上游名（二进制、配置、日志、脚本）" || bad "上游名出现在：$(echo $leaks)"

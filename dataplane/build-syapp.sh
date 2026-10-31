@@ -135,6 +135,14 @@ for f in mime.types fastcgi_params scgi_params uwsgi_params koi-utf koi-win win-
   [[ -f "$O/conf/current/$f" ]] && mv "$O/conf/current/$f" "$O/share/defaults/$f"
 done
 rm -rf "$O/conf/current"
+# 上游参考文件中的旧名：变量已改名为 $syapp_version（原样保留会让 include 这些文件的独立模式配置报错）；
+# 编码表注释里指向上游源码目录的说明删掉
+for f in fastcgi_params fastcgi.conf; do
+  [[ -f "$O/share/defaults/$f" ]] && sed -i 's#SERVER_SOFTWARE\( *\)ngi''nx/\$ngi''nx_version#SERVER_SOFTWARE\1syapp/$syapp_version#' "$O/share/defaults/$f"
+done
+for f in koi-utf koi-win win-utf; do
+  [[ -f "$O/share/defaults/$f" ]] && sed -i '/unicode2/d' "$O/share/defaults/$f"
+done
 cp "$HERE/packaging/html/index.html" "$HERE/packaging/html/50x.html" "$O/html/"
 cp "$HERE/../docs/NOTICE" "$O/share/doc/NOTICE"
 strip "$O/sbin/syapp"
@@ -145,6 +153,11 @@ if strings "$O/sbin/syapp" | grep -qi 'ngi''nx'; then
   echo "upstream name leaked into binary:" >&2
   strings "$O/sbin/syapp" | grep -i 'ngi''nx' >&2
   exit 4
+fi
+# 包内文件内容：只有 NOTICE（BSD 许可要求保留的上游版权与归因）可以出现上游名
+leaks=$(grep -rlai 'ngi''nx' "$ROOT" | grep -v '/NOTICE$' | grep -v '/sbin/syapp$' || true)
+if [[ -n "$leaks" ]]; then
+  echo "upstream name in packaged files: $leaks" >&2; exit 4
 fi
 if find "$ROOT" | grep -qi 'ngi''nx'; then
   echo "upstream name leaked into file names:" >&2; find "$ROOT" | grep -i 'ngi''nx' >&2; exit 4

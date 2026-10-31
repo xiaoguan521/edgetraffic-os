@@ -35,10 +35,15 @@ local function sandbox()
     loaded.debug = nil
     debug = nil
 
+    local ok_names = {} -- 已判定允许的模块名：规则代码每个请求都会 require，命中后只剩一次表查找
     require = function(name)
+        if ok_names[name] then
+            return loaded[name] or real_require(name)
+        end
         if type(name) == "string" then
             for _, p in ipairs(ALLOWED) do
                 if string.find(name, p) then
+                    ok_names[name] = true
                     return real_require(name)
                 end
             end
