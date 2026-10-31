@@ -163,13 +163,18 @@ http {
             }
         }
     }
+    # 诊断：进入 Lua 本身的开销（与 JWT 逻辑无关）
+    upstream diag_backend { server 10.99.0.1:18080; }
+    server { listen 127.0.0.1:18101; location / { proxy_pass http://diag_backend; } }
+    server { listen 127.0.0.1:18102; set_by_lua_block \$x { return "" } location / { proxy_pass http://diag_backend; } }
+    server { listen 127.0.0.1:18103; set_by_lua_block \$x { local h = ngx.var.http_authorization return "" } location / { proxy_pass http://diag_backend; } }
+    server { listen 127.0.0.1:18104; access_by_lua_block { } location / { proxy_pass http://diag_backend; } }
 }
 EOF
 sudo $SY -p "$W/sb" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
 sleep 0.5
 check "沙箱：io / os.execute / load / loadstring / debug 不可用，require ffi 被拒绝" "$(curl -s http://127.0.0.1:18099/)" "nil nil nil nil nil false"
 JIT=$(curl -s http://127.0.0.1:18099/jit)
-sudo kill "$(cat "$W/sb/pid")" 2>/dev/null
 
 echo "== 标准 HTTPS$([[ $BASE == gmssl ]] && echo ' 与国密 NTLS')"
 check "标准客户端 HTTPS（TLS 1.3）" "$(curl -sk -v --resolve api.test:443:127.0.0.1 -H 'X-Forwarded-For: 10.254.0.1' https://api.test/ 2>&1)" "TLSv1.3"
@@ -252,6 +257,10 @@ echo "::notice title=perf $BASE/$ARCH::无规则 ${b0[*]}（中位 $m0）；三�
 # 诊断：拆分开销（只有两条原生规则 / 只有 JWT），以及 LuaJIT 的 JIT 状态
 mn=$(med "$(bench benchn.test)" "$(bench benchn.test)" "$(bench benchn.test)")
 mj=$(med "$(bench benchj.test)" "$(bench benchj.test)" "$(bench benchj.test)")
+dg() { wrk -t2 -c64 -d6s -H "Authorization: Bearer $tb" "http://127.0.0.1:$1/" 2>&1 | awk '/Requests\/sec/ {v=int($2)} END {print v+0}'; }
+d1=$(dg 18101); d2=$(dg 18102); d3=$(dg 18103); d4=$(dg 18104); d1b=$(dg 18101)
+echo "::notice title=lua entry cost $BASE/$ARCH::plain $d1/$d1b；empty set_by_lua $d2；set_by_lua+read header $d3；empty access_by_lua $d4"
+sudo kill "$(cat "$W/sb/pid")" 2>/dev/null
 echo "::notice title=perf breakdown $BASE/$ARCH::nproc=$(nproc) 无规则 $m0；两条原生规则 $mn；只有 JWT $mj；三条 $m3；jit=${JIT:-?}"
 (( m0 > 0 && drop <= 150 )) && ok "QPS 下降 $((drop/10)).$((drop%10))% ≤ 15%" || bad "QPS 下降 $((drop/10)).$((drop%10))% 超过 15%（$m0 → $m3）"
 
