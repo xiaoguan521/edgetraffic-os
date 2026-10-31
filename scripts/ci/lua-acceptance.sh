@@ -11,12 +11,14 @@ DIST=$(realpath "$1"); BASE=$2
 : "${PKG_KEY:?}" "${PKG_KID:?}" "${WRAPPER:?}" "${LIC:?}"
 ARCH=$(uname -m); GOARCH=amd64; [[ $ARCH == aarch64 ]] && GOARCH=arm64
 W=$(mktemp -d); chmod 755 "$W"
+# 意外退出（例如命令不存在、变量未定义）时也留下注解：原始日志不一定能下载
+trap 'rc=$?; [[ $rc -ne 0 && -z "${DONE:-}" ]] && echo "::error title=lua-acceptance aborted ($BASE/$(uname -m))::exit $rc at line $LINENO: $BASH_COMMAND"' EXIT
 fail=0
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; echo "::error title=lua-acceptance ($BASE/$ARCH)::$1"; fail=$((fail+1)); }
 check() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1 — 期望包含 '$3'，实际 '${2:0:200}'"; fi; }
 nocheck() { if [[ "$2" == *"$3"* ]]; then bad "$1 — 不应包含 '$3'"; else ok "$1"; fi; }
-die() { bad "$1"; echo "---- $fail failed"; exit 1; }
+die() { bad "$1"; echo "---- $fail failed"; DONE=1; exit 1; }
 # 每个功能请求用不同的客户端地址（X-Forwarded-For，验收配置信任本机），避免触发基线的单 IP 限速
 # （在 $(...) 子 shell 中调用，计数器不会回传：地址取自 /dev/urandom）
 req() {
@@ -79,7 +81,7 @@ check "模块软链指向本版本" "$(readlink /opt/syapp/modules/lua)" "lua-$V
 [[ "$(sha256sum "$SY" | cut -c1-64)" == "$bin_sha" ]] && ok "安装附加包不改动基础包二进制" || bad "基础包二进制被改动"
 
 echo "== 生成验收配置（真实渲染器 + 真实 syapp -t）"
-HS=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
+HS=$(head -c 64 /dev/urandom | base64 -w0 | tr -d '/+=' | head -c 48)   # 渲染器要求至少 32 个字符
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$W/rs.key" 2>/dev/null
 openssl pkey -in "$W/rs.key" -pubout -out "$W/rs.pub"
 gmenv=()
@@ -97,7 +99,7 @@ render() { # <版本> <是否含 Lua>
     ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" \
     go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1
 }
-render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -E 'emerg|FAIL|Error' "$W/render-r900100.log" | head -3)"
+render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 /opt/syapp/conf/current
 sudo $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
@@ -272,4 +274,5 @@ leaks=$(sudo grep -rlai 'ngi''nx' /opt/syapp/modules/lua/lualib/etos /opt/syapp/
 
 sudo "$SY" -s quit 2>/dev/null; sudo kill "$(cat "$W/backend/pid")" 2>/dev/null
 echo "---- $fail failed"
+DONE=1
 [[ $fail -eq 0 ]] && echo "LUA ACCEPTANCE OK ($BASE/$ARCH)" || exit 1
