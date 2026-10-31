@@ -46,6 +46,21 @@ INST=$($DC exec -T console sh -c 'cat /var/lib/syapp-console/installation.json' 
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/l.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 [[ $("${C[@]}" "$B/license" | j "d['state']") == VALID ]] && ok "授权有效" || { bad "授权导入失败"; exit 1; }
 
+# 测试流量都从 Docker 网关（172.30.0.1）进入节点，模拟 CDN / LB 后的大量客户端：网关列为回源网段，
+# 客户端地址取自 X-Forwarded-For。否则所有请求同属一个 IP，会被基线的每 IP 限速（20r/s）正确地拦下。
+"${C[@]}" "$B/node-groups" | python3 -c "import json,sys;g=[x for x in json.load(sys.stdin) if x['id']==1][0];print(json.dumps({'name':g['name'],'description':g.get('description',''),'allowed_cidrs':g.get('allowed_cidrs',''),'real_ip_from':'172.30.0.1/32'}))" \
+  | "${C[@]}" -X PUT "$B/node-groups/1" -d @- >/dev/null
+[[ $("${C[@]}" "$B/node-groups" | j "[x['real_ip_from'] for x in d if x['id']==1][0]") == *172.30.0.1* ]] && ok "节点组回源网段设为 Docker 网关" || bad "设置回源网段失败"
+cat > "$W/xff.lua" <<'EOF'
+local c = 0
+request = function()
+  c = c + 1
+  wrk.headers["X-Forwarded-For"] = string.format("10.%d.%d.%d", 100 + c % 100, math.random(0, 255), math.random(1, 254))
+  return wrk.format(nil)
+end
+EOF
+xff() { echo "10.$((RANDOM % 200 + 20)).$((RANDOM % 256)).$((RANDOM % 254 + 1))"; }
+
 echo "== 启动并注册 $N 个节点"
 start_node() {
   local i=$1 nn; nn=$(printf '%02d' "$i")
@@ -98,15 +113,16 @@ edit_site() { # <首页文字>
 }
 edit_site "scale v2"
 check_publish "修改后再发布" "scale v2"
-bodies=$(for i in $(seq 1 "$N"); do curl -s --noproxy '*' --max-time 3 -H "$HOSTH" "http://$(ip_of "$i")/" & done; wait)
-[[ $(grep -c "scale v2" <<<"$bodies") == "$N" ]] && ok "$N 个节点都返回新内容" || bad "只有 $(grep -c "scale v2" <<<"$bodies")/$N 个节点返回新内容"
+bodies=$(for i in $(seq 1 "$N"); do echo "$(curl -s --noproxy '*' --max-time 3 -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of "$i")/")"; done)
+nv=$(grep -o "scale v2" <<<"$bodies" | wc -l)
+[[ "$nv" == "$N" ]] && ok "$N 个节点都返回新内容" || bad "只有 $nv/$N 个节点返回新内容"
 
 # 业务探测：轮询全部节点（每个请求新建连接），记录成功与失败次数，直到 $W/stop-<名> 出现
 probe() { # <名>
   local okc=0 bad=0 i code
   while [[ ! -e "$W/stop-$1" ]]; do
     for i in $(seq 1 "$N"); do
-      code=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 3 -H "$HOSTH" "http://$(ip_of "$i")/api/probe")
+      code=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 3 -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of "$i")/api/probe")
       if [[ "$code" == 200 ]]; then okc=$((okc + 1)); else bad=$((bad + 1)); echo "$(date +%T) $(name_of "$i") $code" >> "$W/probe-$1.err"; fi
     done
     echo "$okc $bad" > "$W/probe-$1"
@@ -175,8 +191,8 @@ rollout() { # <说明> <目标版本> <期望软链目录>
   probe "$ver" & local ppid=$!; PIDS+=($ppid)
   local wrks=() streams=()
   for n in "${pick[@]}"; do
-    wrk -t1 -c8 -d1200s -H "$HOSTH" "http://$(ip_of "$(num "$n")")/api/load" > "$W/wrk-$ver-$n.txt" 2>&1 & wrks+=($!); PIDS+=($!)
-    curl -sN --noproxy '*' -H "$HOSTH" "http://$(ip_of "$(num "$n")")/stream?seconds=150" > "$W/stream-$ver-$n.txt" 2>"$W/stream-$ver-$n.err" & streams+=($!); PIDS+=($!)
+    wrk -t1 -c8 -d120s -s "$W/xff.lua" -H "$HOSTH" "http://$(ip_of "$(num "$n")")/api/load" > "$W/wrk-$ver-$n.txt" 2>&1 & wrks+=($!); PIDS+=($!)
+    curl -sN --noproxy '*' -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of "$(num "$n")")/stream?seconds=150" > "$W/stream-$ver-$n.txt" 2>"$W/stream-$ver-$n.err" & streams+=($!); PIDS+=($!)
   done
   sleep 3
   local t0 up id st="" v
@@ -209,7 +225,7 @@ rollout() { # <说明> <目标版本> <期望软链目录>
       else bad "$what：$n 的长连接在该节点升级完成前就结束了（测试未覆盖）"; fi
     else bad "$what：$n 的长连接中断（curl 退出码 $s，收到 $lines/150 行）"; fi
   done
-  kill -INT "${wrks[@]}" 2>/dev/null; wait "${wrks[@]}" 2>/dev/null
+  wait "${wrks[@]}" 2>/dev/null   # 压测固定 120 秒、自然结束（覆盖整个升级过程；不用信号中断，避免把中断时在途的请求算作错误）
   for n in "${pick[@]}"; do
     local f="$W/wrk-$ver-$n.txt" req errs non
     req=$(awk '/requests in/ {print $1}' "$f")
@@ -231,9 +247,12 @@ rollout() { # <说明> <目标版本> <期望软链目录>
     (( left == 0 )) && break; sleep 2
   done
 }
+# 对照：不升级时同样的压测应当 0 错误（区分升级造成的失败与压测工具本身的计数）
+wrk -t1 -c8 -d10s -s "$W/xff.lua" -H "$HOSTH" "http://$(ip_of "$(num "${pick[0]}")")/api/load" > "$W/wrk-control.txt" 2>&1
+note "对照压测（不升级）：$(grep -E 'requests in|Socket errors|Non-2xx' "$W/wrk-control.txt" | tr -s ' ' | tr '\n' ' ')"
 rollout "热升级到 $UP" "$UP" "$UP"
 rollout "回退到 $VER" "$VER" "$VER"
-[[ $(curl -s --noproxy '*' --max-time 3 -H "$HOSTH" "http://$(ip_of 1)/") == *"scale v3"* ]] && ok "升级与回退后配置不变" || bad "升级与回退后配置异常"
+[[ $(curl -s --noproxy '*' --max-time 3 -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of 1)/") == *"scale v3"* ]] && ok "升级与回退后配置不变" || bad "升级与回退后配置异常"
 docker exec etos-n1 ps -eo comm | grep -qi 'ngi''nx' && bad "节点进程名出现上游名" || ok "节点进程名为 syapp"
 
 echo
