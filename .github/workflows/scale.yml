@@ -14,6 +14,7 @@ on:
       - "demo/Dockerfile.*"
       - "demo/node/**"
       - "scripts/ci/scale-50.sh"
+      - "cmd/etos-loadgen/**"
       - ".github/workflows/scale.yml"
   workflow_dispatch:
     inputs:
@@ -37,6 +38,7 @@ jobs:
         run: |
           sudo apt-get install -y -qq wrk >/dev/null
           go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/loadgen ./cmd/etos-loadgen
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
           echo "EXTRA_LICENSE_KEY=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')" >> "$GITHUB_ENV"
@@ -53,6 +55,7 @@ jobs:
           LIC_KID: etos-ci-ephemeral
           PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
           PKG_KID: etos-ci-pkg-ephemeral
+          LOADGEN: /tmp/loadgen
           # 验收为 30 分钟；scale/** 分支用于调试脚本，只宕机 2 分钟
           DOWN_MIN: ${{ github.event.inputs.down_minutes || (startsWith(github.ref, 'refs/heads/scale/') && '2' || '30') }}
         run: scripts/ci/scale-50.sh

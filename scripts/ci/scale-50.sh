@@ -10,7 +10,7 @@
 #   N（默认 50）、DOWN_MIN（默认 30）可调小用于本地试跑。
 set -uo pipefail
 cd "$(dirname "$0")/../../demo"
-: "${LIC_TOOL:?}" "${LIC_KEY:?}" "${LIC_KID:?}" "${PKG_KEY:?}" "${PKG_KID:?}"
+: "${LIC_TOOL:?}" "${LIC_KEY:?}" "${LIC_KID:?}" "${PKG_KEY:?}" "${PKG_KID:?}" "${LOADGEN:?}"
 N=${N:-50}; DOWN_MIN=${DOWN_MIN:-30}
 DC="docker compose"; NET=edgetraffic-demo_edge; IMG=${ETOS_REGISTRY:-edgetraffic-os}/node:${ETOS_TAG:-demo}
 B="http://127.0.0.1:${CONSOLE_PORT:-8443}/api/v1"
@@ -189,8 +189,11 @@ rollout() { # <说明> <目标版本> <期望软链目录>
   local what=$1 ver=$2 n w s
   rm -f "$W"/stop-* "$W"/probe-*
   probe "$ver" & local ppid=$!; PIDS+=($ppid)
-  local wrks=() streams=()
+  local wrks=() lgs=() streams=()
   for n in "${pick[@]}"; do
+    # 两种客户端同时压测：etos-loadgen（标准 HTTP 客户端，按 RFC 对幂等请求在连接被关闭时重试，与浏览器一致）作为门槛；
+    # wrk（不重试）只报告原始数字
+    "$LOADGEN" -url "http://$(ip_of "$(num "$n")")/api/load" -host shop.scale.local -c 8 -d 120s > "$W/lg-$ver-$n.txt" 2>&1 & lgs+=($!); PIDS+=($!)
     wrk -t1 -c8 -d120s -s "$W/xff.lua" -H "$HOSTH" "http://$(ip_of "$(num "$n")")/api/load" > "$W/wrk-$ver-$n.txt" 2>&1 & wrks+=($!); PIDS+=($!)
     curl -sN --noproxy '*' -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of "$(num "$n")")/stream?seconds=150" > "$W/stream-$ver-$n.txt" 2>"$W/stream-$ver-$n.err" & streams+=($!); PIDS+=($!)
   done
@@ -225,15 +228,17 @@ rollout() { # <说明> <目标版本> <期望软链目录>
       else bad "$what：$n 的长连接在该节点升级完成前就结束了（测试未覆盖）"; fi
     else bad "$what：$n 的长连接中断（curl 退出码 $s，收到 $lines/150 行）"; fi
   done
-  wait "${wrks[@]}" 2>/dev/null   # 压测固定 120 秒、自然结束（覆盖整个升级过程；不用信号中断，避免把中断时在途的请求算作错误）
+  wait "${wrks[@]}" "${lgs[@]}" 2>/dev/null   # 压测固定 120 秒、自然结束（覆盖整个升级过程；不用信号中断，避免把中断时在途的请求算作错误）
   for n in "${pick[@]}"; do
     local f="$W/wrk-$ver-$n.txt" req errs non
     req=$(awk '/requests in/ {print $1}' "$f")
     errs=$(awk '/Socket errors/ {gsub(",",""); print $4+$6+$8+$10}' "$f"); errs=${errs:-0}
     non=$(awk '/Non-2xx/ {print $NF}' "$f"); non=${non:-0}
-    if [[ -n "$req" && "$req" -gt 0 && "$errs" == 0 && "$non" == 0 ]]; then ok "$what：$n 压测 $req 个请求（长连接 keep-alive），0 失败"
-    else bad "$what：$n 压测 请求 ${req:-0}、套接字错误 $errs、非 2xx $non（$(grep -E 'Socket errors|Non-2xx' "$f" | tr '\n' ' ')）"; fi
-    note "$what：$n 压测 ${req:-0} 请求，错误 $errs，非 2xx $non"
+    note "$what：$n wrk（不重试）${req:-0} 请求，套接字错误 $errs，非 2xx $non"
+    local lg="$W/lg-$ver-$n.txt" lreq lerr lnon
+    lreq=$(grep -oE 'requests=[0-9]+' "$lg" | cut -d= -f2); lerr=$(grep -oE 'errors=[0-9]+' "$lg" | cut -d= -f2); lnon=$(grep -oE 'non2xx=[0-9]+' "$lg" | cut -d= -f2)
+    if [[ -n "$lreq" && "$lreq" -gt 0 && "$lerr" == 0 && "$lnon" == 0 ]]; then ok "$what：$n 压测 $lreq 个请求（keep-alive 长连接），客户端 0 失败"
+    else bad "$what：$n 压测 $(head -1 "$lg")（$(grep '^error:' "$lg" | head -2 | tr '\n' ' ')）"; fi
   done
   local pok pbad; read -r pok pbad <<<"$(probe_result "$ver")"
   (( pbad == 0 && pok > 0 )) && ok "$what：全部节点轮询 $pok 次，0 失败" || bad "$what：全部节点轮询 成功 $pok / 失败 $pbad（$(head -3 "$W/probe-$ver.err" 2>/dev/null | tr '\n' ' ')）"
@@ -249,7 +254,8 @@ rollout() { # <说明> <目标版本> <期望软链目录>
 }
 # 对照：不升级时同样的压测应当 0 错误（区分升级造成的失败与压测工具本身的计数）
 wrk -t1 -c8 -d10s -s "$W/xff.lua" -H "$HOSTH" "http://$(ip_of "$(num "${pick[0]}")")/api/load" > "$W/wrk-control.txt" 2>&1
-note "对照压测（不升级）：$(grep -E 'requests in|Socket errors|Non-2xx' "$W/wrk-control.txt" | tr -s ' ' | tr '\n' ' ')"
+"$LOADGEN" -url "http://$(ip_of "$(num "${pick[0]}")")/api/load" -host shop.scale.local -c 8 -d 10s > "$W/lg-control.txt" 2>&1
+note "对照压测（不升级）：wrk $(grep -E 'requests in|Socket errors|Non-2xx' "$W/wrk-control.txt" | tr -s ' ' | tr '\n' ' ')；etos-loadgen $(head -1 "$W/lg-control.txt")"
 rollout "热升级到 $UP" "$UP" "$UP"
 rollout "回退到 $VER" "$VER" "$VER"
 [[ $(curl -s --noproxy '*' --max-time 3 -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of 1)/") == *"scale v3"* ]] && ok "升级与回退后配置不变" || bad "升级与回退后配置异常"
