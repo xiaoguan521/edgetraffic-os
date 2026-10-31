@@ -1,6 +1,6 @@
-# 静态构建的 syapp 只包含核心用到的 OpenSSL / 铜锁目标文件。Lua 附加包的模块与 etos.jwt（FFI）还需要下列函数，
+# 静态构建的 syapp 只包含核心用到的 OpenSSL / 铜锁 / PCRE2 目标文件。Lua 附加包的模块与 etos.jwt（FFI）还需要下列函数，
 # build-syapp.sh -S 以 -Wl,-u 强制链接并导出（-Wl,-E），不改变 syapp 的任何行为。
-# CI 的 lua 验收会用 nm 核对：附加包模块未定义的每个 OpenSSL 符号都必须由基础包导出；新增依赖时据此补充。
+# 构建时用 nm 核对：附加包模块每个未定义的强符号都必须由基础包或 ngx_devel_kit 模块提供；新增依赖时据此补充。
 # etos.jwt（FFI）
 EVP_sha256
 HMAC
@@ -117,3 +117,5 @@ i2d_OCSP_REQUEST
 i2d_PrivateKey
 i2d_SSL_SESSION
 i2d_X509
+# Lua 模块（ngx.re 的 DFA 匹配；其余 PCRE2 函数核心已使用）
+pcre2_dfa_match_8

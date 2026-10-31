@@ -41,9 +41,10 @@ VER=$($SY -v 2>&1 | sed -n 's|.*syapp/\([0-9.]*\).*|\1|p')
 bin_sha=$(sha256sum "$SY" | cut -c1-64)
 check "基础包 -V 带 auth_request" "$($SY -V 2>&1)" "http_auth_request_module"
 [[ $BASE == gmssl ]] && check "国密基础包 -V 带 enable-ntls" "$($SY -V 2>&1)" "enable-ntls"
+nm -D --defined-only "$SY" | awk '{print $NF}' | sort -u > "$W/exports"   # 写文件再查：管道里 grep -q 提前退出会在 pipefail 下误报
 missing=""
-for s in EVP_sha256 HMAC CRYPTO_memcmp BIO_new_mem_buf BIO_free PEM_read_bio_PUBKEY EVP_PKEY_free EVP_MD_CTX_new EVP_MD_CTX_free EVP_DigestVerifyInit EVP_DigestVerify ERR_clear_error; do
-  nm -D --defined-only "$SY" | awk '{print $NF}' | grep -qx "$s" || missing+=" $s"
+for s in EVP_sha256 HMAC CRYPTO_memcmp BIO_new_mem_buf BIO_free PEM_read_bio_PUBKEY EVP_PKEY_free EVP_MD_CTX_new EVP_MD_CTX_free EVP_DigestVerifyInit EVP_DigestVerify ERR_clear_error pcre2_dfa_match_8; do
+  grep -qx "$s" "$W/exports" || missing+=" $s"
 done
 [[ -z "$missing" ]] && ok "基础包导出 etos.jwt 需要的 OpenSSL 函数" || bad "基础包没有导出:$missing"
 # 渲染器黄金用例（含规则积木、外部鉴权；国密版另跑国密双证书）过真实基础包的 syapp -t
@@ -54,14 +55,6 @@ if out=$(sudo env "PATH=$PATH" CI=1 GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOM
 else
   bad "golden syapp -t: $(grep -E 'emerg|FAIL|failed' <<<"$out" | head -3 | tr '\n' ' ')"
 fi
-
-# 诊断：基础包导出了哪些符号，附加包模块还缺哪些（未带版本号的未定义符号必须由 syapp 提供）
-mkdir -p "$W/diag" && tar -C "$W/diag" -xzf "$luapkg"
-nm -D --defined-only "$SY" | awk '{print $NF}' | sort -u > "$W/exports"
-need=$(nm -D -u "$W/diag/addon/$BASE/ngx_http_lua_module.so" "$W/diag/addon/$BASE/ndk_http_module.so" 2>/dev/null | awk '{print $NF}' | grep -v '@' | sort -u)
-lack=$(comm -23 <(echo "$need") "$W/exports" | tr '\n' ' ')
-echo "::notice title=exports $BASE/$ARCH::dynsym=$(wc -l < "$W/exports") evp=$(grep -c '^EVP_' "$W/exports") ssl=$(grep -c '^SSL_' "$W/exports") pcre2=$(grep -c '^pcre2_' "$W/exports") ldopt=$($SY -V 2>&1 | grep -o 'with-ld-opt=[^ ]* [^ ]*' | head -c 80)"
-echo "::notice title=module needs but base lacks ($BASE/$ARCH)::${lack:0:3000}"
 
 echo "== 后端（第二个 syapp 实例，测试替身：业务后端与鉴权服务）"
 mkdir -p "$W/backend"

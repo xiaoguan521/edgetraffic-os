@@ -10,7 +10,7 @@
 #     KEEP_TLS_CLI=<路径> 时把铜锁的命令行工具复制出来（CI 用它做国密握手测试，不进安装包）。
 # LUA_MODULES_OUT=<目录>：基础包打包后，用完全相同的 configure 参数再编译 Lua 附加包的两个动态模块
 #     （ngx_devel_kit、lua 模块，需要 NDK_SRC / LUA_MODULE_SRC / LUAJIT_INC / LUAJIT_LIB），只输出 .so，
-#     并核对模块需要的每个 OpenSSL 符号都由基础包导出（见 dataplane/lua/openssl-exports.txt）。由 build-syapp-lua.sh 调用。
+#     并核对模块需要的每个符号都由基础包或 ngx_devel_kit 导出（见 dataplane/lua/base-exports.txt）。由 build-syapp-lua.sh 调用。
 # -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
 #     在 glibc 2.17 的构建环境（manylinux2014）中执行，即可覆盖 CentOS 7、麒麟 V10、统信 UOS、openEuler 与较新的发行版。
 #     DEPS_CACHE 指向已下载源码包的目录时优先使用缓存；MAX_GLIBC 设置后校验二进制不依赖更高版本的 glibc 符号。
@@ -84,12 +84,12 @@ if [[ $STATIC -eq 1 ]]; then
     DEP_OPTS=(--with-openssl="$TLS_DIR" --with-openssl-opt="no-shared no-tests no-docs")
   fi
   DEP_OPTS+=(--with-pcre="$PCRE2_DIR" --with-pcre-jit --with-zlib="$ZLIB_DIR")
-  # 静态 OpenSSL 只链入核心用到的目标文件：固定导出 Lua 附加包需要的函数（不影响任何行为）
+  # 静态 OpenSSL / PCRE2 只链入核心用到的目标文件：固定导出 Lua 附加包需要的函数（不影响任何行为）
   u=""
   while read -r sym; do
     [[ -z "$sym" || "$sym" == \#* ]] && continue
     u+=" -Wl,-u,$sym"
-  done < "$HERE/lua/openssl-exports.txt"
+  done < "$HERE/lua/base-exports.txt"
   DEP_OPTS+=(--with-ld-opt="${u# }")
 fi
 
@@ -186,14 +186,13 @@ if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
     install -m 0644 "objs/$m.so" "$LUA_MODULES_OUT/$m.so"
     strip --strip-unneeded "$LUA_MODULES_OUT/$m.so"
   done
-  # 模块未定义的 OpenSSL 符号必须全部由基础包导出，否则 load_module 会失败
-  nm -D --defined-only "$O/sbin/syapp" | awk '{print $NF}' | sort -u > "$WORK/exports"
-  missing=$(nm -D -u "$LUA_MODULES_OUT"/*.so | awk '{print $NF}' | sed 's/@.*//' \
-    | grep -E '^(SSL|SSL_CTX|SSL_SESSION|SSL_CIPHER|X509|EVP|PEM|BIO|d2i|i2d|OCSP|ERR|ASN1|OPENSSL|CRYPTO|OBJ|EC|RSA|BN|DH|HMAC)_' \
-    | sort -u | comm -23 - "$WORK/exports" || true)
-  if [[ -n "$missing" ]]; then
-    echo "Lua modules need OpenSSL symbols the base binary does not export: $missing" >&2
-    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=openssl exports::add to dataplane/lua/openssl-exports.txt: $(echo $missing)"
+  # 模块每个未定义的强符号（不带 glibc 版本号）都必须由基础包或先加载的 ngx_devel_kit 模块导出，否则 load_module 会失败
+  { nm -D --defined-only "$O/sbin/syapp"; nm -D --defined-only "$LUA_MODULES_OUT/ndk_http_module.so"; } | awk '{print $NF}' | sort -u > "$WORK/exports"
+  nm -D -u "$LUA_MODULES_OUT"/*.so | awk '$1 == "U" {print $2}' | grep -v '@' | sort -u > "$WORK/needs"
+  missing=$(comm -23 "$WORK/needs" "$WORK/exports" | tr '\n' ' ')
+  if [[ -n "${missing// }" ]]; then
+    echo "Lua modules need symbols the base binary does not export: $missing" >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::add to dataplane/lua/base-exports.txt: $missing"
     exit 7
   fi
   echo "LUA MODULES OK: $LUA_MODULES_OUT"

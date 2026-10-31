@@ -55,7 +55,7 @@
 
 基础包为此做了两处调整，都不改变不装附加包时的行为：
 - 编译外部鉴权需要的 `auth_request` 模块；
-- 固定导出附加包需要的 OpenSSL / 铜锁函数（`dataplane/lua/openssl-exports.txt`）。
+- 固定导出附加包需要的 OpenSSL / 铜锁函数（`dataplane/lua/base-exports.txt`）。
 
 ### 安装与卸载（节点上以 root 执行）
 
