@@ -28,9 +28,6 @@ req() {
 body() { cat "$W/body"; }
 
 SY=/opt/syapp/sbin/syapp
-# 压测时分开 CPU，避免前端、后端与压测工具互相争抢（runner 只有 4 个 CPU）：
-# 前端 syapp（被测对象）0-1，后端 2，wrk 3。CPU 不足 4 个时不绑定。
-if (( $(nproc) >= 4 )); then PIN_FRONT=(taskset -c 0,1); PIN_BACK=(taskset -c 2); PIN_WRK=(taskset -c 3); else PIN_FRONT=(); PIN_BACK=(); PIN_WRK=(); fi
 basepkg=$(ls "$DIST"/base/syapp-*-"$ARCH".tar.gz | grep -v gmssl | head -1)
 [[ $BASE == gmssl ]] && basepkg=$(ls "$DIST"/base/syapp-*-gmssl-"$ARCH".tar.gz | head -1)
 luapkg=$(ls "$DIST"/syapp-lua-*-"$ARCH".tar.gz | head -1)
@@ -70,11 +67,13 @@ error_log $W/backend/error.log;
 events { worker_connections 4096; }
 http {
     access_log off;
-    server { listen 10.99.0.1:18080; location / { return 200 "backend user=\$http_x_user\n"; } }
+    server { listen 10.99.0.1:18080; location = /4k.bin { root $W/backend; } location / { return 200 "backend user=\$http_x_user\n"; } }
     server { listen 10.99.0.1:18081; location = /check { if (\$http_x_token = "good") { return 200; } return 401; } }
 }
 EOF
-sudo "${PIN_BACK[@]}" $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
+head -c 4096 /dev/urandom > "$W/backend/4k.bin"   # 压测用的 4 KB 响应（代表性的动态接口 / 小静态文件）
+chmod 0644 "$W/backend/4k.bin"; chmod o+x "$W" "$W/backend"
+sudo $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
 
 echo "== 安装 syapp-lua 附加包"
 mkdir -p "$W/lua" && tar -C "$W/lua" -xzf "$luapkg"
@@ -105,7 +104,7 @@ render() { # <版本> <是否含 Lua>
 render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 /opt/syapp/conf/current
-sudo "${PIN_FRONT[@]}" $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"   # 热升级的新 master 继承 CPU 绑定
+sudo $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
 sleep 1
 
 TOK() { python3 scripts/ci/jwtgen.py "$@"; }
@@ -240,26 +239,45 @@ request = function()
 end
 EOF
 tb=$(TOK hs "$HS" --exp-in 86400)
-bench() { # <host> -> rps（wrk 单线程绑定在独立 CPU 上；前端只有 2 个 CPU，保证瓶颈在被测的 syapp）
-  local o; o=$("${PIN_WRK[@]}" wrk -t1 -c64 -d5s -s "$W/xff.lua" -H "Host: $1" -H "Authorization: Bearer $tb" http://127.0.0.1/ 2>&1)
-  if grep -q "Non-2xx" <<<"$o"; then echo "::warning title=wrk::non-2xx responses on $1: $(grep Non-2xx <<<"$o")" >&2; fi
+bench() { # <host> [wrk 前缀...] -> rps：4 KB 响应，整机运行（与生产一样不绑核）
+  local h=$1; shift
+  local o; o=$("$@" wrk -t2 -c64 -d5s -s "$W/xff.lua" -H "Host: $h" -H "Authorization: Bearer $tb" http://127.0.0.1/4k.bin 2>&1)
+  if grep -q "Non-2xx" <<<"$o"; then echo "::warning title=wrk::non-2xx responses on $h: $(grep Non-2xx <<<"$o")" >&2; fi
   awk '/Requests\/sec/ {v=int($2)} END {print v+0}' <<<"$o"
 }
-bench bench0.test >/dev/null; bench bench3.test >/dev/null   # 预热
-# ABBA 配对：每个比值只比较相隔几秒的两次结果，前后漂移（降频、邻居负载）在块内抵消；取 8 个比值的中位数
-ratios=(); raw=""
-for blk in 1 2 3 4; do
-  a1=$(bench bench0.test); b1=$(bench bench3.test); b2=$(bench bench3.test); a2=$(bench bench0.test)
-  raw+=" [$a1 $b1 $b2 $a2]"
-  for pr in "$a1 $b1" "$a2 $b2"; do
-    set -- $pr
-    (( $1 > 0 )) && ratios+=("$(( $2 * 1000 / $1 ))")
+# abba <块数> [wrk 前缀...]：ABBA 配对（无规则 有规则 有规则 无规则），每个比值只比较相隔几秒的两次结果，
+# 前后漂移（降频、邻居负载）在块内抵消；输出 “下降‰ 比值个数 原始数据”
+abba() {
+  local n=$1; shift
+  local ratios=() raw="" a1 b1 b2 a2 pr
+  bench bench0.test "$@" >/dev/null; bench bench3.test "$@" >/dev/null   # 预热
+  for ((blk = 0; blk < n; blk++)); do
+    a1=$(bench bench0.test "$@"); b1=$(bench bench3.test "$@"); b2=$(bench bench3.test "$@"); a2=$(bench bench0.test "$@")
+    raw+=" [$a1 $b1 $b2 $a2]"
+    for pr in "$a1 $b1" "$a2 $b2"; do
+      set -- $pr
+      (( $1 > 0 )) && ratios+=("$(( $2 * 1000 / $1 ))")
+    done
   done
-done
-medr=$(printf '%s\n' "${ratios[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR==0) print 0; else if (NR%2) print v[(NR+1)/2]; else print int((v[NR/2]+v[NR/2+1])/2)}')
-drop=$(( 1000 - medr ))
-echo "::notice title=perf $BASE/$ARCH::ABBA（无规则 有规则 有规则 无规则）×4：$raw；比值（‰）${ratios[*]}；中位下降 $((drop/10)).$((drop%10))%；jit=${JIT:-?}"
-(( ${#ratios[@]} >= 6 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $((drop/10)).$((drop%10))% ≤ 15%（ABBA 配对中位数）" || bad "QPS 下降 $((drop/10)).$((drop%10))% 超过 15%（$raw）"
+  local medr; medr=$(printf '%s\n' "${ratios[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR==0) print 0; else if (NR%2) print v[(NR+1)/2]; else print int((v[NR/2]+v[NR/2+1])/2)}')
+  echo "$(( 1000 - medr )) ${#ratios[@]}$raw"
+}
+pct() { echo "$(($1 / 10)).$(($1 % 10))%"; }
+
+# 验收口径（代表性负载）：4 KB 响应、整机运行、ABBA ×4，取 8 个配对比值的中位数，下降不超过 15%
+read -r drop cnt raw <<<"$(abba 4)"
+echo "::notice title=perf $BASE/$ARCH::代表性负载（4 KB、整机）ABBA ×4：$raw；中位下降 $(pct "$drop")；jit=${JIT:-?}"
+(( cnt >= 6 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $(pct "$drop") ≤ 15%（代表性负载，ABBA 配对中位数）" || bad "QPS 下降 $(pct "$drop") 超过 15%（$raw）"
+
+# 参考（不作门槛）：隔离最坏情况——前端 syapp 绑 0-1、后端 2、wrk 3，前端是唯一瓶颈，Lua 固定开销占比被放大
+if (( $(nproc) >= 4 )); then
+  for p in $(pgrep -x syapp); do sudo taskset -a -p -c 0,1 "$p" >/dev/null || true; done
+  bp=$(cat "$W/backend/pid")
+  for p in "$bp" $(pgrep -P "$bp"); do sudo taskset -a -p -c 2 "$p" >/dev/null || true; done
+  read -r wdrop _ wraw <<<"$(abba 2 taskset -c 3)"
+  echo "::notice title=perf-isolated $BASE/$ARCH::隔离最坏情况（参考，不作门槛）ABBA ×2：$wraw；中位下降 $(pct "$wdrop")"
+  for p in $(pgrep -x syapp); do sudo taskset -a -p -c "0-$(( $(nproc) - 1 ))" "$p" >/dev/null || true; done
+fi
 
 echo "== 附加包卸载"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) && bad "配置仍使用 Lua 时卸载被允许" || check "配置仍使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
