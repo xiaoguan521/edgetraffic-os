@@ -18,9 +18,9 @@
 
 执行顺序由请求处理阶段决定：
 1. 拒绝 / 跳转（rewrite）；
-2. 限速（preaccess）；
-3. 外部鉴权（access）；
-4. JWT（access，在外部鉴权之后）。
+2. JWT（rewrite，紧接在拒绝 / 跳转之后；用 set_by_lua 同步校验，只有命中规则的请求才进入 Lua）；
+3. 限速（preaccess）；
+4. 外部鉴权（access）。
 
 同一阶段内按规则顺序执行。ACME 验证路径 `/.well-known/acme-challenge/` 不受任何规则影响。
 

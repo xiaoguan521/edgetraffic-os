@@ -10,7 +10,7 @@ local json = require "etos.json"
 
 local C = ffi.C
 local ngx = ngx
-local ngx_var, ngx_time, ngx_log, ngx_exit = ngx.var, ngx.time, ngx.log, ngx.exit
+local ngx_var, ngx_time, ngx_log = ngx.var, ngx.time, ngx.log
 local decode_base64 = ngx.decode_base64
 local type, tostring, pairs = type, tostring, pairs
 local sub, find, gsub, rep = string.sub, string.find, string.gsub, string.rep
@@ -120,10 +120,11 @@ local function aud_ok(want, aud)
     return false
 end
 
+-- deny 记录原因并返回 "401"：渲染器生成的配置在 set_by_lua 之后原生 return 401，
+-- WWW-Authenticate 由 server 层 add_header 按结果输出（set_by_lua 中不能调用 ngx.exit / ngx.header）
 local function deny(r, why)
     ngx_log(ngx.INFO, "jwt rejected: ", why)
-    ngx.header["WWW-Authenticate"] = 'Bearer error="invalid_token"'
-    return ngx_exit(401)
+    return "401"
 end
 
 local function set_subject(r, sub_claim)
@@ -134,12 +135,12 @@ local function set_subject(r, sub_claim)
     end
 end
 
--- check 校验当前请求；失败时直接返回 401 结束请求。
-function M.check(id)
+-- verify 校验当前请求（在 set_by_lua 中同步执行，不让出）：通过返回 ""，失败返回 "401"。
+function M.verify(id)
     local r = rules[id]
     if not r then
         ngx_log(ngx.ERR, "etos.jwt: unknown rule ", id)
-        return ngx_exit(500)
+        return "401"
     end
     if r.subject_header ~= "" then
         ngx.req.clear_header(r.subject_header) -- 客户端不能伪造转发给上游的身份头
@@ -157,7 +158,7 @@ function M.check(id)
     local hit = r.cache:get(raw)
     if hit then
         set_subject(r, hit)
-        return true
+        return ""
     end
     local token = raw
     if not r.cookie_var then
@@ -195,7 +196,7 @@ function M.check(id)
     if ttl > 60 then ttl = 60 end
     if ttl > 0 then r.cache:set(raw, type(claims.sub) == "string" and claims.sub or "", ttl) end
     set_subject(r, claims.sub)
-    return true
+    return ""
 end
 
 return M

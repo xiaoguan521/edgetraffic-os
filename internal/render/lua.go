@@ -173,20 +173,39 @@ func renderLuaHTTP(in Input) string {
 	return b.String()
 }
 
-// renderJWTAccess 生成 server 层的 access_by_lua 块（规则命中时校验 JWT）。
-func renderJWTAccess(s Site) string {
+// renderJWTRewrite 生成 server 层的 JWT 校验（rewrite 阶段，紧接在拒绝 / 跳转之后）。
+//
+// 用 set_by_lua_block 在主 Lua 线程中同步校验（不为每个请求创建协程，开销远低于 access_by_lua），
+// 并放在规则自己的 if 里：未命中规则的请求完全不进入 Lua。结果写入每条规则自己的变量，
+// 失败时原生 return 401；WWW-Authenticate 由 server 层 add_header 按结果变量输出（值为空时不输出）。
+func renderJWTRewrite(s Site) string {
 	rules := jwtRules(s, "")
 	if len(rules) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("    access_by_lua_block {\n        local jwt = require(\"etos.jwt\")\n")
 	for _, j := range rules {
-		fmt.Fprintf(&b, "        if ngx.var.%s == \"1\" then jwt.check(%s) end\n", j.Var, luaStr(j.ID))
+		fmt.Fprintf(&b, "    set  $%s_jwt  \"\";\n    if ($%s) {\n        set_by_lua_block  $%s_jwt  { return require(\"etos.jwt\").verify(%s) }\n    }\n    if ($%s_jwt) {\n        return  401;\n    }\n",
+			j.Var, j.Var, j.Var, luaStr(j.ID), j.Var)
 	}
-	b.WriteString("    }\n")
+	fmt.Fprintf(&b, "    add_header  WWW-Authenticate  $%s_jwt_www  always;\n", siteIdent(s.Name))
 	return b.String()
 }
+
+// renderJWTHTTP 生成 http 层的 WWW-Authenticate 取值（任一 JWT 规则失败时输出）。
+func renderJWTHTTP(s Site) string {
+	rules := jwtRules(s, "")
+	if len(rules) == 0 {
+		return ""
+	}
+	key := ""
+	for _, j := range rules {
+		key += "$" + j.Var + "_jwt"
+	}
+	return fmt.Sprintf("map  %s  $%s_jwt_www {\n    \"\"  \"\";\n    default  'Bearer error=\"invalid_token\"';\n}\n", confQuote(key), siteIdent(s.Name))
+}
+
+func siteIdent(name string) string { return "etos_" + strings.ReplaceAll(name, "-", "_") }
 
 // luaLoadModules 是 syapp.conf 开头加载附加包模块的指令（相对 /opt/syapp）。
 const luaLoadModules = "load_module  modules/lua/ndk_http_module.so;\nload_module  modules/lua/ngx_http_lua_module.so;\n"

@@ -18,7 +18,7 @@ import (
 // JWT 校验需要 Lua 附加包（syapp-lua），见 lua.go。用户输入只经下面的校验与转义函数进入配置，
 // 不拼接任何未校验的字符串。
 //
-// 执行顺序按请求处理阶段：拒绝 / 跳转（rewrite）→ 限速（preaccess）→ 外部鉴权（access）→ JWT（access，Lua）。
+// 执行顺序按请求处理阶段：拒绝 / 跳转 → JWT（rewrite，Lua）→ 限速（preaccess）→ 外部鉴权（access）。
 // 同一阶段内按规则顺序。ACME 验证路径不受任何规则影响。
 
 // 规则数量上限。
@@ -398,6 +398,7 @@ func renderRulesHTTP(s Site) string {
 			fmt.Fprintf(&b, "limit_req_zone  $%s_key  zone=%s:10m  rate=%dr/%s;\n", v, v, r.Action.Rate, r.Action.Per)
 		}
 	}
+	b.WriteString(renderJWTHTTP(s))
 	return b.String()
 }
 
@@ -407,7 +408,7 @@ func renderRulesServer(s Site) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n    # 访问规则：拒绝 / 跳转 → 限速 → 外部鉴权 → JWT\n")
+	b.WriteString("\n    # 访问规则：拒绝 / 跳转 → JWT → 限速 → 外部鉴权\n")
 	for i, r := range s.Rules {
 		v := ruleVar(s.Name, i)
 		a := r.Action
@@ -421,6 +422,9 @@ func renderRulesServer(s Site) string {
 			}
 			fmt.Fprintf(&b, "    if ($%s) {\n        return  %d  \"%s\";\n    }\n", v, a.Status, to)
 		}
+	}
+	if jwt := renderJWTRewrite(s); jwt != "" {
+		b.WriteString(jwt)
 	}
 	for i, r := range s.Rules {
 		if r.Action.Type == "rate_limit" {
@@ -438,9 +442,6 @@ func renderRulesServer(s Site) string {
 			// 主请求先在 rewrite 阶段算出命中结果，子请求共享该变量
 			fmt.Fprintf(&b, "    set  $etos_auth_gate  $%s;\n    auth_request  %s%s;\n", ruleVar(s.Name, i), authLocPrefix, strings.ReplaceAll(s.Name, "-", "_"))
 		}
-	}
-	if lua := renderJWTAccess(s); lua != "" {
-		b.WriteString(lua)
 	}
 	return b.String()
 }

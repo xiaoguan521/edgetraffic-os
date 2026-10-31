@@ -66,9 +66,10 @@ func TestLuaRender(t *testing.T) {
 	}
 	site := string(b.Files["conf.d/site-shop.conf"])
 	for _, want := range []string{
-		"access_by_lua_block {\n        local jwt = require(\"etos.jwt\")",
-		`if ngx.var.etos_shop_r0 == "1" then jwt.check("shop/api-hs") end`,
-		`if ngx.var.etos_shop_r1 == "1" then jwt.check("shop/app-rs") end`,
+		"set  $etos_shop_r0_jwt  \"\";\n    if ($etos_shop_r0) {\n        set_by_lua_block  $etos_shop_r0_jwt  { return require(\"etos.jwt\").verify(\"shop/api-hs\") }\n    }\n    if ($etos_shop_r0_jwt) {\n        return  401;",
+		`set_by_lua_block  $etos_shop_r1_jwt  { return require("etos.jwt").verify("shop/app-rs") }`,
+		"add_header  WWW-Authenticate  $etos_shop_jwt_www  always;",
+		`map  "$etos_shop_r0_jwt$etos_shop_r1_jwt"  $etos_shop_jwt_www {`,
 	} {
 		if !strings.Contains(site, want) {
 			t.Errorf("site conf lacks %q", want)
