@@ -17,6 +17,7 @@ const router = createRouter({
         { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '总览' } },
         { path: 'nodes', name: 'nodes', component: () => import('../views/Nodes.vue'), meta: { title: '节点' } },
         { path: 'sites', name: 'sites', component: () => import('../views/Sites.vue'), meta: { title: '站点与上游' } },
+        { path: 'ip-sets', name: 'ip-sets', component: () => import('../views/IpSets.vue'), meta: { title: 'IP 集与地域库' } },
         { path: 'streams', name: 'streams', component: () => import('../views/Streams.vue'), meta: { title: '四层代理' } },
         { path: 'certificates', name: 'certificates', component: () => import('../views/Certificates.vue'), meta: { title: '证书' } },
         { path: 'imports', name: 'imports', component: () => import('../views/Imports.vue'), meta: { title: '配置导入' } },

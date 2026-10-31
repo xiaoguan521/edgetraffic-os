@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
+import RulesEditor, { type Rule as AccessRule } from './RulesEditor.vue'
 
 const props = defineProps<{ open: boolean; site: any | null; groupId: number; upstreams: any[] }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -26,6 +27,7 @@ const blank = () => ({
   enabled: true,
   version: 0,
   routes: [{ path: '/', match: 'prefix', mode: 'static', static: { index_html: '<h1>Hello from EdgeTraffic OS</h1>\n' } }] as Route[],
+  rules: [] as AccessRule[],
 })
 const f = reactive(blank())
 const saving = ref(false)
@@ -33,6 +35,7 @@ const error = ref('')
 const isNew = computed(() => !props.site)
 const certs = ref<any[]>([])
 const bundles = ref<any[]>([])
+const ipSets = ref<any[]>([])
 async function loadBundles() {
   bundles.value = await api.get('/static-bundles', { group_id: props.groupId }).catch(() => [])
 }
@@ -90,6 +93,7 @@ watch(
     error.value = ''
     api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
     loadBundles()
+    api.get('/ip-sets', { group_id: props.groupId }).then((x) => (ipSets.value = x)).catch(() => {})
     Object.assign(f, blank())
     if (props.site) {
       const s = props.site.spec
@@ -104,6 +108,7 @@ watch(
         enabled: props.site.enabled,
         version: props.site.version,
         routes: JSON.parse(JSON.stringify(s.routes)),
+        rules: JSON.parse(JSON.stringify(s.rules || [])).map((r: AccessRule) => ({ ...r, conditions: (r.conditions || []).map((c) => ({ ...c, negate: !!c.negate })) })),
       })
     }
   },
@@ -136,6 +141,17 @@ async function save() {
     }),
   }
   if (f.https) spec.https = { cert_id: f.cert_id, ...(f.gm_cert_id ? { gm_cert_id: f.gm_cert_id } : {}) }
+  if (f.rules.length) {
+    // 密钥只写不读：留空表示沿用已保存的密钥；has_secret 是服务端的响应字段，不回传
+    spec.rules = f.rules.map((r) => {
+      const a = JSON.parse(JSON.stringify(r.action))
+      if (a.jwt) {
+        delete a.jwt.has_secret
+        if (!a.jwt.secret) delete a.jwt.secret
+      }
+      return { name: r.name, conditions: r.conditions, action: a }
+    })
+  }
   try {
     if (isNew.value) await api.post('/sites', { group_id: props.groupId, enabled: f.enabled, spec })
     else await api.put(`/sites/${props.site.id}`, { version: f.version, enabled: f.enabled, spec })
@@ -219,6 +235,8 @@ const modes = [
         </div>
         <div v-else class="deny">返回 403</div>
       </div>
+
+      <RulesEditor v-model="f.rules" :upstreams="upstreams" :ip-sets="ipSets" />
 
       <a-alert v-if="error" type="error" :message="error" show-icon style="margin-top: 16px" />
     </a-form>

@@ -47,7 +47,7 @@ async function startAgent() {
   }
 }
 const versions = computed(() => [...new Set(packages.value.filter((p) => p.name === 'syapp' && p.variant === variant.value).map((p) => p.version))])
-const variantName: Record<string, string> = { standard: '标准版', gmssl: '国密版', lua: 'Lua 版', agent: 'agent' }
+const variantName: Record<string, string> = { standard: '标准版', gmssl: '国密版', lua: 'Lua 附加包', agent: 'agent' }
 const nodeStatus: Record<string, { t: string; c: string }> = {
   pending: { t: '等待', c: 'default' },
   upgrading: { t: '升级中', c: 'processing' },
