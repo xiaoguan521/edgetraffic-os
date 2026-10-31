@@ -249,25 +249,24 @@ bench() { # <host> [wrk 前缀...] -> rps：4 KB 响应，整机运行（与生�
 # 前后漂移（降频、邻居负载）在块内抵消；输出 “下降‰ 比值个数 原始数据”
 abba() {
   local n=$1; shift
-  local ratios=() raw="" a1 b1 b2 a2 pr
+  local ratios=() raw="" a1 b1 b2 a2
   bench bench0.test "$@" >/dev/null; bench bench3.test "$@" >/dev/null   # 预热
   for ((blk = 0; blk < n; blk++)); do
     a1=$(bench bench0.test "$@"); b1=$(bench bench3.test "$@"); b2=$(bench bench3.test "$@"); a2=$(bench bench0.test "$@")
     raw+=" [$a1 $b1 $b2 $a2]"
-    for pr in "$a1 $b1" "$a2 $b2"; do
-      set -- $pr
-      (( $1 > 0 )) && ratios+=("$(( $2 * 1000 / $1 ))")
-    done
+    # 不能用 set --：会覆盖函数参数中的 wrk 前缀
+    (( a1 > 0 )) && ratios+=("$(( b1 * 1000 / a1 ))")
+    (( a2 > 0 )) && ratios+=("$(( b2 * 1000 / a2 ))")
   done
   local medr; medr=$(printf '%s\n' "${ratios[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR==0) print 0; else if (NR%2) print v[(NR+1)/2]; else print int((v[NR/2]+v[NR/2+1])/2)}')
   echo "$(( 1000 - medr )) ${#ratios[@]}$raw"
 }
-pct() { echo "$(($1 / 10)).$(($1 % 10))%"; }
+pct() { local v=$1 sg=""; (( v < 0 )) && { sg=-; v=$(( -v )); }; echo "$sg$((v / 10)).$((v % 10))%"; }
 
 # 验收口径（代表性负载）：4 KB 响应、整机运行、ABBA ×4，取 8 个配对比值的中位数，下降不超过 15%
 read -r drop cnt raw <<<"$(abba 4)"
 echo "::notice title=perf $BASE/$ARCH::代表性负载（4 KB、整机）ABBA ×4：$raw；中位下降 $(pct "$drop")；jit=${JIT:-?}"
-(( cnt >= 6 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $(pct "$drop") ≤ 15%（代表性负载，ABBA 配对中位数）" || bad "QPS 下降 $(pct "$drop") 超过 15%（$raw）"
+(( cnt >= 8 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $(pct "$drop") ≤ 15%（代表性负载，ABBA 配对中位数）" || bad "QPS 下降 $(pct "$drop") 超过 15%（$raw）"
 
 # 参考（不作门槛）：隔离最坏情况——前端 syapp 绑 0-1、后端 2、wrk 3，前端是唯一瓶颈，Lua 固定开销占比被放大
 if (( $(nproc) >= 4 )); then
