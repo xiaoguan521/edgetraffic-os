@@ -1,0 +1,86 @@
+name: lua
+
+# P10 验收：syapp-lua 附加包 × 标准版 / 国密版基础包 × amd64 / arm64。
+# 只在数据面、渲染器、wrapper 或验收脚本变化时运行（p10/** 分支用于开发迭代，不触发其他工作流）。
+on:
+  push:
+    branches: [main, "p10/**"]
+    paths:
+      - "dataplane/**"
+      - "internal/render/**"
+      - "internal/wrapper/**"
+      - "scripts/ci/lua-acceptance.sh"
+      - "scripts/ci/jwtgen.py"
+      - ".github/workflows/lua.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      # C 部分（基础包与模块）按数据面输入缓存；etos 规则库与安装脚本由验收任务从源码刷新进附加包
+      - name: cache add-on build
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist-lua
+          key: syapp-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+      - name: build syapp-lua (standard + Tongsuo bases, static)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p dist-lua
+          KEEP_TLS_CLI="$PWD/dist-lua/tongsuo" dataplane/build-syapp-lua.sh -o dist-lua
+          ls -l dist-lua dist-lua/base
+
+  accept:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        base: [standard, gmssl]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: restore add-on build
+        uses: actions/cache/restore@v4
+        with:
+          path: dist-lua
+          key: syapp-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+          fail-on-cache-miss: true
+      - name: refresh etos library and install scripts from source
+        run: |
+          p=$(ls dist-lua/syapp-lua-*-${{ matrix.arch }}.tar.gz)
+          d=$(mktemp -d); tar -C "$d" -xzf "$p"
+          rm -rf "$d/addon/lualib/etos"; cp -r dataplane/lua/lualib/etos "$d/addon/lualib/"
+          install -m 0755 dataplane/lua/install.sh dataplane/lua/uninstall.sh "$d/"
+          tar -C "$d" --owner=0 --group=0 -czf "$p" install.sh uninstall.sh addon
+      - name: tools (wrk, CI package key, wrapper, license server)
+        run: |
+          sudo apt-get install -y -qq wrk >/dev/null
+          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
+          pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syapp-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syapp-wrapper
+      - name: P10 acceptance (${{ matrix.base }} / ${{ matrix.arch }})
+        env:
+          PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
+          PKG_KID: etos-ci-pkg-ephemeral
+          WRAPPER: /tmp/syapp-wrapper
+          LIC: /tmp/lic
+        run: scripts/ci/lua-acceptance.sh dist-lua ${{ matrix.base }}
