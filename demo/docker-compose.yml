@@ -17,7 +17,7 @@ volumes:
 
 services:
   console:
-    build: { context: .., dockerfile: demo/Dockerfile.console, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    build: { context: .., dockerfile: demo/Dockerfile.console, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}", EXTRA_PKG_KEY: "${EXTRA_PKG_KEY:-}" } }
     image: ${ETOS_REGISTRY:-edgetraffic-os}/console:${ETOS_TAG:-demo}
     environment:
       ETOS_GRPC_HOSTS: "console,172.30.0.10"
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   node1:
-    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}", EXTRA_PKG_KEY: "${EXTRA_PKG_KEY:-}" } }
     image: ${ETOS_REGISTRY:-edgetraffic-os}/node:${ETOS_TAG:-demo}
     hostname: edge-sg-01
     ulimits: { nofile: { soft: 65535, hard: 65535 } }
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   node2:
-    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}" } }
+    build: { context: .., dockerfile: demo/Dockerfile.node, args: { EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}", EXTRA_PKG_KEY: "${EXTRA_PKG_KEY:-}" } }
     image: ${ETOS_REGISTRY:-edgetraffic-os}/node:${ETOS_TAG:-demo}
     hostname: edge-sg-02
     ulimits: { nofile: { soft: 65535, hard: 65535 } }

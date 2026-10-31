@@ -11,9 +11,10 @@ RUN dataplane/build-syapp.sh -o /out
 FROM golang:1.27 AS go
 # 仅 CI 端到端测试注入临时授权公钥；正式与演示构建留空
 ARG EXTRA_LICENSE_KEY=""
+ARG EXTRA_PKG_KEY=""
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY}" -o /out/ ./cmd/syapp-agent ./cmd/syapp-wrapper
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY} -X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=${EXTRA_PKG_KEY}" -o /out/ ./cmd/syapp-agent ./cmd/syapp-wrapper
 
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends libpcre2-8-0 libssl3t64 zlib1g sudo \
