@@ -18,7 +18,7 @@
 
 执行顺序由请求处理阶段决定：
 1. 拒绝 / 跳转（rewrite）；
-2. JWT（rewrite，紧接在拒绝 / 跳转之后；用 set_by_lua 同步校验，只有命中规则的请求才进入 Lua）；
+2. JWT（rewrite，紧接在拒绝 / 跳转之后；用 set_by_lua 同步校验，令牌由 syapp 原生取值后作为参数传入，只有命中规则的请求才进入 Lua）；
 3. 限速（preaccess）；
 4. 外部鉴权（access）。
 

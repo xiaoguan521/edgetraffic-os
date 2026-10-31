@@ -175,7 +175,7 @@ func renderLuaHTTP(in Input) string {
 
 // renderJWTRewrite 生成 server 层的 JWT 校验（rewrite 阶段，紧接在拒绝 / 跳转之后）。
 //
-// 用 set_by_lua_block 在主 Lua 线程中同步校验（不为每个请求创建协程，开销远低于 access_by_lua），
+// 用 set_by_lua 在主 Lua 线程中同步校验（不为每个请求创建协程，开销远低于 access_by_lua），
 // 并放在规则自己的 if 里：未命中规则的请求完全不进入 Lua。结果写入每条规则自己的变量，
 // 失败时原生 return 401；WWW-Authenticate 由 server 层 add_header 按结果变量输出（值为空时不输出）。
 func renderJWTRewrite(s Site) string {
@@ -185,8 +185,13 @@ func renderJWTRewrite(s Site) string {
 	}
 	var b strings.Builder
 	for _, j := range rules {
-		fmt.Fprintf(&b, "    set  $%s_jwt  \"\";\n    if ($%s) {\n        set_by_lua_block  $%s_jwt  { return require(\"etos.jwt\").verify(%s) }\n    }\n    if ($%s_jwt) {\n        return  401;\n    }\n",
-			j.Var, j.Var, j.Var, luaStr(j.ID), j.Var)
+		// 令牌作为参数传入（原生取值），Lua 侧不再查变量；代码只含 \ddd 转义的字面量，放在单引号里也安全
+		src := "$http_authorization"
+		if j.Rule.Source == "cookie" {
+			src = "$cookie_" + j.Rule.Cookie
+		}
+		fmt.Fprintf(&b, "    set  $%s_jwt  \"\";\n    if ($%s) {\n        set_by_lua  $%s_jwt  'return require(\"etos.jwt\").verify(%s, ngx.arg[1])'  %s;\n    }\n    if ($%s_jwt) {\n        return  401;\n    }\n",
+			j.Var, j.Var, j.Var, luaStr(j.ID), src, j.Var)
 	}
 	fmt.Fprintf(&b, "    add_header  WWW-Authenticate  $%s_jwt_www  always;\n", siteIdent(s.Name))
 	return b.String()
