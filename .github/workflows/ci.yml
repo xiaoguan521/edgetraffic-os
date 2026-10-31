@@ -67,8 +67,10 @@ jobs:
       - name: upgrade from v0.1.0 without data loss (SQLite and PostgreSQL)
         # 规格书 12.3 P6：用真实的 v0.1.0 控制台建库写数据，再用当前控制台打开同一个库逐项核对
         run: |
-          git fetch -q --depth 1 origin tag v0.1.0
-          git worktree add -q /tmp/v010 v0.1.0
+          # v0.1.0 发布的提交（标签只在发布机上，按提交哈希获取）
+          V010=a45301108fa7b5ea9702d000197fb83f60036cf4
+          git fetch -q --depth 1 origin "$V010"
+          git worktree add -q --detach /tmp/v010 "$V010"
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           (cd /tmp/v010 && CGO_ENABLED=0 go build -mod=vendor -o /tmp/old-console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console \
             && go build -mod=vendor -o /tmp/old-lic ./cmd/syapp-license-server)
