@@ -3,6 +3,8 @@ package ha
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -110,4 +112,31 @@ func TestSessionLossStepsDownAndRecovers(t *testing.T) {
 	}
 	waitFor(t, func() bool { return resigns.Load() == 1 })
 	waitFor(t, func() bool { return a.IsLeader() && leads.Load() == 2 })
+}
+
+// 主控制台所在主机断电或断网时不会发 FIN，数据库要靠 TCP 探测发现会话已死才释放锁。
+// 持锁会话必须把探测收紧到秒级（默认 2 小时），否则备控制台迟迟无法接管（规格书 P9：切换 < 30 秒）。
+func TestLockSessionDetectsDeadPeer(t *testing.T) {
+	db := pg(t)
+	e := &Elector{DB: db, Interval: time.Second}
+	conn, ok := e.tryLock(context.Background())
+	if !ok {
+		t.Fatal("lock not acquired")
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", LockKey)
+		conn.Close()
+	}()
+	for name, max := range map[string]int{"tcp_keepalives_idle": 5, "tcp_keepalives_interval": 2, "tcp_keepalives_count": 3, "tcp_user_timeout": 10000} {
+		var v string
+		if err := conn.QueryRowContext(context.Background(), "SELECT current_setting($1)", name).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		// 本机 Unix 套接字连接时 PostgreSQL 把这些值报告为 0（不适用）；TCP 连接上必须不大于上限
+		var n int
+		fmt.Sscan(strings.TrimSuffix(v, "ms"), &n)
+		if n > max || (n == 0 && !strings.Contains(os.Getenv("ETOS_TEST_DB"), "host=/")) {
+			t.Errorf("%s = %s, want 1..%d", name, v, max)
+		}
+	}
 }

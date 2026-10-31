@@ -82,6 +82,18 @@ func (e *Elector) tryLock(ctx context.Context) (*sql.Conn, bool) {
 		e.warn("ha: database unavailable", err)
 		return nil, false
 	}
+	// 主机断电或断网时不会发 FIN：数据库靠 TCP 探测发现持锁会话已死才会释放锁，默认要 2 小时。
+	// 在这条会话上收紧到约 11 秒（空闲 5 秒后每 2 秒探测、3 次无应答即断开；有未确认数据时 10 秒超时），
+	// 加上备控制台的轮询周期，接管时间远小于规格书要求的 30 秒。旧主自己的探活（每个周期一次，超时一个周期）
+	// 先于数据库发现断连并降级，所以不会出现两个主。Unix 套接字连接上这些设置不适用，失败时忽略。
+	for _, s := range []string{
+		"SET tcp_keepalives_idle = 5", "SET tcp_keepalives_interval = 2",
+		"SET tcp_keepalives_count = 3", "SET tcp_user_timeout = 10000",
+	} {
+		if _, err := conn.ExecContext(ctx, s); err != nil {
+			e.warn("ha: "+s, err)
+		}
+	}
 	var got bool
 	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", LockKey).Scan(&got); err != nil || !got {
 		if err != nil {

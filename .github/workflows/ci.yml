@@ -75,6 +75,8 @@ jobs:
           scripts/ci/upgrade-from-v010.sh /tmp/old-console /tmp/console /tmp/lic
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE upgrade'
           scripts/ci/upgrade-from-v010.sh /tmp/old-console /tmp/console /tmp/lic "postgres://postgres:pg@127.0.0.1:5432/upgrade?sslmode=disable"
+      - name: HA failover time (host network loss, crash, stop; < 30 s)
+        run: sudo -E env PATH="$PATH" LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral scripts/ci/ha-failover.sh /tmp/console /tmp/lic 127.0.0.1:5432 postgres:pg
 
   firewall:
     # 可选的节点防火墙：在两个网络命名空间之间真实收发包，验证放行 / 丢弃 / 防锁死 / 停用
