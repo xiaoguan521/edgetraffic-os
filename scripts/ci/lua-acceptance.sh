@@ -185,7 +185,8 @@ check "reload 后拒绝无令牌请求" "$(req -H "$H" http://127.0.0.1/hs/a)" "
 echo "== 带附加包的数据面热升级（同一二进制以新版本号打包，验证模块随二进制切换）"
 variant=standard; [[ $BASE == gmssl ]] && variant=gmssl
 mkpkgs() { # <版本>
-  local v=$1 d="$W/up-$v"
+  local v=$1
+  local d="$W/up-$v"
   mkdir -p "$d/s/sbin" "$d/l"
   sudo cat "$(readlink -f "$SY")" > "$d/s/sbin/syapp"; chmod 755 "$d/s/sbin/syapp"
   echo "$v" > "$d/s/VERSION"; cp docs/NOTICE "$d/s/NOTICE"
