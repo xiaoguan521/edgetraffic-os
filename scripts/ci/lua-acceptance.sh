@@ -28,6 +28,9 @@ req() {
 body() { cat "$W/body"; }
 
 SY=/opt/syapp/sbin/syapp
+# 压测时分开 CPU，避免前端、后端与压测工具互相争抢（runner 只有 4 个 CPU）：
+# 前端 syapp（被测对象）0-1，后端 2，wrk 3。CPU 不足 4 个时不绑定。
+if (( $(nproc) >= 4 )); then PIN_FRONT=(taskset -c 0,1); PIN_BACK=(taskset -c 2); PIN_WRK=(taskset -c 3); else PIN_FRONT=(); PIN_BACK=(); PIN_WRK=(); fi
 basepkg=$(ls "$DIST"/base/syapp-*-"$ARCH".tar.gz | grep -v gmssl | head -1)
 [[ $BASE == gmssl ]] && basepkg=$(ls "$DIST"/base/syapp-*-gmssl-"$ARCH".tar.gz | head -1)
 luapkg=$(ls "$DIST"/syapp-lua-*-"$ARCH".tar.gz | head -1)
@@ -71,7 +74,7 @@ http {
     server { listen 10.99.0.1:18081; location = /check { if (\$http_x_token = "good") { return 200; } return 401; } }
 }
 EOF
-sudo $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
+sudo "${PIN_BACK[@]}" $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
 
 echo "== 安装 syapp-lua 附加包"
 mkdir -p "$W/lua" && tar -C "$W/lua" -xzf "$luapkg"
@@ -102,7 +105,7 @@ render() { # <版本> <是否含 Lua>
 render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 /opt/syapp/conf/current
-sudo $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
+sudo "${PIN_FRONT[@]}" $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"   # 热升级的新 master 继承 CPU 绑定
 sleep 1
 
 TOK() { python3 scripts/ci/jwtgen.py "$@"; }
@@ -163,18 +166,13 @@ http {
             }
         }
     }
-    # 诊断：进入 Lua 本身的开销（与 JWT 逻辑无关）
-    upstream diag_backend { server 10.99.0.1:18080; }
-    server { listen 127.0.0.1:18101; location / { proxy_pass http://diag_backend; } }
-    server { listen 127.0.0.1:18102; set_by_lua_block \$x { return "" } location / { proxy_pass http://diag_backend; } }
-    server { listen 127.0.0.1:18103; set_by_lua_block \$x { local h = ngx.var.http_authorization return "" } location / { proxy_pass http://diag_backend; } }
-    server { listen 127.0.0.1:18104; access_by_lua_block { } location / { proxy_pass http://diag_backend; } }
 }
 EOF
 sudo $SY -p "$W/sb" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
 sleep 0.5
 check "沙箱：io / os.execute / load / loadstring / debug 不可用，require ffi 被拒绝" "$(curl -s http://127.0.0.1:18099/)" "nil nil nil nil nil false"
 JIT=$(curl -s http://127.0.0.1:18099/jit)
+sudo kill "$(cat "$W/sb/pid")" 2>/dev/null
 
 echo "== 标准 HTTPS$([[ $BASE == gmssl ]] && echo ' 与国密 NTLS')"
 check "标准客户端 HTTPS（TLS 1.3）" "$(curl -sk -v --resolve api.test:443:127.0.0.1 -H 'X-Forwarded-For: 10.254.0.1' https://api.test/ 2>&1)" "TLSv1.3"
@@ -242,27 +240,26 @@ request = function()
 end
 EOF
 tb=$(TOK hs "$HS" --exp-in 86400)
-bench() { # <host> -> rps
-  local o; o=$(wrk -t2 -c64 -d8s -s "$W/xff.lua" -H "Host: $1" -H "Authorization: Bearer $tb" http://127.0.0.1/ 2>&1)
+bench() { # <host> -> rps（wrk 单线程绑定在独立 CPU 上；前端只有 2 个 CPU，保证瓶颈在被测的 syapp）
+  local o; o=$("${PIN_WRK[@]}" wrk -t1 -c64 -d5s -s "$W/xff.lua" -H "Host: $1" -H "Authorization: Bearer $tb" http://127.0.0.1/ 2>&1)
   if grep -q "Non-2xx" <<<"$o"; then echo "::warning title=wrk::non-2xx responses on $1: $(grep Non-2xx <<<"$o")" >&2; fi
   awk '/Requests\/sec/ {v=int($2)} END {print v+0}' <<<"$o"
 }
 bench bench0.test >/dev/null; bench bench3.test >/dev/null   # 预热
-b0=(); b3=()
-for i in 1 2 3; do b0+=("$(bench bench0.test)"); b3+=("$(bench bench3.test)"); done
-med() { printf '%s\n' "$@" | sort -n | sed -n 2p; }
-m0=$(med "${b0[@]}"); m3=$(med "${b3[@]}")
-drop=$(( (m0 - m3) * 1000 / (m0 > 0 ? m0 : 1) ))
-echo "::notice title=perf $BASE/$ARCH::无规则 ${b0[*]}（中位 $m0）；三条规则 ${b3[*]}（中位 $m3）；下降 $((drop/10)).$((drop%10))%"
-# 诊断：拆分开销（只有两条原生规则 / 只有 JWT），以及 LuaJIT 的 JIT 状态
-mn=$(med "$(bench benchn.test)" "$(bench benchn.test)" "$(bench benchn.test)")
-mj=$(med "$(bench benchj.test)" "$(bench benchj.test)" "$(bench benchj.test)")
-dg() { wrk -t2 -c64 -d6s -H "Authorization: Bearer $tb" "http://127.0.0.1:$1/" 2>&1 | awk '/Requests\/sec/ {v=int($2)} END {print v+0}'; }
-d1=$(dg 18101); d2=$(dg 18102); d3=$(dg 18103); d4=$(dg 18104); d1b=$(dg 18101)
-echo "::notice title=lua entry cost $BASE/$ARCH::plain $d1/$d1b；empty set_by_lua $d2；set_by_lua+read header $d3；empty access_by_lua $d4"
-sudo kill "$(cat "$W/sb/pid")" 2>/dev/null
-echo "::notice title=perf breakdown $BASE/$ARCH::nproc=$(nproc) 无规则 $m0；两条原生规则 $mn；只有 JWT $mj；三条 $m3；jit=${JIT:-?}"
-(( m0 > 0 && drop <= 150 )) && ok "QPS 下降 $((drop/10)).$((drop%10))% ≤ 15%" || bad "QPS 下降 $((drop/10)).$((drop%10))% 超过 15%（$m0 → $m3）"
+# ABBA 配对：每个比值只比较相隔几秒的两次结果，前后漂移（降频、邻居负载）在块内抵消；取 8 个比值的中位数
+ratios=(); raw=""
+for blk in 1 2 3 4; do
+  a1=$(bench bench0.test); b1=$(bench bench3.test); b2=$(bench bench3.test); a2=$(bench bench0.test)
+  raw+=" [$a1 $b1 $b2 $a2]"
+  for pr in "$a1 $b1" "$a2 $b2"; do
+    set -- $pr
+    (( $1 > 0 )) && ratios+=("$(( $2 * 1000 / $1 ))")
+  done
+done
+medr=$(printf '%s\n' "${ratios[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR==0) print 0; else if (NR%2) print v[(NR+1)/2]; else print int((v[NR/2]+v[NR/2+1])/2)}')
+drop=$(( 1000 - medr ))
+echo "::notice title=perf $BASE/$ARCH::ABBA（无规则 有规则 有规则 无规则）×4：$raw；比值（‰）${ratios[*]}；中位下降 $((drop/10)).$((drop%10))%；jit=${JIT:-?}"
+(( ${#ratios[@]} >= 6 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $((drop/10)).$((drop%10))% ≤ 15%（ABBA 配对中位数）" || bad "QPS 下降 $((drop/10)).$((drop%10))% 超过 15%（$raw）"
 
 echo "== 附加包卸载"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) && bad "配置仍使用 Lua 时卸载被允许" || check "配置仍使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
