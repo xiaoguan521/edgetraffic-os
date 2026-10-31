@@ -27,7 +27,7 @@
 | P7 配置迁移与人工配置治理 | 完成：发布审批（双人复核）、自定义片段（三个插入点白名单 + 强制另一人批准）、配置导入（-T / tar.gz → 站点模型，逐行报告）、漂移 diff 上报与采纳 |
 | P8 数据面统一升级 | 完成：升级包厂商签名（etos-pkg 密钥）、wrapper 热升级子命令（真实 syapp 演练通过）、离线签名工具 sign-package、控制台版本库与分批编排、agent 执行与自升级、国密变体（铜锁 NTLS 构建 + 国密 TLCP 双证书，syapp 源码与改名 patch 不变，见 `docs/gm.md`） |
 | P9 商业功能 | 完成：开放 API 令牌与 OpenAPI、告警（邮件 / Webhook / 企业微信 / 钉钉）、发布审批、灰度（5xx 自动回滚）与批量发布、等保 2.0 账号安全、LDAP / OIDC 单点登录、四层代理（TCP / UDP / SNI）、静态资源发布（原子切换）、控制台主备高可用（PostgreSQL 选主 + keepalived，见 `docs/ha.md`） |
-| P10 Lua 扩展 | 未开始（需 2 周技术评估） |
+| P10 访问规则与 Lua 扩展 | 完成：原生规则积木（IP / IP 集与地域库 / 请求头 / UA / 路径 / 方法 → 拒绝 / 跳转 / 限速 / auth_request 外部鉴权）；独立的 `syapp-lua` 附加包（OpenResty 的 LuaJIT 2.1、ngx_devel_kit、lua-nginx-module、lua-resty-core / lrucache，版本与提交锁定，动态模块装在 `/opt/syapp/modules/`，兼容标准版与国密版，syapp 核心与改名 patch 不变）；JWT HS256 / RS256 模板规则与沙箱；授权 `lua` + 节点附加包发布门禁；带附加包的热升级与回退；amd64 / arm64 × 标准 / 国密 CI 验收（见 `docs/lua.md`） |
 
 当前基线版本：`v0.1.0`（MVP 演示版）；P6、P7 完成后计划发 v0.2 给试点客户。
 
