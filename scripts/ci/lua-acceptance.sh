@@ -153,6 +153,9 @@ http {
     init_by_lua_block { require("etos.init").setup({}) }
     server {
         listen 127.0.0.1:18099;
+        location = /jit {
+            content_by_lua_block { ngx.say(jit and table.concat({jit.status()}, ",") or "no-jit", " ", jit and jit.arch or "") }
+        }
         location / {
             content_by_lua_block {
                 local ok = pcall(require, "ffi")
@@ -165,6 +168,7 @@ EOF
 sudo $SY -p "$W/sb" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
 sleep 0.5
 check "沙箱：io / os.execute / load / loadstring / debug 不可用，require ffi 被拒绝" "$(curl -s http://127.0.0.1:18099/)" "nil nil nil nil nil false"
+JIT=$(curl -s http://127.0.0.1:18099/jit)
 sudo kill "$(cat "$W/sb/pid")" 2>/dev/null
 
 echo "== 标准 HTTPS$([[ $BASE == gmssl ]] && echo ' 与国密 NTLS')"
@@ -245,6 +249,10 @@ med() { printf '%s\n' "$@" | sort -n | sed -n 2p; }
 m0=$(med "${b0[@]}"); m3=$(med "${b3[@]}")
 drop=$(( (m0 - m3) * 1000 / (m0 > 0 ? m0 : 1) ))
 echo "::notice title=perf $BASE/$ARCH::无规则 ${b0[*]}（中位 $m0）；三条规则 ${b3[*]}（中位 $m3）；下降 $((drop/10)).$((drop%10))%"
+# 诊断：拆分开销（只有两条原生规则 / 只有 JWT），以及 LuaJIT 的 JIT 状态
+mn=$(med "$(bench benchn.test)" "$(bench benchn.test)" "$(bench benchn.test)")
+mj=$(med "$(bench benchj.test)" "$(bench benchj.test)" "$(bench benchj.test)")
+echo "::notice title=perf breakdown $BASE/$ARCH::nproc=$(nproc) 无规则 $m0；两条原生规则 $mn；只有 JWT $mj；三条 $m3；jit=${JIT:-?}"
 (( m0 > 0 && drop <= 150 )) && ok "QPS 下降 $((drop/10)).$((drop%10))% ≤ 15%" || bad "QPS 下降 $((drop/10)).$((drop%10))% 超过 15%（$m0 → $m3）"
 
 echo "== 附加包卸载"

@@ -30,6 +30,9 @@ func TestAcceptanceConfig(t *testing.T) {
 		{Name: "auth", Conditions: []Condition{{Kind: "path", Op: "prefix", Value: "/auth/"}}, Action: RuleAction{Type: "auth_request", Auth: &AuthAction{Upstream: "authsvc", Path: "/check"}}},
 	}}
 	bench3 := Site{Name: "bench3", Domains: []string{"bench3.test"}, Routes: proxy, Rules: []Rule{ipDeny, bots}}
+	// 诊断用：只有两条原生规则 / 只有 JWT（拆分三条规则的开销）
+	benchN := Site{Name: "benchn", Domains: []string{"benchn.test"}, Routes: proxy, Rules: []Rule{ipDeny, bots}}
+	benchJ := Site{Name: "benchj", Domains: []string{"benchj.test"}, Routes: proxy}
 	if lua {
 		hs := os.Getenv("ACCEPT_HS_SECRET")
 		pub, err := os.ReadFile(os.Getenv("ACCEPT_RS_PUB"))
@@ -44,6 +47,7 @@ func TestAcceptanceConfig(t *testing.T) {
 		)
 		// 压测站点的“三条常用规则”：IP 拒绝、UA 拒绝（都不命中）+ 对所有请求的 JWT 校验
 		bench3.Rules = append(bench3.Rules, Rule{Name: "jwt", Action: RuleAction{Type: "jwt", JWT: &JWTAction{Alg: "HS256", Secret: hs, Source: "header"}}})
+		benchJ.Rules = []Rule{{Name: "jwt", Action: RuleAction{Type: "jwt", JWT: &JWTAction{Alg: "HS256", Secret: hs, Source: "header"}}}}
 	}
 	if gm := os.Getenv("ACCEPT_GM"); gm != "" {
 		rd := func(n string) string {
@@ -64,7 +68,7 @@ func TestAcceptanceConfig(t *testing.T) {
 			{Name: "backend", Servers: []UpstreamServer{{Addr: "10.99.0.1:18080"}}},
 			{Name: "authsvc", Servers: []UpstreamServer{{Addr: "10.99.0.1:18081"}}},
 		},
-		Sites: []Site{api, {Name: "bench0", Domains: []string{"bench0.test"}, Routes: proxy}, bench3},
+		Sites: []Site{api, {Name: "bench0", Domains: []string{"bench0.test"}, Routes: proxy}, bench3, benchN, benchJ},
 	}
 	b, err := Render(in)
 	if err != nil {
