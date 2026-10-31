@@ -3,13 +3,14 @@
 -- 密码学运算通过 FFI 调用 syapp 自身导出的 OpenSSL / 铜锁函数（基础包以 -Wl,-u 固定导出这些符号，
 -- CI 校验附加包需要的每个符号都存在）。只接受配置的算法（拒绝 alg=none 与算法混淆），
 -- 必须有 exp；校验 nbf / iss / aud；签名比较用 CRYPTO_memcmp（常量时间）。
--- 校验通过的令牌按 worker 缓存，直到过期（最多 60 秒，每条规则最多 10000 个）。
+-- 校验通过的令牌按 worker 缓存，直到过期（最多 60 秒）。
 local ffi = require "ffi"
+local lrucache = require "resty.lrucache"
 local json = require "etos.json"
 
 local C = ffi.C
 local ngx = ngx
-local ngx_var, ngx_time, ngx_now, ngx_log = ngx.var, ngx.time, ngx.now, ngx.log
+local ngx_var, ngx_time, ngx_log = ngx.var, ngx.time, ngx.log
 local decode_base64 = ngx.decode_base64
 local type, tostring, pairs = type, tostring, pairs
 local sub, find, gsub, rep = string.sub, string.find, string.gsub, string.rep
@@ -88,9 +89,7 @@ function M.add(id, cfg, key)
         if not find(r.cookie or "", "^[%w_]+$") then error("etos.jwt: bad cookie name for " .. id) end
         r.cookie_var = "cookie_" .. r.cookie
     end
-    -- 每条规则独立的热缓存：原始值 → 过期时间 / sub。普通 Lua 表，命中只需一次哈希查找；
-    -- 条目数到上限时整表换新（简单、有界，不在命中路径上维护 LRU 链表）
-    r.hot_exp, r.hot_sub, r.hot_n = {}, {}, 0
+    r.cache = lrucache.new(CACHE_SIZE) -- 每条规则独立缓存，键就是令牌本身（不拼接字符串）
     rules[id] = r
 end
 
@@ -137,7 +136,7 @@ local function set_subject(r, sub_claim)
 end
 
 -- verify 校验当前请求（在 set_by_lua 中同步执行，不让出）：通过返回 ""，失败返回 "401"。
-function M.verify(id, raw)
+function M.verify(id)
     local r = rules[id]
     if not r then
         ngx_log(ngx.ERR, "etos.jwt: unknown rule ", id)
@@ -146,17 +145,19 @@ function M.verify(id, raw)
     if r.subject_header ~= "" then
         ngx.req.clear_header(r.subject_header) -- 客户端不能伪造转发给上游的身份头
     end
-    -- raw：渲染器以参数传入的 Authorization 头或 Cookie 原始值（原生取值，Lua 不查变量）
-    if raw == nil then
-        raw = r.cookie_var and ngx_var[r.cookie_var] or ngx_var.http_authorization
+    -- 快速路径：缓存键直接用取到的原始值（Authorization 头或 Cookie），命中时不再切分字符串
+    local raw
+    if r.cookie_var then
+        raw = ngx_var[r.cookie_var]
+    else
+        raw = ngx_var.http_authorization
     end
-    if not raw or raw == "" or #raw > MAX_TOKEN then
+    if not raw or #raw > MAX_TOKEN then
         return deny(r, "missing token")
     end
-    -- 快速路径：最近校验通过、尚未过期的令牌
-    local exp_at = r.hot_exp[raw]
-    if exp_at and exp_at > ngx_now() then
-        set_subject(r, r.hot_sub[raw])
+    local hit = r.cache:get(raw)
+    if hit then
+        set_subject(r, hit)
         return ""
     end
     local token = raw
@@ -193,14 +194,7 @@ function M.verify(id, raw)
 
     local ttl = exp - now
     if ttl > 60 then ttl = 60 end
-    if ttl > 0 then
-        if r.hot_n >= CACHE_SIZE then
-            r.hot_exp, r.hot_sub, r.hot_n = {}, {}, 0
-        end
-        if not r.hot_exp[raw] then r.hot_n = r.hot_n + 1 end
-        r.hot_exp[raw] = now + ttl
-        r.hot_sub[raw] = type(claims.sub) == "string" and claims.sub or ""
-    end
+    if ttl > 0 then r.cache:set(raw, type(claims.sub) == "string" and claims.sub or "", ttl) end
     set_subject(r, claims.sub)
     return ""
 end
