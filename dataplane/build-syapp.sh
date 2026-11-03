@@ -201,8 +201,43 @@ if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
   done
   # 模块每个未定义的强符号（不带 glibc 版本号）都必须由基础包或先加载的 ngx_devel_kit 模块导出，否则 load_module 会失败
   { nm -D --defined-only "$O/sbin/syapp"; nm -D --defined-only "$LUA_MODULES_OUT/ndk_http_module.so"; } | awk '{print $NF}' | sort -u > "$WORK/exports"
-  nm -D -u "$LUA_MODULES_OUT"/*.so | awk '$1 == "U" {print $2}' | grep -v '@' | sort -u > "$WORK/needs"
-  missing=$(comm -23 "$WORK/needs" "$WORK/exports" | tr '\n' ' ')
+  # Include symbols exported by each module's NEEDED libraries.  Some Kylin V10
+  # binutils omit glibc version suffixes, which otherwise makes normal libc/
+  # libgcc dependencies look like missing base exports.
+  nm -D -u "$LUA_MODULES_OUT"/*.so | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$WORK/needs"
+  : > "$WORK/runtime-exports"
+  if command -v ldd >/dev/null 2>&1; then
+    for module in "$LUA_MODULES_OUT/ndk_http_module.so" "$LUA_MODULES_OUT/ngx_http_lua_module.so"; do
+      ldd "$module" 2>/dev/null \
+        | awk '$1 ~ /^\// {print $1} $3 == "=>" && $4 ~ /^\// {print $4}'
+    done | sort -u \
+      | while IFS= read -r lib; do
+          [[ -f "$lib" ]] || continue
+          nm -D --defined-only "$lib" 2>/dev/null | awk '{print $NF}' | sed 's/@.*//'
+        done | sort -u > "$WORK/runtime-exports"
+  fi
+  # A module may intentionally leave libc/libm/libdl/libpthread/librt/libgcc
+  # unresolved (the main process supplies them) without recording a DT_NEEDED
+  # entry.  Add the standard runtime libraries explicitly for that toolchain
+  # layout; the globs are harmless when a platform does not have that library.
+  {
+    for lib in /lib*/libc.so.6 /usr/lib*/libc.so.6 \
+      /lib*/libm.so.6 /usr/lib*/libm.so.6 \
+      /lib*/libdl.so.2 /usr/lib*/libdl.so.2 \
+      /lib*/libpthread.so.0 /usr/lib*/libpthread.so.0 \
+      /lib*/librt.so.1 /usr/lib*/librt.so.1 \
+      /lib*/libgcc_s.so.1 /usr/lib*/libgcc_s.so.1; do
+      [[ -f "$lib" ]] && printf '%s\n' "$lib"
+    done
+    if command -v ldconfig >/dev/null 2>&1; then
+      ldconfig -p 2>/dev/null \
+        | awk '$1 ~ /^(libc|libm|libdl|libpthread|librt|libgcc_s)\.so/ && $NF ~ /^\// {print $NF}'
+    fi
+  } | sort -u | while IFS= read -r lib; do
+    nm -D --defined-only "$lib" 2>/dev/null | awk '{print $NF}' | sed 's/@.*//'
+  done | sort -u >> "$WORK/runtime-exports"
+  cat "$WORK/exports" "$WORK/runtime-exports" | sort -u > "$WORK/resolvable"
+  missing=$(comm -23 "$WORK/needs" "$WORK/resolvable" | tr '\n' ' ')
   if [[ -n "${missing// }" ]]; then
     echo "Lua modules need symbols the base binary does not export: $missing" >&2
     [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::add to dataplane/lua/base-exports.txt: $missing"
