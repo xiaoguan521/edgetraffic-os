@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
@@ -155,7 +156,7 @@ func (s *Service) env(now time.Time) license.Env {
 	if bd.Year() < 2000 {
 		bd = time.Time{} // 开发构建不做维保校验
 	}
-	return license.Env{Now: now, InstallationID: s.installationID, MaxSeenTime: maxSeen, BuildDate: bd, CRL: s.crl()}
+	return license.Env{Now: now, InstallationID: s.installationID, MaxSeenTime: maxSeen, BuildDate: bd, CRL: s.crl(), Brand: brand.ID()}
 }
 
 const crlKV = "license_crl"

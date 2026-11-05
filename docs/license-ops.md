@@ -127,6 +127,7 @@ syapp-license-server request -batch B0001 -kid etos-prod-2027 \
     -request activation-request.json -customer "某某公司" -customer-id C0001 \
     -edition professional -nodes 50 -sites 2000 -days 365 -out sign-request-B0001.json
 # 同一批次可以多次执行追加（同一 -out）；容器部署用 -installation-id inst_... -binding installation_only
+# OEM 定制品牌（docs/brand.md）：加 -brand syedge，License 只对该品牌的控制台有效；不加为通用
 ```
 
 批次号按顺序递增（`B` 加 4–10 位数字）。用传输 U 盘把 `sign-request-B0001.json` 拷到离线机。

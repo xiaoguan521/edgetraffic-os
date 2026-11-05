@@ -35,6 +35,8 @@ type Env struct {
 	BuildDate time.Time
 	// CRL 是当前生效的吊销列表（内置与导入中序号较大的一份），可为 nil。
 	CRL *CRL
+	// Brand 是本控制台构建的品牌 ID；License 指定了品牌时必须一致。
+	Brand string
 }
 
 // Snapshot 是业务代码可见的唯一授权视图。
@@ -81,6 +83,9 @@ func Evaluate(raw string, keys KeyRing, env Env) Snapshot {
 	}
 	if env.CRL.LicenseRevoked(p.LicenseID) {
 		return inv("license revoked")
+	}
+	if p.Product.Brand != "" && p.Product.Brand != env.Brand {
+		return inv("license is issued for brand " + p.Product.Brand)
 	}
 	if p.Binding.InstallationID == "" || p.Binding.InstallationID != env.InstallationID {
 		return inv("installation_id mismatch")

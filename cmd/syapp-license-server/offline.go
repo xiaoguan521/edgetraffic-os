@@ -35,6 +35,7 @@ func cmdRequest(args []string, out io.Writer) error {
 	grace := fs.Int("grace", 15, "宽限天数")
 	maint := fs.String("maintenance", "", "维保截止日 YYYY-MM-DD（默认同到期日）")
 	binding := fs.String("binding", "installation", "installation | installation_only")
+	brandID := fs.String("brand", "", "只对该品牌（OEM 定制构建）的控制台有效；留空为通用")
 	licID := fs.String("id", "", "License 编号（默认自动生成）")
 	createdBy := fs.String("by", os.Getenv("USER"), "导出人")
 	outPath := fs.String("out", "", "签名请求文件；已存在时追加到其中（同一批次、同一密钥）")
@@ -65,7 +66,7 @@ func cmdRequest(args []string, out io.Writer) error {
 	now := time.Now()
 	o := license.IssueOptions{KID: *kid, LicenseID: *licID, CustomerID: *customerID, CustomerName: *customer,
 		Edition: license.Edition(*edition), Nodes: *nodes, Sites: *sites, Days: *days, GraceDays: *grace,
-		Binding: *binding, Request: req, ProductName: version.Product, Now: now}
+		Binding: *binding, Request: req, ProductName: version.Product, Brand: *brandID, Now: now}
 	var err error
 	if *expires != "" {
 		if o.ExpiresAt, err = time.Parse("2006-01-02", *expires); err != nil {
