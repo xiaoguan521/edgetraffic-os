@@ -668,15 +668,17 @@ func (s *Service) Evaluate() error {
 				}
 			}
 		case KindDeployRollback:
-			var deps []store.Deployment
-			if err := s.Store.DB.Where("started_at >= ? AND status IN ?", now.Add(-10*time.Minute), []string{"FAILED", "ROLLED_BACK", "PARTIAL"}).Find(&deps).Error; err != nil {
+			dp := q.Deployment
+			deps, err := dp.WithContext(bg).Where(dp.StartedAt.Gte(now.Add(-10*time.Minute)), dp.Status.In("FAILED", "ROLLED_BACK", "PARTIAL")).Find()
+			if err != nil {
 				return err
 			}
 			for _, d := range deps {
 				found = append(found, finding{r.Kind, fmt.Sprintf("deployment:%d", d.ID), fmt.Sprintf("节点组 #%d 发布版本 %s 异常（状态 %s）", d.GroupID, d.RevisionID, d.Status)})
 			}
-			var canaries []store.CanaryRelease
-			if err := s.Store.DB.Where("created_at >= ? AND status IN ?", now.Add(-10*time.Minute), []string{"rolled_back", "failed"}).Find(&canaries).Error; err != nil {
+			cr := q.CanaryRelease
+			canaries, err := cr.WithContext(bg).Where(cr.CreatedAt.Gte(now.Add(-10*time.Minute)), cr.Status.In("rolled_back", "failed")).Find()
+			if err != nil {
 				return err
 			}
 			for _, c := range canaries {

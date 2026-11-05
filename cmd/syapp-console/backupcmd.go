@@ -158,13 +158,17 @@ func cmdRestore(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	// 先校验解密口令与备份完整性：若口令错误或文件损坏，不会在目标目录残留刚初始化的空数据库文件
+	verifiedSum, err := backup.Verify(f, pass)
+	if err != nil {
+		return err
+	}
 	if *dryRun {
-		sum, err := backup.Verify(f, pass)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(stdout, "恢复预检通过（dry-run，备份于 %s，版本 %s）\n%s", sum.CreatedAt.Format("2006-01-02 15:04:05Z"), sum.Version, describe(sum))
+		_, _ = fmt.Fprintf(stdout, "恢复预检通过（dry-run，备份于 %s，版本 %s）\n%s", verifiedSum.CreatedAt.Format("2006-01-02 15:04:05Z"), verifiedSum.Version, describe(verifiedSum))
 		return nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(*c.dataDir, 0o700); err != nil {
 		return err

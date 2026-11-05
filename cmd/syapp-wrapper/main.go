@@ -18,13 +18,14 @@ func main() {
 	}
 	if cmd.Upgrade != "" {
 		var err error
+		paths := wrapper.DefaultPathsForInstance(cmd.Instance)
 		switch cmd.Upgrade {
 		case "start":
-			err = wrapper.UpgradeStart(wrapper.DefaultPaths(), cmd.Version)
+			err = wrapper.UpgradeStart(paths, cmd.Version)
 		case "commit":
-			err = wrapper.UpgradeCommit(wrapper.DefaultPaths())
+			err = wrapper.UpgradeCommit(paths)
 		case "abort":
-			err = wrapper.UpgradeAbort(wrapper.DefaultPaths())
+			err = wrapper.UpgradeAbort(paths)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

@@ -240,4 +240,15 @@ func TestUnpackRejectsUnsafe(t *testing.T) {
 	if a.Apply(context.Background(), "r1/../x", "", nil, "", nil).Status != Rejected {
 		t.Error("bad revision accepted")
 	}
+	// 磁盘空间不足预检
+	aLowDisk := &Applier{C: Config{
+		ConfRoot:     dir,
+		LockFile:     dir + "/lock",
+		MinFreeBytes: 64 << 20,
+		FreeBytes:    func(string) (uint64, error) { return 1 << 20, nil },
+	}}
+	res := aLowDisk.Apply(context.Background(), "r000125", "", tgz, "sha256:x", nil)
+	if res.Status != Rejected || !strings.Contains(res.Message, "insufficient disk space") {
+		t.Fatalf("expected insufficient disk space rejection, got %+v", res)
+	}
 }

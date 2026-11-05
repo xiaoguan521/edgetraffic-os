@@ -60,16 +60,18 @@ type PostCheck struct {
 
 // Config 描述节点上的路径与提权方式。
 type Config struct {
-	ConfRoot    string          // /opt/syapp/conf
-	PidFile     string          // /run/syapp/syapp.pid
-	ErrorLog    string          // /var/log/syapp/error.log
-	LockFile    string          // /run/syapp-agent/apply.lock
-	Wrapper     []string        // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
-	KeepRelease int             // 保留的版本数，默认 20
-	ConfirmWait time.Duration   // reload 后等待 worker 更换的上限，默认 10s
-	Workers     func(int) []int // 测试可注入 worker PID 查询（默认读取 /proc）
-	HTTPPort    int             // 后置探活端口，默认 80 / 443
-	HTTPSPort   int
+	ConfRoot     string          // /opt/syapp/conf
+	PidFile      string          // /run/syapp/syapp.pid
+	ErrorLog     string          // /var/log/syapp/error.log
+	LockFile     string          // /run/syapp-agent/apply.lock
+	Wrapper      []string        // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
+	KeepRelease  int             // 保留的版本数，默认 20
+	ConfirmWait  time.Duration   // reload 后等待 worker 更换的上限，默认 10s
+	Workers      func(int) []int // 测试可注入 worker PID 查询（默认读取 /proc）
+	HTTPPort     int             // 后置探活端口，默认 80 / 443
+	HTTPSPort    int
+	MinFreeBytes uint64                       // 解包前要求的最少可用磁盘字节（默认至少 16 MiB 或 2 倍包体积）
+	FreeBytes    func(string) (uint64, error) // 测试可注入可用磁盘空间查询（默认 syscall.Statfs）
 }
 
 // Applier 执行发布。
@@ -315,6 +317,9 @@ func (a *Applier) unpack(rev string, bundle []byte, digest string) error {
 
 // extractTo 把包解到 tmp 并按清单逐文件校验；失败时清理 tmp。
 func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error {
+	if err := a.checkFreeSpace(filepath.Dir(tmp), uint64(len(bundle))); err != nil {
+		return err
+	}
 	_ = os.RemoveAll(tmp)
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return err
@@ -384,6 +389,38 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 		return err
 	}
 	ok = true
+	return nil
+}
+
+func (a *Applier) checkFreeSpace(dir string, bundleBytes uint64) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	need := a.C.MinFreeBytes
+	if need == 0 {
+		need = 16 << 20
+		if two := 2 * bundleBytes; two > need {
+			need = two
+		}
+	}
+	var avail uint64
+	if a.C.FreeBytes != nil {
+		var err error
+		avail, err = a.C.FreeBytes(dir)
+		if err != nil {
+			return err
+		}
+	} else {
+		var st syscall.Statfs_t
+		if err := syscall.Statfs(dir, &st); err != nil {
+			return err
+		}
+		//nolint:gosec // Bsize is always positive for mounted filesystems
+		avail = st.Bavail * uint64(st.Bsize)
+	}
+	if avail < need {
+		return fmt.Errorf("insufficient disk space: %d bytes available, need at least %d bytes", avail, need)
+	}
 	return nil
 }
 

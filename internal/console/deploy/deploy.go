@@ -29,6 +29,9 @@ import (
 // ApplyTimeout 是单个节点执行一次发布的超时。
 const ApplyTimeout = 90 * time.Second
 
+// DefaultMaxParallelNodes 是单次发布并发下发节点的默认上限，防止百节点级群组瞬时占满连接与数据库写入。
+const DefaultMaxParallelNodes = 20
+
 // Service 负责发布与回滚。
 type Service struct {
 	Store     *store.Store
@@ -38,10 +41,11 @@ type Service struct {
 	Log       *slog.Logger
 	MimeTypes []byte
 
-	Feature     func(name string) bool       // 授权功能检查（为空表示不检查）
-	Agents      Agents                       // 数据面升级用；为空时使用 GW
-	PackageKeys map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
-	Box         *secretbox.Box               // JWT 规则密钥的加解密（P10）
+	Feature          func(name string) bool       // 授权功能检查（为空表示不检查）
+	Agents           Agents                       // 数据面升级用；为空时使用 GW
+	PackageKeys      map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
+	Box              *secretbox.Box               // JWT 规则密钥的加解密（P10）
+	MaxParallelNodes int                          // 并发下发节点上限（<=0 时使用 DefaultMaxParallelNodes）
 
 	mu    sync.Mutex
 	locks map[uint]*sync.Mutex
@@ -611,10 +615,17 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 	ag := d.agents()
 	var wg sync.WaitGroup
 	results := make([]string, len(nodes))
+	limit := d.MaxParallelNodes
+	if limit <= 0 {
+		limit = DefaultMaxParallelNodes
+	}
+	sem := make(chan struct{}, limit)
 	for i := range nodes {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			n := nodes[i]
 			dn := &dep.Nodes[i]
 			q := d.q()

@@ -146,10 +146,10 @@ func FromArchive(b []byte, o Options) (*Report, error) {
 		if h.Typeflag != tar.TypeReg {
 			continue // 目录、链接等忽略（不跟随链接）
 		}
-		name := path.Clean("/" + h.Name)
-		if strings.Contains(h.Name, "..") || h.Size > maxFileSize {
+		if strings.HasPrefix(h.Name, "/") || strings.Contains(h.Name, `\`) || strings.Contains(h.Name, "..") || h.Size > maxFileSize {
 			return nil, fmt.Errorf("archive entry %q rejected (path or size)", h.Name)
 		}
+		name := path.Clean("/" + h.Name)
 		if len(all) >= maxArchiveFiles {
 			return nil, fmt.Errorf("archive has more than %d files", maxArchiveFiles)
 		}

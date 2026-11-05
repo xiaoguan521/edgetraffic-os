@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
 
@@ -133,8 +132,9 @@ func (s *Server) promMetrics(c *gin.Context) {
 	fmt.Fprintf(&b, "etos_license_writable %d\n", licWritable)
 
 	if dbOK {
-		var nodes []store.Node
-		_ = s.Store.DB.Find(&nodes).Error
+		q := s.q()
+		ctx := c.Request.Context()
+		nodes, _ := q.Node.WithContext(ctx).Find()
 		statusCount := map[string]int{"online": 0, "offline": 0, "revoked": 0}
 		driftedCount := 0
 		for _, n := range nodes {
@@ -171,8 +171,7 @@ func (s *Server) promMetrics(c *gin.Context) {
 			fmt.Fprintf(&b, "etos_node_requests_total{%s} %d\n", lbl, n.RequestsTotal)
 		}
 
-		var certs []store.Certificate
-		_ = s.Store.DB.Find(&certs).Error
+		certs, _ := q.Certificate.WithContext(ctx).Find()
 		fmt.Fprintf(&b, "# HELP etos_certificates_total Total managed certificates.\n")
 		fmt.Fprintf(&b, "# TYPE etos_certificates_total gauge\n")
 		fmt.Fprintf(&b, "etos_certificates_total %d\n", len(certs))
@@ -189,8 +188,8 @@ func (s *Server) promMetrics(c *gin.Context) {
 			fmt.Fprintf(&b, "etos_certificates_min_expiry_seconds %.0f\n", minSec)
 		}
 
-		var firing int64
-		_ = s.Store.DB.Model(&store.AlertEvent{}).Where("status = ?", "firing").Count(&firing).Error
+		ae := q.AlertEvent
+		firing, _ := ae.WithContext(ctx).Where(ae.Status.Eq("firing")).Count()
 		fmt.Fprintf(&b, "# HELP etos_alerts_firing_total Number of currently firing alerts.\n")
 		fmt.Fprintf(&b, "# TYPE etos_alerts_firing_total gauge\n")
 		fmt.Fprintf(&b, "etos_alerts_firing_total %d\n", firing)

@@ -17,6 +17,10 @@ func TestBuildAllowed(t *testing.T) {
 		{[]string{"reload"}, []string{"-s", "reload"}},
 		{[]string{"reopen"}, []string{"-s", "reopen"}},
 		{[]string{"quit"}, []string{"-s", "quit"}},
+		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syapp/instances/edge-a/conf/releases/r000123/syapp.conf"}},
+		{[]string{"--instance", "edge_2", "reload"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "reload"}},
+		{[]string{"--instance", "edge_2", "reopen"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "reopen"}},
+		{[]string{"--instance", "edge_2", "quit"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "quit"}},
 	}
 	for _, c := range cases {
 		cmd, err := Build(c.argv)
@@ -89,6 +93,13 @@ func TestBuildRejected(t *testing.T) {
 		{"upgrade-abort", "1.30.6"},
 		{"upgrade-restart"},
 		{"upgrade"},
+		{"--instance"},
+		{"--instance", ""},
+		{"--instance", "../evil", "reload"},
+		{"--instance", "EdgeUpper", "reload"},
+		{"--instance", "-dashstart", "reload"},
+		{"--instance", "edge-a"},
+		{"--instance", "edge-a", "test", "-c", "/tmp/evil.conf"},
 	}
 	for _, argv := range bad {
 		if _, err := Build(argv); !errors.Is(err, ErrUsage) {

@@ -311,6 +311,7 @@ func TestImportHTTPInvalidUploads(t *testing.T) {
 		{"broken-gzip", "bad.tgz", []byte{0x1f, 0x8b, 0, 0}, 400, "IMPORT_PARSE_FAILED"},
 		{"oversize", "large.txt", bytes.Repeat([]byte("x"), maxImportUpload+1), 413, "TOO_LARGE"},
 		{"traversal", "unsafe.tgz", importArchive(t, map[string]string{"../escape.conf": "http {}"}), 400, "IMPORT_PARSE_FAILED"},
+		{"absolute-path", "abs.tgz", importArchive(t, map[string]string{"/etc/escape.conf": "http {}"}), 400, "IMPORT_PARSE_FAILED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) { requireStatus(t, f.upload(t, "operator", tc.file, tc.data), tc.status, tc.code) })
 	}

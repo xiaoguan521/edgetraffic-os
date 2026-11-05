@@ -1,0 +1,21 @@
+[Unit]
+Description=EdgeTraffic OS data plane (syapp instance %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/syapp-%i/syapp.pid
+RuntimeDirectory=syapp-%i
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/opt/syapp/sbin/syapp -t -q -c /opt/syapp/instances/%i/conf/current/syapp.conf
+ExecStart=/opt/syapp/sbin/syapp -c /opt/syapp/instances/%i/conf/current/syapp.conf
+ExecReload=/opt/syapp/sbin/syapp -c /opt/syapp/instances/%i/conf/current/syapp.conf -s reload
+ExecStop=/opt/syapp/sbin/syapp -c /opt/syapp/instances/%i/conf/current/syapp.conf -s quit
+LimitNOFILE=65535
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+
