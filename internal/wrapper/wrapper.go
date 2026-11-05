@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	// SyappBin 是数据面二进制的绝对路径（同机实例共用）。
-	SyappBin = layout.System("").Bin()
+	// DataplaneBin 是数据面二进制的绝对路径（同机实例共用）。
+	DataplaneBin = layout.System("").Bin()
 	// ReleasesDir 是默认实例版本目录的根。
 	ReleasesDir = layout.System("").ReleasesDir()
 )
@@ -75,7 +75,7 @@ func Build(argv []string) (Command, error) {
 			return Command{}, ErrUsage
 		}
 		conf := releasesDir + "/" + argv[1] + "/" + brand.ConfName()
-		return Command{Instance: instance, Path: SyappBin, Args: []string{"-t", "-q", "-c", conf}, Env: SafeEnv}, nil
+		return Command{Instance: instance, Path: DataplaneBin, Args: []string{"-t", "-q", "-c", conf}, Env: SafeEnv}, nil
 	case "reload", "reopen", "quit":
 		if len(argv) != 1 {
 			return Command{}, ErrUsage
@@ -84,7 +84,7 @@ func Build(argv []string) (Command, error) {
 		if currentConf != "" {
 			args = []string{"-c", currentConf, "-s", argv[0]}
 		}
-		return Command{Instance: instance, Path: SyappBin, Args: args, Env: SafeEnv}, nil
+		return Command{Instance: instance, Path: DataplaneBin, Args: args, Env: SafeEnv}, nil
 	case "upgrade-start":
 		if len(argv) != 2 || !versionRe.MatchString(argv[1]) {
 			return Command{}, ErrUsage

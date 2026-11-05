@@ -33,6 +33,8 @@
 # 环境变量：VERSION（默认 0.0.0-dev）、COMMIT、BUILD_DATE、OUT（默认 dist/release）、
 #           GOTAGS（v* 正式版本为 release：不含演示签名密钥，也不带演示用的 syapp-license-server）
 # 正式与演示构建绝不注入 CI 临时授权公钥（license.ciKey）。
+# 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。定制品牌时 Go 程序以 -tags brand 注入品牌，
+#       暂存目录中的文件名与文本按品牌改写，打包前检查没有残留默认品牌名；默认品牌的产物与以前完全相同。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -44,23 +46,63 @@ mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 PKG=github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS="-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.BuildDate=$BUILD_DATE"
 GOTAGS="${GOTAGS:-}"
+# shellcheck disable=SC1090
+source "${BRAND_ENV:-$ROOT/brand.env}"
+DEFAULT_BRAND=syapp
+B="${BRAND_ID:?brand.env: BRAND_ID required}"; P="${BRAND_PROC:-$B}"; PRODUCT="${BRAND_PRODUCT:-EdgeTraffic OS}"
+[[ "$B" =~ ^[a-z][a-z0-9]{2,6}$ ]] || { echo "BRAND_ID must match ^[a-z][a-z0-9]{2,6}\$" >&2; exit 2; }
+SLUG=edgetraffic-os   # 发布包文件名前缀
+if [[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_BRAND" || "$PRODUCT" != "EdgeTraffic OS" ]]; then
+  BP=github.com/xiaoguan521/edgetraffic-os/internal/brand
+  LDFLAGS+=" -X $BP.id=$B -X $BP.proc=$P -X '$BP.product=$PRODUCT'"
+  GOTAGS="${GOTAGS:+$GOTAGS,}brand"
+fi
+[[ "$B" != "$DEFAULT_BRAND" ]] && SLUG="$B"
 export CGO_ENABLED=0 GOFLAGS=-mod=vendor
 
 gobuild() { # goos goarch outdir pkgs...
   local os=$1 arch=$2 dir=$3; shift 3
   for p in "$@"; do
-    local name; name=$(basename "$p"); [[ $os == windows ]] && name+=.exe
+    local name; name=$(basename "$p"); name=${name//$DEFAULT_BRAND/$B}; [[ $os == windows ]] && name+=.exe
     GOOS=$os GOARCH=$arch go build -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$dir/$name" "$p"
   done
 }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
+# rebrand <目录>：把暂存目录中的默认品牌名改为定制品牌（文本内容与文件名）。Go 程序与数据面二进制已按品牌构建，不改动。
+rebrand() {
+  [[ "$B" == "$DEFAULT_BRAND" ]] && return 0
+  local up=${B^^} dup=${DEFAULT_BRAND^^}
+  grep -rlIZ -e "$DEFAULT_BRAND" -e "$dup" "$1" | xargs -0 -r sed -i -e "s/$DEFAULT_BRAND/$B/g" -e "s/$dup/$up/g"
+  find "$1" -depth -name "*$DEFAULT_BRAND*" -print0 | while IFS= read -r -d '' p; do
+    mv "$p" "$(dirname "$p")/$(basename "$p" | sed "s/$DEFAULT_BRAND/$B/g")"
+  done
+}
+
+# brand_scan <目录>：定制品牌的产物中不得残留默认品牌名。二进制中只允许 Go 模块路径与协议 / 数据库字段名
+# （这些内部标识只在 strings 或崩溃堆栈中可见，见设计 0001 第 4.4 节）。
+brand_scan() {
+  [[ "$B" == "$DEFAULT_BRAND" ]] && return 0
+  local bad
+  bad=$(grep -rlIi "$DEFAULT_BRAND" "$1" || true)
+  [[ -z "$bad" ]] || { echo "default brand left in packaged text files:" >&2; echo "$bad" >&2; exit 4; }
+  bad=$(find "$1" -iname "*$DEFAULT_BRAND*" || true)
+  [[ -z "$bad" ]] || { echo "default brand left in file names:" >&2; echo "$bad" >&2; exit 4; }
+  while IFS= read -r -d '' f; do
+    if strings "$f" | grep -i "$DEFAULT_BRAND" | grep -v 'github.com/xiaoguan521/edgetraffic-os/' \
+        | grep -qvi "${DEFAULT_BRAND}_\?version\|${DEFAULT_BRAND}_\?sha256"; then
+      echo "default brand left in binary $f" >&2; exit 4
+    fi
+  done < <(find "$1" -type f -perm -u+x -print0)
+  echo "brand scan OK ($B): $1"
+}
+
 case "${1:-}" in
   console)
     os=${2:?goos}; arch=${3:?goarch}
     ls web/dist/index.html >/dev/null 2>&1 || { echo "web/dist 未构建：先执行 make web" >&2; exit 2; }
-    name="edgetraffic-os-console-$VERSION-$os-$arch"
+    name="$SLUG-console-$VERSION-$os-$arch"
     d="$WORK/$name"; mkdir -p "$d"
     gobuild "$os" "$arch" "$d" ./cmd/syapp-console
     # 演示脚本在控制台容器里用它签发演示授权；正式版本不带（正式 License 由离线签名机签发）
@@ -72,17 +114,19 @@ case "${1:-}" in
       echo "$OUT/$name.zip"
     else
       [[ $os == linux ]] && cp deploy/systemd/syapp-console.service "$d/"
+      rebrand "$d"; brand_scan "$d"
       tar -C "$WORK" -czf "$OUT/$name.tar.gz" "$name"
       echo "$OUT/$name.tar.gz"
     fi
     ;;
   vendor-tools)
     os=${2:?goos}; arch=${3:?goarch}
-    name="edgetraffic-os-vendor-tools-$VERSION-$os-$arch"
+    name="$SLUG-vendor-tools-$VERSION-$os-$arch"
     d="$WORK/$name"; mkdir -p "$d"
     gobuild "$os" "$arch" "$d" ./cmd/syapp-license-signer
     cp docs/license-ops.md "$d/license-ops.md"
     cp docs/NOTICE "$d/NOTICE"
+    rebrand "$d"; brand_scan "$d"
     if [[ $os == windows ]]; then
       (cd "$WORK" && zip -qr "$OUT/$name.zip" "$name")
       echo "$OUT/$name.zip"
@@ -95,15 +139,16 @@ case "${1:-}" in
     arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
     x="$WORK/x"; mkdir -p "$x" "$WORK/up/sbin"
     tar -C "$x" -xzf "$syapp_tgz"
-    bin=$(find "$x" -type f -path '*/sbin/syapp' | head -1)
-    [[ -n "$bin" ]] || { echo "no sbin/syapp in $syapp_tgz" >&2; exit 2; }
-    install -m 0755 "$bin" "$WORK/up/sbin/syapp"
+    bin=$(find "$x" -type f -path "*/sbin/$B" | head -1)
+    [[ -n "$bin" ]] || { echo "no sbin/$B in $syapp_tgz" >&2; exit 2; }
+    install -m 0755 "$bin" "$WORK/up/sbin/$B"
     up_ver="${SYAPP_UPGRADE_VERSION:-$VERSION}"
     [[ "$up_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "upgrade version $up_ver is not N.N.N[-N]" >&2; exit 2; }
     echo "$up_ver" > "$WORK/up/VERSION"
     cp docs/NOTICE "$WORK/up/NOTICE"
-    tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/syapp-$up_ver-$arch.tar.gz" sbin/syapp VERSION NOTICE
-    echo "$OUT/syapp-$up_ver-$arch.tar.gz"
+    rebrand "$WORK/up"; brand_scan "$WORK/up"
+    tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/$B-$up_ver-$arch.tar.gz" "sbin/$B" VERSION NOTICE
+    echo "$OUT/$B-$up_ver-$arch.tar.gz"
     ;;
   agent-upgrade)
     # agent 自升级包：bin/syapp-agent（未签名，离线签名后导入控制台版本库）
@@ -111,29 +156,31 @@ case "${1:-}" in
     mkdir -p "$WORK/ag/bin"
     gobuild linux "$arch" "$WORK/ag/bin" ./cmd/syapp-agent
     cp docs/NOTICE "$WORK/ag/NOTICE"
-    tar -C "$WORK/ag" --owner=0 --group=0 -czf "$OUT/syapp-agent-$VERSION-$arch.tar.gz" bin/syapp-agent NOTICE
-    echo "$OUT/syapp-agent-$VERSION-$arch.tar.gz"
+    rebrand "$WORK/ag"; brand_scan "$WORK/ag"
+    tar -C "$WORK/ag" --owner=0 --group=0 -czf "$OUT/$B-agent-$VERSION-$arch.tar.gz" "bin/$B-agent" NOTICE
+    echo "$OUT/$B-agent-$VERSION-$arch.tar.gz"
     ;;
   license-portal)
     arch=${2:?goarch}
     ls web/portal/dist/index.html >/dev/null 2>&1 || { echo "web/portal/dist 未构建：先执行 make web" >&2; exit 2; }
-    name="edgetraffic-os-license-portal-$VERSION-linux-$arch"
+    name="$SLUG-license-portal-$VERSION-linux-$arch"
     d="$WORK/$name"; mkdir -p "$d"
     gobuild linux "$arch" "$d" ./cmd/syapp-license-server
     cp deploy/systemd/syapp-license-server.service "$d/"
     cp docs/license-ops.md "$d/license-ops.md"
     cp docs/NOTICE "$d/NOTICE"
+    rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
     echo "$OUT/$name.tar.gz"
     ;;
   node)
     arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
-    name="edgetraffic-os-node-$VERSION-linux-$arch"
+    name="$SLUG-node-$VERSION-linux-$arch"
     d="$WORK/$name"; r="$d/rootfs"
     mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syapp" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
     tar -C "$r" -xzf "$syapp_tgz"
-    [[ -x "$r/opt/syapp/sbin/syapp" ]] || { echo "$syapp_tgz 中没有 opt/syapp/sbin/syapp" >&2; exit 2; }
-    go run -trimpath ./cmd/syapp-agent package-defaults -out "$r/opt/syapp"   # 初始版本与独立模式示例
+    [[ -x "$r/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syapp-agent package-defaults -out "$r/opt/$B"   # 初始版本与独立模式示例
     gobuild linux "$arch" "$r/usr/bin" ./cmd/syapp-agent
     gobuild linux "$arch" "$r/usr/libexec/syapp" ./cmd/syapp-wrapper
     gobuild linux "$arch" "$r/usr/sbin" ./cmd/syapp-instance
@@ -149,6 +196,7 @@ case "${1:-}" in
     cp docs/NOTICE "$d/NOTICE"
     cp scripts/release/README-node.txt "$d/README.txt"
     chmod 0755 "$d/install.sh" "$d/uninstall.sh"
+    rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
     echo "$OUT/$name.tar.gz"
     ;;
@@ -159,7 +207,8 @@ case "${1:-}" in
     st="$WORK/stage"
     mkdir -p "$st/syapp" "$st/agent" "$st/console" "$st/scripts"
     tar -C "$st/syapp" -xzf "$syapp_tgz"
-    go run -trimpath ./cmd/syapp-agent package-defaults -out "$st/syapp/opt/syapp"   # syapp 软件包可独立使用
+    [[ -x "$st/syapp/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syapp-agent package-defaults -out "$st/syapp/opt/$B"   # 数据面软件包可独立使用
     cp dataplane/packaging/systemd/syapp.service "$st/syapp/syapp.service"
     cp dataplane/packaging/systemd/syapp@.service "$st/syapp/syapp@.service"
     cp dataplane/packaging/logrotate/syapp "$st/syapp/logrotate"
@@ -182,8 +231,9 @@ case "${1:-}" in
     for p in syapp syapp-agent syapp-console; do
       sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "deploy/nfpm/$p.yaml" > "$st/$p.yaml"
     done
+    rebrand "$st"; brand_scan "$st"
     for fmt in deb rpm; do
-      for p in syapp syapp-agent syapp-console; do
+      for p in "$B" "$B-agent" "$B-console"; do
         if ! log=$(nfpm package -f "$st/$p.yaml" -p "$fmt" -t "$OUT/" 2>&1); then
           echo "nfpm $p $fmt failed:" >&2; echo "$log" >&2
           [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=nfpm $p $fmt::$(echo "$log" | tail -5 | tr '\n' ' ')"

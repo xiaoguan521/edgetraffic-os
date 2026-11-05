@@ -68,7 +68,7 @@ func freePort(t *testing.T) int {
 func TestHotUpgradeWithRealSyapp(t *testing.T) {
 	src := os.Getenv("SYAPP_BIN")
 	if src == "" {
-		src = SyappBin
+		src = DataplaneBin
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {

@@ -32,6 +32,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"ident":    func(s string) string { return strings.ReplaceAll(s, "-", "_") }, // 变量名不能含 -
 	"luaHTTP":  renderLuaHTTP,
 	"luaLoad":  luaLoad,
+	"brandLua": brand.Lua,
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
 // routeDir 为静态路由生成稳定的目录名，与路由在列表中的位置无关。

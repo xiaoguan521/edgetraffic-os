@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
@@ -26,7 +27,7 @@ const blank = () => ({
   http2: false,
   enabled: true,
   version: 0,
-  routes: [{ path: '/', match: 'prefix', mode: 'static', static: { index_html: '<h1>Hello from EdgeTraffic OS</h1>\n' } }] as Route[],
+  routes: [{ path: '/', match: 'prefix', mode: 'static', static: { index_html: `<h1>Hello from ${brand.product}</h1>\n` } }] as Route[],
   rules: [] as AccessRule[],
 })
 const f = reactive(blank())
@@ -212,7 +213,7 @@ const modes = [
           </a-select>
           <div v-if="certWarn" class="cert-warn" :class="{ soft: certWarn.includes('天后到期') }">{{ certWarn }}</div>
         </a-form-item>
-        <a-form-item v-if="gmCerts.length || f.gm_cert_id" label="国密证书（可选）" :extra="gmWarn ? '' : '国密 TLCP 双证书：国密浏览器用 SM2 证书，其他客户端仍用上面的标准证书。只能发布到国密版 syapp 节点。'">
+        <a-form-item v-if="gmCerts.length || f.gm_cert_id" label="国密证书（可选）" :extra="gmWarn ? '' : '国密 TLCP 双证书：国密浏览器用 SM2 证书，其他客户端仍用上面的标准证书。只能发布到国密版 ' + brand.id + ' 节点。'">
           <a-select v-model:value="f.gm_cert_id" allow-clear placeholder="不启用国密" :options="gmCerts" />
           <div v-if="gmWarn" class="cert-warn" :class="{ soft: gmWarn.includes('天后到期') }">{{ gmWarn }}</div>
         </a-form-item>

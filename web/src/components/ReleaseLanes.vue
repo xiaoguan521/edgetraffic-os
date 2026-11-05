@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { nodeResult } from './status'
 
 // 每个节点一条“车道”，对应 agent 本地发布状态机（规格书 5.4）的阶段
@@ -37,7 +38,7 @@ function stageState(n: any, i: number): string {
 function explain(n: any): string {
   const m: string = n.message || ''
   if (n.status === 'APPLIED') return `已切换到 ${props.revision}，流量正常`
-  if (n.status === 'INVALID') return '配置未通过 syapp -t 校验，线上配置未改动'
+  if (n.status === 'INVALID') return `配置未通过 ${brand.id} -t 校验，线上配置未改动`
   if (n.status === 'ROLLED_BACK') {
     const to = m.match(/rolled back to (r\d+)/)?.[1]
     const why = m.includes('post check') ? '发布后本机探活失败' : m.includes('bind') ? '端口占用导致加载失败' : '新配置加载失败'

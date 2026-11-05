@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, onMounted, reactive, ref } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -164,7 +165,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
     <div class="page-head">
       <div>
         <h1>授权与系统</h1>
-        <p>授权过期只限制控制台的新增变更，从不停止或干扰节点上的 syapp 流量。</p>
+        <p>授权过期只限制控制台的新增变更，从不停止或干扰节点上的 {{ brand.id }} 流量。</p>
       </div>
     </div>
 
@@ -374,8 +375,8 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
 
     <section class="panel about">
       <h2>关于</h2>
-      <p>EdgeTraffic OS，数据面 syapp。</p>
-      <p class="sub">The syapp data plane is based on NGINX Open Source (BSD-2-Clause). 完整的第三方许可声明见安装目录 /opt/syapp/share/doc/NOTICE。</p>
+      <p>{{ brand.product }}，数据面 {{ brand.proc }}。</p>
+      <p class="sub">The {{ brand.proc }} data plane is based on NGINX Open Source (BSD-2-Clause). 完整的第三方许可声明见安装目录 /opt/{{ brand.id }}/share/doc/NOTICE。</p>
     </section>
 
     <a-modal v-model:open="uOpen" title="新建用户" ok-text="创建" @ok="addUser">

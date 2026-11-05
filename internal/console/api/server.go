@@ -94,6 +94,7 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	v1 := r.Group("/api/v1")
 	v1.Use(s.csrf)
+	v1.GET("/brand", s.brandInfo)
 	v1.GET("/setup/status", s.setupStatus)
 	v1.POST("/setup", s.setup)
 	v1.POST("/auth/login", s.login)

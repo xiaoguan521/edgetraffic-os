@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 func TestPackageDefaults(t *testing.T) {
@@ -134,4 +136,27 @@ func uncommentHTTPS(s string) string {
 		out = append(out, ln)
 	}
 	return strings.Join(out, "\n")
+}
+
+// 嵌入二进制的模板与随包文档不得含默认品牌名（用 @ID@ 或模板函数），否则定制品牌的二进制会残留旧名字。
+func TestEmbeddedFilesHaveNoBrand(t *testing.T) {
+	for _, dir := range []string{"templates", "standalone"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(strings.ToLower(string(b)), brand.Default) {
+				t.Errorf("%s/%s contains the default brand name", dir, e.Name())
+			}
+		}
+	}
+	// 默认品牌：占位符替换后与原文一致
+	if s := string(StandaloneFiles()["share/doc/STANDALONE.txt"]); strings.Contains(s, "@ID@") || !strings.Contains(s, "syapp -t") {
+		t.Fatal("placeholder not expanded for the default brand")
+	}
 }

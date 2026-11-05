@@ -47,15 +47,15 @@ import (
 
 // Config 是 agent 的运行参数。
 type Config struct {
-	Server    string         // 控制台 gRPC 地址 host:port
-	StateDir  string         // /var/lib/syapp-agent
-	SyappBin  string         // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
-	StatusURL string         // http://127.0.0.1:8081/__syapp_status
-	Profile   render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
-	AccessLog string         // /var/log/syapp/access.json
-	Heartbeat time.Duration
-	Apply     apply.Config
-	Modules   string // /opt/syapp/modules（syapp-lua 附加包，只读取版本信息上报）
+	Server       string         // 控制台 gRPC 地址 host:port
+	StateDir     string         // /var/lib/syapp-agent
+	DataplaneBin string         // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
+	StatusURL    string         // http://127.0.0.1:8081/__syapp_status
+	Profile      render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
+	AccessLog    string         // /var/log/syapp/access.json
+	Heartbeat    time.Duration
+	Apply        apply.Config
+	Modules      string // /opt/syapp/modules（syapp-lua 附加包，只读取版本信息上报）
 }
 
 // state 是注册后持久化的身份信息。
@@ -350,10 +350,10 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
 	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint(),
 		Instance: instanceInfo(a.C.Profile)}
-	if out, err := exec.CommandContext(ctx, a.C.SyappBin, "-V").CombinedOutput(); err == nil {
+	if out, err := exec.CommandContext(ctx, a.C.DataplaneBin, "-V").CombinedOutput(); err == nil {
 		h.SyappVersionOutput = string(out)
 	}
-	if b, err := os.ReadFile(a.C.SyappBin); err == nil {
+	if b, err := os.ReadFile(a.C.DataplaneBin); err == nil {
 		h.SyappSha256 = fp(b)
 	}
 	h.LuaAddon = a.luaAddon()

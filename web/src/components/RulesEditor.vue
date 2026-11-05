@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 // 访问规则（P10 规则积木）：条件全部满足时执行动作。原生规则所有版本可用；JWT 需要 lua 授权与节点的 syapp-lua 附加包。
 import { computed } from 'vue'
 import { useSession } from '../stores/session'
@@ -112,7 +113,7 @@ const valueNeeded = (c: Condition) => c.op !== 'exists'
       <a-button size="small" @click="addRule">添加规则</a-button>
     </div>
     <a-alert v-if="hasJWT" type="info" show-icon class="lua-note"
-      message="JWT 规则需要节点组内每个节点都安装与其 syapp 版本匹配的 syapp-lua 附加包；未安装时预览与发布会列出缺少附加包的节点。" />
+      :message="`JWT 规则需要节点组内每个节点都安装与其 ${brand.id} 版本匹配的 ${brand.lua} 附加包；未安装时预览与发布会列出缺少附加包的节点。`" />
     <div v-for="(rule, i) in rules" :key="i" class="rule">
       <div class="rule-top">
         <a-input v-model:value="rule.name" class="code" style="width: 180px" placeholder="规则名" />

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -347,7 +348,7 @@ const columns = [
 
     <a-modal v-model:open="gmOpen" :title="gmRenewing ? `续期国密证书 ${gmRenewing.name}` : '上传国密双证书'" :ok-text="gmRenewing ? '续期并下发' : '上传'" :confirm-loading="saving" width="720px" @ok="submitGM">
       <a-alert type="info" show-icon style="margin-bottom: 16px"
-        :message="gmRenewing ? '签名证书必须仍包含站点使用的全部域名。续期后只替换国密证书文件，生成新版本下发。' : '国密 TLCP 使用两张 SM2 证书：签名证书（digitalSignature）与加密证书（keyEncipherment）。站点仍需一张标准证书服务不支持国密的客户端；国密证书只能下发到国密版 syapp 节点。'" />
+        :message="gmRenewing ? '签名证书必须仍包含站点使用的全部域名。续期后只替换国密证书文件，生成新版本下发。' : '国密 TLCP 使用两张 SM2 证书：签名证书（digitalSignature）与加密证书（keyEncipherment）。站点仍需一张标准证书服务不支持国密的客户端；国密证书只能下发到国密版 ' + brand.id + ' 节点。'" />
       <a-form layout="vertical">
         <a-form-item v-if="!gmRenewing" label="名称" extra="小写字母、数字、连字符，例如 gov-example-sm2">
           <a-input v-model:value="gmForm.name" placeholder="gov-example-sm2" />

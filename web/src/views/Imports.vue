@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, onMounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -86,7 +87,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
     <div class="page-head">
       <div>
         <h1>配置导入</h1>
-        <p>上传现有配置（<span class="code">syapp -T</span> 的输出，或配置目录打包的 tar.gz，可含证书）。自动转成站点、上游与证书；转不了的部分逐行列入报告。导入结果只进草稿，之后照常预览、审批、发布。</p>
+        <p>上传现有配置（<span class="code">{{ brand.id }} -T</span> 的输出，或配置目录打包的 tar.gz，可含证书）。自动转成站点、上游与证书；转不了的部分逐行列入报告。导入结果只进草稿，之后照常预览、审批、发布。</p>
       </div>
       <a-space>
         <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
