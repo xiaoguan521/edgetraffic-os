@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -32,29 +33,50 @@ import (
 
 // 规则种类。
 const (
-	KindNodeOffline = "node_offline" // 阈值：离线分钟数
-	KindErrorRate   = "error_rate"   // 阈值：近 5 分钟 5xx 占比（%），请求数不少于 MinRequests 才计算
-	KindCertExpiry  = "cert_expiry"  // 阈值：剩余天数
-	KindDrift       = "drift"        // 节点配置被手工改动
+	KindNodeOffline    = "node_offline"           // 阈值：离线分钟数
+	KindErrorRate      = "error_rate"             // 阈值：近 5 分钟 5xx 占比（%），请求数不少于 MinRequests 才计算
+	KindCertExpiry     = "cert_expiry"            // 阈值：剩余天数
+	KindDrift          = "drift"                  // 节点配置被手工改动
+	KindDeployRollback = "deployment_rolled_back" // 近期发布失败或灰度自动回滚
+	KindBackupStale    = "backup_stale"           // 阈值：距上次成功备份的小时数
+	KindDiskUsage      = "disk_usage"             // 阈值：控制台数据目录磁盘或 inode 使用率（%）
 )
 
 // Defaults 是规则的默认阈值。
-var Defaults = map[string]float64{KindNodeOffline: 3, KindErrorRate: 5, KindCertExpiry: 30, KindDrift: 0}
+var Defaults = map[string]float64{
+	KindNodeOffline:    3,
+	KindErrorRate:      5,
+	KindCertExpiry:     30,
+	KindDrift:          0,
+	KindDeployRollback: 0,
+	KindBackupStale:    24,
+	KindDiskUsage:      85,
+}
 
 // KindName 是规则的中文名。
-var KindName = map[string]string{KindNodeOffline: "节点离线", KindErrorRate: "5xx 错误率", KindCertExpiry: "证书即将到期", KindDrift: "配置被手工改动"}
+var KindName = map[string]string{
+	KindNodeOffline:    "节点离线",
+	KindErrorRate:      "5xx 错误率",
+	KindCertExpiry:     "证书即将到期",
+	KindDrift:          "配置被手工改动",
+	KindDeployRollback: "发布失败或自动回滚",
+	KindBackupStale:    "备份超期未执行",
+	KindDiskUsage:      "控制台磁盘空间不足",
+}
 
 // MinRequests 是计算 5xx 率的最少请求数（流量太小时比例没有意义）。
 const MinRequests = 50
 
 // Service 是告警服务。
 type Service struct {
-	Store   *store.Store
-	Box     *secretbox.Box
-	Log     *slog.Logger
-	IMAllow func() bool // 授权是否包含 alert_im
-	HTTP    *http.Client
-	Now     func() time.Time
+	Store     *store.Store
+	Box       *secretbox.Box
+	Log       *slog.Logger
+	IMAllow   func() bool // 授权是否包含 alert_im
+	HTTP      *http.Client
+	Now       func() time.Time
+	DataDir   string
+	DiskUsage func(dir string) (usedPct, inodePct float64, err error)
 
 	// targetValidator is kept private so production callers cannot accidentally
 	// disable the webhook target guard. Tests use it to route requests to a
@@ -645,6 +667,43 @@ func (s *Service) Evaluate() error {
 					}
 				}
 			}
+		case KindDeployRollback:
+			var deps []store.Deployment
+			if err := s.Store.DB.Where("started_at >= ? AND status IN ?", now.Add(-10*time.Minute), []string{"FAILED", "ROLLED_BACK", "PARTIAL"}).Find(&deps).Error; err != nil {
+				return err
+			}
+			for _, d := range deps {
+				found = append(found, finding{r.Kind, fmt.Sprintf("deployment:%d", d.ID), fmt.Sprintf("节点组 #%d 发布版本 %s 异常（状态 %s）", d.GroupID, d.RevisionID, d.Status)})
+			}
+			var canaries []store.CanaryRelease
+			if err := s.Store.DB.Where("created_at >= ? AND status IN ?", now.Add(-10*time.Minute), []string{"rolled_back", "failed"}).Find(&canaries).Error; err != nil {
+				return err
+			}
+			for _, c := range canaries {
+				found = append(found, finding{r.Kind, fmt.Sprintf("canary:%d", c.ID), fmt.Sprintf("节点组 #%d 灰度发布 %s 已回滚/失败：%s", c.GroupID, c.RevisionID, c.Message)})
+			}
+		case KindBackupStale:
+			maxAge := time.Duration(r.Threshold * float64(time.Hour))
+			if maxAge <= 0 {
+				maxAge = 24 * time.Hour
+			}
+			tsStr, err := s.Store.GetKV("last_backup_at")
+			if err != nil || tsStr == "" {
+				found = append(found, finding{r.Kind, "backup:console", fmt.Sprintf("控制台尚未执行过加密备份（要求每 %.0f 小时至少一次）", maxAge.Hours())})
+			} else if lastAt, err := time.Parse(time.RFC3339, tsStr); err != nil || now.Sub(lastAt) >= maxAge {
+				found = append(found, finding{r.Kind, "backup:console", fmt.Sprintf("控制台距上次成功备份（%s）已超过 %.0f 小时", tsStr, maxAge.Hours())})
+			}
+		case KindDiskUsage:
+			if s.DataDir != "" || s.DiskUsage != nil {
+				usedPct, inodePct, err := s.statDiskUsage()
+				if err == nil {
+					if usedPct >= r.Threshold {
+						found = append(found, finding{r.Kind, "disk:console", fmt.Sprintf("控制台数据目录磁盘使用率 %.1f%% 超过阈值 %.1f%%", usedPct, r.Threshold)})
+					} else if inodePct >= r.Threshold {
+						found = append(found, finding{r.Kind, "disk:console", fmt.Sprintf("控制台数据目录 inode 使用率 %.1f%% 超过阈值 %.1f%%", inodePct, r.Threshold)})
+					}
+				}
+			}
 		}
 	}
 	ae := q.AlertEvent
@@ -730,4 +789,23 @@ func (s *Service) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *Service) statDiskUsage() (usedPct, inodePct float64, err error) {
+	if s.DiskUsage != nil {
+		return s.DiskUsage(s.DataDir)
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(s.DataDir, &st); err != nil {
+		return 0, 0, err
+	}
+	if st.Blocks > 0 {
+		used := st.Blocks - st.Bavail
+		usedPct = float64(used) * 100 / float64(st.Blocks)
+	}
+	if st.Files > 0 {
+		usedInodes := st.Files - st.Ffree
+		inodePct = float64(usedInodes) * 100 / float64(st.Files)
+	}
+	return usedPct, inodePct, nil
 }
