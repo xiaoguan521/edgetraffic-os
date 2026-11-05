@@ -69,6 +69,23 @@ HTTP 集成测试直接使用生产路由、中间件和数据库，没有测试
 
 新增浏览器套件使用 Node 原生测试运行器，控制台输出逐场景结果，写入 JUnit XML。无论成功失败，工作流均上传 `import-acceptance-sqlite` / `import-acceptance-postgres` 报告，保留 14 天。未启动或前置条件失败不能计为通过；控制台模式的业务跳过项会明确写进报告。
 
+### 本地推送前检查（替代自动 CI）
+
+工作流改为手动触发后，合并前的回归由本地 `pre-push` 钩子兜底。每个克隆执行一次：
+
+```bash
+make hooks   # git config core.hooksPath scripts/git-hooks
+```
+
+之后每次 `git push` 会先执行 `make test`（`go vet` + `go test -race`）与 `make brand`，失败则拒绝推送；只改动 `docs/` 或 `*.md` 时跳过。
+
+| 变量 | 作用 |
+| --- | --- |
+| `ETOS_PREPUSH_FULL=1` | 额外执行 `make gen-check`、`make lint`（已安装 golangci-lint 时）与前端 `pnpm build`（已安装依赖时） |
+| `ETOS_SKIP_PREPUSH=1` | 跳过本次检查（等同 `git push --no-verify`），仅限紧急情况，事后补跑 |
+
+本地钩子只覆盖单元与 HTTP 集成测试。PostgreSQL、数据面黄金用例、国密、Lua、打包与规模验收依赖专用环境，**打版本标签前必须手动触发一次完整的 `ci` 与 `demo-e2e`**，并把结果记入 `docs/test-runs/`。
+
 现有长周期/专用环境测试继续从 [量化验收对照](acceptance.md) 进入。正式密钥仪式、国产 OS 实机和 10 份客户配置验收仍需要真实材料及现场环境，不能由合成样本代替。
 
 ## 2026-11-02 本地实测

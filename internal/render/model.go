@@ -118,18 +118,25 @@ const (
 
 var staticPathRe = regexp.MustCompile(`^[A-Za-z0-9._~@+-]+(/[A-Za-z0-9._~@+-]+)*$`)
 
-// ValidateStaticPath 校验静态资源包中的相对路径（不允许穿越、隐藏文件、绝对路径与特殊字符）。
+// ValidateStaticPath 校验静态资源包中的相对路径（不允许穿越、隐藏文件、绝对路径与特殊字符；根目录 .well-known/ 除外）。
 func ValidateStaticPath(p string) error {
 	if len(p) > 255 || !staticPathRe.MatchString(p) {
 		return fmt.Errorf("invalid static file path %q", p)
 	}
-	for _, seg := range strings.Split(p, "/") {
+	for i, seg := range strings.Split(p, "/") {
+		if i == 0 && seg == StaticWellKnown {
+			continue // 根目录的 .well-known/ 是公开约定目录（RFC 8615）
+		}
 		if seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
 			return fmt.Errorf("invalid static file path %q", p)
 		}
 	}
 	return nil
 }
+
+// StaticWellKnown 是静态资源包中唯一允许的点开头目录，且只能位于根目录。
+// security.conf 的点文件禁止规则同样放行它；其下的 acme-challenge/ 由证书签发 location 接管。
+const StaticWellKnown = ".well-known"
 
 type ProxySpec struct {
 	Upstream string `json:"upstream"` // UpstreamGroup.Name
