@@ -6,7 +6,7 @@ DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
 
-.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint lint-web brand web proto clean gen gen-check hooks
+.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint lint-web brand web proto clean gen gen-check hooks brand-matrix
 
 all: test build
 
@@ -51,6 +51,10 @@ lint-web:
 
 brand:
 	./scripts/brand-check.sh
+
+# 定制品牌构建检查（本地运行；用法见 scripts/ci/brand-matrix.sh）
+brand-matrix:
+	./scripts/ci/brand-matrix.sh
 
 # 安装本地 pre-push 检查（CI 已改为手动触发，推送前由本地兜底；说明见 scripts/git-hooks/pre-push）
 hooks:

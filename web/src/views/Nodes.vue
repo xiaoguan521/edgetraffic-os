@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -101,7 +102,7 @@ const columns = [
   { title: '节点', key: 'name' },
   { title: '状态', key: 'status', width: 110 },
   { title: '当前版本', key: 'rev', width: 130 },
-  { title: '数据面', key: 'syapp' },
+  { title: '数据面', key: 'dataplane' },
   { title: '负载', key: 'load', width: 210 },
   { title: '最后心跳', key: 'seen', width: 120 },
   { title: '', key: 'ops', width: 80 },
@@ -121,7 +122,7 @@ function mb(b: number) {
     <div class="page-head">
       <div>
         <h1>节点</h1>
-        <p>节点上的 syapp-agent 只向控制台发起连接，节点不需要开放任何管理端口。</p>
+        <p>节点上的 {{ brand.agent }} 只向控制台发起连接，节点不需要开放任何管理端口。</p>
       </div>
       <a-space>
         <a-button v-if="session.can('operator')" @click="openGroup">节点组设置</a-button>
@@ -160,8 +161,8 @@ function mb(b: number) {
             <span class="num">{{ record.applied_revision || '—' }}</span>
             <a-tag v-if="group?.current_revision_id && record.applied_revision !== group.current_revision_id && record.status === 'online'" color="gold" style="margin-left: 6px">落后</a-tag>
           </template>
-          <template v-else-if="column.key === 'syapp'">
-            <div>{{ (record.syapp_version || '').replace('syapp version: ', '') || '—' }}<a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag><a-tooltip v-if="record.lua_addon" :title="`syapp-lua ${record.lua_addon}`"><a-tag color="purple" class="gm">Lua</a-tag></a-tooltip></div>
+          <template v-else-if="column.key === 'dataplane'">
+            <div>{{ (record.syapp_version || '').replace(brand.proc + ' version: ', '') || '—' }}<a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag><a-tooltip v-if="record.lua_addon" :title="`${brand.lua} ${record.lua_addon}`"><a-tag color="purple" class="gm">Lua</a-tag></a-tooltip></div>
             <div class="sub">agent {{ record.agent_version }}</div>
           </template>
           <template v-else-if="column.key === 'load'">
@@ -183,7 +184,7 @@ function mb(b: number) {
 
     <a-modal :open="!!enroll" title="添加节点" :footer="null" width="720px" @cancel="enroll = null">
       <template v-if="enroll">
-        <p>在边缘服务器上（已安装 syapp 与 syapp-agent 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+        <p>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
         <pre class="cmd code">{{ enroll.command }}</pre>
         <a-button type="primary" @click="copy(enroll.command)">复制命令</a-button>
         <a-descriptions :column="1" size="small" style="margin-top: 20px">
@@ -200,7 +201,7 @@ function mb(b: number) {
         <a-form-item label="允许回源网段" extra="上游服务器地址必须落在这些网段内（逗号分隔 CIDR）。回环与云元数据地址始终禁止。">
           <a-input v-model:value="gform.allowed_cidrs" class="code" />
         </a-form-item>
-        <a-form-item label="CDN / 负载均衡回源网段" extra="填写后，syapp 从 X-Forwarded-For 中取客户端真实 IP。">
+        <a-form-item label="CDN / 负载均衡回源网段" :extra="`填写后，${brand.id} 从 X-Forwarded-For 中取客户端真实 IP。`">
           <a-input v-model:value="gform.real_ip_from" class="code" placeholder="例如 10.0.0.0/8" />
         </a-form-item>
       </a-form>

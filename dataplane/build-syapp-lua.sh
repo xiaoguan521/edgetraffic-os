@@ -14,6 +14,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/UPSTREAM"
 # shellcheck disable=SC1091
 source "$HERE/lua/DEPS"
+# 品牌（设计 0001 第 4 节）：与 build-syapp.sh 读取同一个 BRAND_ENV
+# shellcheck disable=SC1090
+source "${BRAND_ENV:-$HERE/../brand.env}"
+B="${BRAND_ID:?brand.env: BRAND_ID required}"; DEFAULT_BRAND=syapp
 
 OUT="$PWD/dist-lua"; PKG_VERSION="$UPSTREAM_VERSION"
 while getopts "o:v:" opt; do
@@ -86,6 +90,12 @@ if grep -rqi 'ngi''nx' "$A/lualib/etos" "$WORK/pkg/install.sh" "$WORK/pkg/uninst
   echo "upstream name in add-on scripts or etos library" >&2; exit 4
 fi
 
-PKG="$OUT/syapp-lua-$PKG_VERSION-$(uname -m).tar.gz"
+# 定制品牌：附加包中的脚本、etos 库与说明按品牌改写（模块 .so 由按品牌构建的源码编译，不改动），并检查没有残留
+if [[ "$B" != "$DEFAULT_BRAND" ]]; then
+  grep -rlIZ -e "$DEFAULT_BRAND" -e "${DEFAULT_BRAND^^}" "$WORK/pkg" | xargs -0 -r sed -i -e "s/$DEFAULT_BRAND/$B/g" -e "s/${DEFAULT_BRAND^^}/${B^^}/g"
+  if grep -rlIi "$DEFAULT_BRAND" "$WORK/pkg"; then echo "default brand left in the add-on" >&2; exit 4; fi
+fi
+
+PKG="$OUT/$B-lua-$PKG_VERSION-$(uname -m).tar.gz"
 tar -C "$WORK/pkg" --owner=0 --group=0 -czf "$PKG" install.sh uninstall.sh addon
 echo "BUILD OK: $PKG"

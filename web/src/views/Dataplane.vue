@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -36,7 +37,7 @@ onUnmounted(() => clearInterval(timer))
 watch(gid, load)
 
 const agentVer = ref<string>()
-const agentVersions = computed(() => [...new Set(packages.value.filter((p) => p.name === 'syapp-agent').map((p) => p.version))])
+const agentVersions = computed(() => [...new Set(packages.value.filter((p) => p.name === brand.agent).map((p) => p.version))])
 async function startAgent() {
   try {
     await api.post(`/node-groups/${gid.value}/agent-upgrade`, { version: agentVer.value })
@@ -46,7 +47,7 @@ async function startAgent() {
     message.error(errMsg(e))
   }
 }
-const versions = computed(() => [...new Set(packages.value.filter((p) => p.name === 'syapp' && p.variant === variant.value).map((p) => p.version))])
+const versions = computed(() => [...new Set(packages.value.filter((p) => p.name === brand.id && p.variant === variant.value).map((p) => p.version))])
 const variantName: Record<string, string> = { standard: '标准版', gmssl: '国密版', lua: 'Lua 附加包', agent: 'agent' }
 const nodeStatus: Record<string, { t: string; c: string }> = {
   pending: { t: '等待', c: 'default' },
@@ -104,7 +105,7 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
     <div class="page-head">
       <div>
         <h1>数据面版本</h1>
-        <p>导入厂商签名的 syapp 升级包，按节点组分批热升级（二进制热替换，连接不中断）。任一节点探活失败会自动回到旧版本并停止后续节点；回退即用上一版本再升级一次。</p>
+        <p>导入厂商签名的 {{ brand.id }} 升级包，按节点组分批热升级（二进制热替换，连接不中断）。任一节点探活失败会自动回到旧版本并停止后续节点；回退即用上一版本再升级一次。</p>
       </div>
       <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
@@ -112,9 +113,9 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
     <section class="panel">
       <h2>节点版本</h2>
       <a-table :data-source="nodes" row-key="id" :pagination="false" size="small"
-        :columns="[{ title: '节点', dataIndex: 'name' }, { title: '架构', dataIndex: 'arch' }, { title: 'syapp', key: 'v' }, { title: 'agent', dataIndex: 'agent_version' }, { title: '状态', key: 'st' }]">
+        :columns="[{ title: '节点', dataIndex: 'name' }, { title: '架构', dataIndex: 'arch' }, { title: brand.proc, key: 'v' }, { title: 'agent', dataIndex: 'agent_version' }, { title: '状态', key: 'st' }]">
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'v'">{{ (record.syapp_version || '').replace('syapp version: ', '') || '—' }}</template>
+          <template v-if="column.key === 'v'">{{ (record.syapp_version || '').replace(brand.proc + ' version: ', '') || '—' }}</template>
           <template v-else-if="column.key === 'st'"><a-badge :status="record.status === 'online' ? 'success' : 'default'" :text="record.status === 'online' ? '在线' : '离线'" /></template>
         </template>
       </a-table>
@@ -126,7 +127,7 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
         </a-popconfirm>
         <span class="gap" />
         <a-select v-model:value="agentVer" style="width: 200px" placeholder="agent 目标版本" :options="agentVersions.map((v) => ({ value: v, label: 'agent ' + v }))" />
-        <a-popconfirm :title="`把 ${nodes.length} 台节点的 agent 升级到 ${agentVer}？syapp 不受影响`" @confirm="startAgent">
+        <a-popconfirm :title="`把 ${nodes.length} 台节点的 agent 升级到 ${agentVer}？${brand.id} 不受影响`" @confirm="startAgent">
           <a-button :disabled="!agentVer || running || !session.writable">升级 agent</a-button>
         </a-popconfirm>
       </div>
@@ -155,7 +156,7 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
       </div>
       <a-table :data-source="packages" row-key="id" :pagination="false" size="small"
         :columns="[{ title: '包', key: 'n' }, { title: '架构', dataIndex: 'arch' }, { title: '变体', key: 'var' }, { title: 'SHA-256', key: 'sha' }, { title: '签名密钥', dataIndex: 'kid' }, { title: '导入', key: 'by' }]">
-        <template #emptyText><a-empty description="版本库为空：导入厂商发布的 syapp-<版本>-<架构>.tar.gz 与 .sig" /></template>
+        <template #emptyText><a-empty :description="`版本库为空：导入厂商发布的 ${brand.id}-<版本>-<架构>.tar.gz 与 .sig`" /></template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'n'">{{ record.name }} {{ record.version }}</template>
           <template v-else-if="column.key === 'var'">{{ variantName[record.variant] }}</template>

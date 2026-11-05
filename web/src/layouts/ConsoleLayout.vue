@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 import { computed, h, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -85,12 +86,12 @@ async function logout() {
       <div class="brand">
         <div class="mark" aria-hidden="true"><span /><span /><span /></div>
         <div>
-          <div class="name">EdgeTraffic OS</div>
+          <div class="name">{{ brand.product }}</div>
           <div class="sub">边缘流量操作系统</div>
         </div>
       </div>
       <a-menu theme="dark" mode="inline" :selected-keys="selected" :items="items" @click="(e: any) => router.push({ name: e.key })" />
-      <div class="runtime">数据面 syapp</div>
+      <div class="runtime">数据面 {{ brand.proc }}</div>
     </a-layout-sider>
     <a-layout>
       <a-layout-header class="topbar">

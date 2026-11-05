@@ -1,3 +1,4 @@
+import { brand } from '../brand'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSession } from '../stores/session'
 import { http } from '../api/client'
@@ -55,7 +56,7 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = (to.meta.title ? `${to.meta.title} · ` : '') + 'EdgeTraffic OS'
+  document.title = (to.meta.title ? `${to.meta.title} · ` : '') + brand.product
 })
 
 export default router

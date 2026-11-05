@@ -69,3 +69,19 @@ func TestEnrollCommand(t *testing.T) {
 		t.Fatalf("instance = %q", inst)
 	}
 }
+
+func TestBrandEndpoint(t *testing.T) {
+	f := newImportHTTP(t)
+	w := f.request("", http.MethodGet, "/brand", nil, "", false) // 不需要登录
+	requireStatus(t, w, http.StatusOK, "")
+	var b map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"id": "syapp", "proc": "syapp", "product": "EdgeTraffic OS", "agent": "syapp-agent", "lua": "syapp-lua", "instance": "syapp-instance"}
+	for k, v := range want {
+		if b[k] != v {
+			t.Errorf("%s = %q, want %q", k, b[k], v)
+		}
+	}
+}

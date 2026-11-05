@@ -14,7 +14,8 @@ import (
 // literalAllow 是允许出现默认品牌字面量的位置：本包（默认值所在处），以及不对外可见的内部标识。
 // 新增例外必须说明理由（设计 0001 第 4.4 节）。
 var literalAllow = map[string]string{
-	"internal/brand/brand.go": "默认品牌值的唯一来源",
+	"internal/brand/brand.go":   "默认品牌值的唯一来源",
+	"internal/brand/default.go": "默认品牌（未带 brand 构建标签时编译）",
 }
 
 // literalAllowValue 是允许的字面量取值：数据库列名等内部标识，不出现在产品界面、进程、路径或日志中。

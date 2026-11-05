@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { brand } from '../brand'
 defineProps<{ title: string; hint?: string }>()
 </script>
 
@@ -9,7 +10,7 @@ defineProps<{ title: string; hint?: string }>()
         <span v-for="i in 7" :key="i" :style="{ '--d': i }" />
       </div>
       <div class="pitch">
-        <div class="product">EdgeTraffic OS</div>
+        <div class="product">{{ brand.product }}</div>
         <p>改配置、校验、下发、生效、回滚，<br />在一个控制台里完成。</p>
       </div>
     </aside>
