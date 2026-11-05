@@ -296,6 +296,7 @@ type EnrollRequest struct {
 	MachineFingerprint string                 `protobuf:"bytes,4,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
 	AgentVersion       string                 `protobuf:"bytes,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	Instance           *InstanceInfo          `protobuf:"bytes,6,opt,name=instance,proto3" json:"instance,omitempty"` // 本 agent 托管的实例（同机多实例，设计 0001）；旧版 agent 不发送，视为默认实例
+	Brand              string                 `protobuf:"bytes,7,opt,name=brand,proto3" json:"brand,omitempty"`       // agent 构建时的品牌 ID（设计 0001 第 4 节）；与控制台不一致时拒绝注册，旧版 agent 为空
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -370,6 +371,13 @@ func (x *EnrollRequest) GetInstance() *InstanceInfo {
 		return x.Instance
 	}
 	return nil
+}
+
+func (x *EnrollRequest) GetBrand() string {
+	if x != nil {
+		return x.Brand
+	}
+	return ""
 }
 
 // InstanceInfo 是 agent 本机的实例档案（<实例前缀>/instance.json），供控制台核对节点组档案与同机冲突。
@@ -671,8 +679,10 @@ type Hello struct {
 	SyappSha256        string                 `protobuf:"bytes,3,opt,name=syapp_sha256,json=syappSha256,proto3" json:"syapp_sha256,omitempty"`
 	AppliedRevisionId  string                 `protobuf:"bytes,4,opt,name=applied_revision_id,json=appliedRevisionId,proto3" json:"applied_revision_id,omitempty"`
 	MachineFingerprint string                 `protobuf:"bytes,5,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
-	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"` // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
-	Instance           *InstanceInfo          `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`                 // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
+	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                   // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
+	Instance           *InstanceInfo          `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`                                   // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
+	Brand              string                 `protobuf:"bytes,8,opt,name=brand,proto3" json:"brand,omitempty"`                                         // 同 EnrollRequest.brand
+	RunningVersion     string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syapp -V 不同）
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -756,6 +766,20 @@ func (x *Hello) GetInstance() *InstanceInfo {
 	return nil
 }
 
+func (x *Hello) GetBrand() string {
+	if x != nil {
+		return x.Brand
+	}
+	return ""
+}
+
+func (x *Hello) GetRunningVersion() string {
+	if x != nil {
+		return x.RunningVersion
+	}
+	return ""
+}
+
 type Heartbeat struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	TsUnix            int64                  `protobuf:"varint,1,opt,name=ts_unix,json=tsUnix,proto3" json:"ts_unix,omitempty"`
@@ -765,7 +789,8 @@ type Heartbeat struct {
 	RequestsTotal     uint64                 `protobuf:"varint,5,opt,name=requests_total,json=requestsTotal,proto3" json:"requests_total,omitempty"`
 	TreeHash          string                 `protobuf:"bytes,6,opt,name=tree_hash,json=treeHash,proto3" json:"tree_hash,omitempty"` // current 目录哈希，用于漂移检测
 	SiteMinutes       []*SiteMinute          `protobuf:"bytes,7,rep,name=site_minutes,json=siteMinutes,proto3" json:"site_minutes,omitempty"`
-	LuaAddon          string                 `protobuf:"bytes,8,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"` // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
+	LuaAddon          string                 `protobuf:"bytes,8,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                   // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
+	RunningVersion    string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 同 Hello.running_version
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -852,6 +877,13 @@ func (x *Heartbeat) GetSiteMinutes() []*SiteMinute {
 func (x *Heartbeat) GetLuaAddon() string {
 	if x != nil {
 		return x.LuaAddon
+	}
+	return ""
+}
+
+func (x *Heartbeat) GetRunningVersion() string {
+	if x != nil {
+		return x.RunningVersion
 	}
 	return ""
 }
@@ -2160,14 +2192,15 @@ var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x14edgetraffic.agent.v1\"\xfd\x01\n" +
+	"\x14agent/v1/agent.proto\x12\x14edgetraffic.agent.v1\"\x93\x02\n" +
 	"\rEnrollRequest\x12!\n" +
 	"\fenroll_token\x18\x01 \x01(\tR\venrollToken\x12\x17\n" +
 	"\acsr_der\x18\x02 \x01(\fR\x06csrDer\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12/\n" +
 	"\x13machine_fingerprint\x18\x04 \x01(\tR\x12machineFingerprint\x12#\n" +
 	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\x12>\n" +
-	"\binstance\x18\x06 \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\"\xa7\x01\n" +
+	"\binstance\x18\x06 \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\x12\x14\n" +
+	"\x05brand\x18\a \x01(\tR\x05brand\"\xa7\x01\n" +
 	"\fInstanceInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +
@@ -2190,7 +2223,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06result\x18\f \x01(\v2#.edgetraffic.agent.v1.CommandResultH\x00R\x06result\x122\n" +
 	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03log\x129\n" +
 	"\x05drift\x18\x0e \x01(\v2!.edgetraffic.agent.v1.DriftReportH\x00R\x05driftB\x06\n" +
-	"\x04body\"\xbf\x02\n" +
+	"\x04body\"\xfe\x02\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x120\n" +
 	"\x14syapp_version_output\x18\x02 \x01(\tR\x12syappVersionOutput\x12!\n" +
@@ -2198,7 +2231,9 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x13applied_revision_id\x18\x04 \x01(\tR\x11appliedRevisionId\x12/\n" +
 	"\x13machine_fingerprint\x18\x05 \x01(\tR\x12machineFingerprint\x12\x1b\n" +
 	"\tlua_addon\x18\x06 \x01(\tR\bluaAddon\x12>\n" +
-	"\binstance\x18\a \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\"\xc0\x02\n" +
+	"\binstance\x18\a \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\x12\x14\n" +
+	"\x05brand\x18\b \x01(\tR\x05brand\x12'\n" +
+	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\"\xe9\x02\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -2208,7 +2243,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x0erequests_total\x18\x05 \x01(\x04R\rrequestsTotal\x12\x1b\n" +
 	"\ttree_hash\x18\x06 \x01(\tR\btreeHash\x12C\n" +
 	"\fsite_minutes\x18\a \x03(\v2 .edgetraffic.agent.v1.SiteMinuteR\vsiteMinutes\x12\x1b\n" +
-	"\tlua_addon\x18\b \x01(\tR\bluaAddon\"\xa6\x02\n" +
+	"\tlua_addon\x18\b \x01(\tR\bluaAddon\x12'\n" +
+	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\"\xa6\x02\n" +
 	"\n" +
 	"SiteMinute\x12\x12\n" +
 	"\x04site\x18\x01 \x01(\tR\x04site\x12\x1f\n" +
