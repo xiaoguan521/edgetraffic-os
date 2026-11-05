@@ -9,6 +9,7 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 // 实例档案接口：经真实路由、角色与授权中间件和数据库（设计 0001 第 5.2 节）。
@@ -55,5 +56,16 @@ func TestProfileHTTP(t *testing.T) {
 	f.s.Store.DB.Table("audit_logs").Where("action = ?", "group.profile").Count(&n)
 	if n != 1 {
 		t.Fatalf("audit entries = %d, want 1 (only the successful change)", n)
+	}
+}
+
+func TestEnrollCommand(t *testing.T) {
+	def := enrollCommand(render.Profile{}, "c:9443", "tok", "fp")
+	if def != "sudo syapp-agent enroll -server c:9443 -token tok -ca-fingerprint fp && sudo systemctl enable --now syapp-agent" {
+		t.Fatalf("default = %q", def)
+	}
+	inst := enrollCommand(render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}, "c:9443", "tok", "fp")
+	if inst != "sudo syapp-instance add blue --http 18080 --https 18443 --status 8082 --console c:9443 --token tok --ca-fingerprint fp" {
+		t.Fatalf("instance = %q", inst)
 	}
 }

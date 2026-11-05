@@ -97,3 +97,23 @@ func TestInvalidInputs(t *testing.T) {
 		t.Error("bad instance accepted in user mode")
 	}
 }
+
+func TestInstanceNames(t *testing.T) {
+	d, b := System(""), System("blue")
+	for _, c := range []struct{ got, want string }{
+		{d.AgentUser(), "syapp-agent"}, {b.AgentUser(), "syapp-agent-blue"},
+		{d.DataplaneUnit(), "syapp.service"}, {b.DataplaneUnit(), "syapp@blue.service"},
+		{d.AgentUnit(), "syapp-agent.service"}, {b.AgentUnit(), "syapp-agent@blue.service"},
+		{b.SudoersFile(), "/etc/sudoers.d/syapp-agent-blue"}, {d.SudoersFile(), "/etc/sudoers.d/syapp-agent"},
+		{b.InstanceFile(), "/opt/syapp/instances/blue/instance.json"},
+		{Group(), "syapp"}, {WorkerUser(), "syapp"},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	// Linux 用户名最长 32：最长的实例名加前缀也在范围内
+	if n := len(System("abcdefghijklmnop").AgentUser()); n > 32 {
+		t.Fatalf("agent user name too long: %d", n)
+	}
+}

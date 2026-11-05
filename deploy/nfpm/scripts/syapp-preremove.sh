@@ -1,3 +1,4 @@
+refuse_remove_with_instances "$1"
 if is_remove "$1"; then
   if has_systemd; then
     systemctl disable --now syapp.service >/dev/null 2>&1 || true
