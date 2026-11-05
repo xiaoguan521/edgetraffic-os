@@ -91,4 +91,6 @@ jobs:
           PKG_KID: etos-ci-pkg-ephemeral
           WRAPPER: /tmp/syapp-wrapper
           LIC: /tmp/lic
+          # GitHub arm64 共享机器的吞吐抖动过大，QPS 门槛只在 x86_64 上拦截；arm64 只报告，性能验收在专用实机上做
+          PERF_GATE: ${{ matrix.arch == 'x86_64' && '1' || '0' }}
         run: scripts/ci/lua-acceptance.sh dist-lua ${{ matrix.base }}
