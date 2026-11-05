@@ -101,10 +101,13 @@ var (
 
 // State 记录上一次升级，用于中止时切回与一键回退。
 type State struct {
-	Previous string    `json:"previous"`           // 升级前的二进制路径
-	PrevLua  string    `json:"prev_lua,omitempty"` // 升级前 syapp-lua 软链的目标（未装附加包为空）
-	Target   string    `json:"target"`             // 目标版本
-	Phase    string    `json:"phase"`              // started | committed | aborted
+	Previous string `json:"previous"`           // 升级前的二进制路径
+	PrevLua  string `json:"prev_lua,omitempty"` // 升级前 syapp-lua 软链的目标（未装附加包为空）
+	Target   string `json:"target"`             // 目标版本
+	Phase    string `json:"phase"`              // started | committed | aborted
+	// KeepLink：本实例开始升级时，同机其他实例已把共用软链切到目标版本（设计 0001 第 5.6 节）。
+	// 本实例只升级自己的 master；中止时不切回软链，其他已升级的实例继续使用新版本。
+	KeepLink bool      `json:"keep_link,omitempty"`
 	At       time.Time `json:"at"`
 }
 
@@ -252,6 +255,16 @@ func isMaster(pid int) bool {
 }
 
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+
+// masterExe 返回进程实际运行的二进制路径（/proc/<pid>/exe；文件已被替换时去掉 " (deleted)"）。
+// 同机多实例共用软链：软链指向的版本不等于每个实例正在运行的版本。
+func masterExe(pid int) string {
+	s, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(s, " (deleted)")
+}
 
 // workers 统计某个 master 正在服务的 worker 子进程数。
 func workers(master int) int { return len(workerPids(master)) }
@@ -427,6 +440,9 @@ func UpgradeStart(p Paths, ver string) error {
 		}
 	}
 	newBin := filepath.Join(p.Versions, ver, binEntry)
+	if masterExe(oldPid) == newBin {
+		return fail("version %s is already running", ver)
+	}
 	// 装有 syapp-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
 	prevLua, err := p.prepareLua(ver, newBin)
 	if err != nil {
@@ -450,21 +466,30 @@ func UpgradeStart(p Paths, ver string) error {
 		restoreLua()
 		return err
 	}
-	if prev == newBin {
+	// 软链已指向目标版本、本实例的 master 却还在运行旧版本：同机其他实例先完成了升级。
+	// 只给本实例的 master 换版本，不动软链（中止时也不切回）
+	keepLink := prev == newBin
+	switchBack := func() {
+		if !keepLink {
+			_ = p.swapLink(prev)
+		}
 		restoreLua()
-		return fail("version %s is already running", ver)
 	}
-	if err := p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "started"}); err != nil {
+	if keepLink {
+		prev = masterExe(oldPid)
+	}
+	if err := p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "started", KeepLink: keepLink}); err != nil {
 		restoreLua()
 		return err
 	}
-	if err := p.swapLink(newBin); err != nil {
-		restoreLua()
-		return err
+	if !keepLink {
+		if err := p.swapLink(newBin); err != nil {
+			restoreLua()
+			return err
+		}
 	}
 	if err := signal(oldPid, syscall.SIGUSR2); err != nil {
-		_ = p.swapLink(prev)
-		restoreLua()
+		switchBack()
 		return err
 	}
 	var newPid int
@@ -481,9 +506,8 @@ func UpgradeStart(p Paths, ver string) error {
 	})
 	if !started {
 		// 新 master 没有起来：旧 master 仍在服务，切回软链即可（syapp 会自行恢复 pid 文件）
-		_ = p.swapLink(prev)
-		restoreLua()
-		_ = p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "aborted"})
+		switchBack()
+		_ = p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "aborted", KeepLink: keepLink})
 		return fail("new master did not start within %s; switched back to the previous binary", p.Timeout)
 	}
 	if err := signal(oldPid, syscall.SIGWINCH); err != nil {
@@ -569,7 +593,7 @@ func UpgradeAbort(p Paths) error {
 		return fail("previous master did not take over within %s", p.Timeout)
 	}
 	st, err := p.loadState()
-	if err == nil && st.Previous != "" {
+	if err == nil && st.Previous != "" && !st.KeepLink {
 		if err := p.swapLink(st.Previous); err != nil {
 			return err
 		}
