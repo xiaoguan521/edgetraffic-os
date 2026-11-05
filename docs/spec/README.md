@@ -29,6 +29,8 @@
 | P9 商业功能 | 完成：开放 API 令牌与 OpenAPI、告警（邮件 / Webhook / 企业微信 / 钉钉）、发布审批、灰度（5xx 自动回滚）与批量发布、等保 2.0 账号安全、LDAP / OIDC 单点登录、四层代理（TCP / UDP / SNI）、静态资源发布（原子切换）、控制台主备高可用（PostgreSQL 选主 + keepalived，见 `docs/ha.md`） |
 | P10 访问规则与 Lua 扩展 | 完成：原生规则积木（IP / IP 集与地域库 / 请求头 / UA / 路径 / 方法 → 拒绝 / 跳转 / 限速 / auth_request 外部鉴权）；独立的 `syapp-lua` 附加包（OpenResty 的 LuaJIT 2.1、ngx_devel_kit、lua-nginx-module、lua-resty-core / lrucache，版本与提交锁定，动态模块装在 `/opt/syapp/modules/`，兼容标准版与国密版，syapp 核心与改名 patch 不变）；JWT HS256 / RS256 模板规则与沙箱；授权 `lua` + 节点附加包发布门禁；带附加包的热升级与回退；amd64 / arm64 × 标准 / 国密 CI 验收（见 `docs/lua.md`） |
 
+| P11 部署布局 | 设计评审中：同机多实例、非 root 运行（user 模式）、品牌可定制，见 [`docs/design/0001-deploy-layout.md`](../design/0001-deploy-layout.md) |
+
 | 验收补齐 | 规格书量化验收全部自动化（见 `docs/acceptance.md`）：50 节点发布 / 控制台宕机 30 分钟 / 分批热升级与回退（`scale`）、主备切换时间与 v0.1.0 升级（`ci`）、前端角色矩阵与实时刷新（`demo-e2e`）。仍需线下完成：正式签名密钥仪式、麒麟 V10 / 统信 UOS 安装冒烟、10 份真实客户配置导入 |
 
 当前基线版本：`v0.1.0`（MVP 演示版）；P6、P7 完成后计划发 v0.2 给试点客户。
