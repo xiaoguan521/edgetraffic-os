@@ -139,6 +139,11 @@ jobs:
           sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
       - name: renderer output through real syapp -t (default, instance and user-mode profiles)
         run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyappSyntax$|TestRenderProfileSyappSyntax$' ./internal/render/
+      - name: wrapper hot upgrade with real syapp (single instance and two instances sharing one binary)
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor SYAPP_BIN=/opt/syapp/sbin/syapp go test -count=1 -v -run 'RealSyapp$' ./internal/wrapper/
+      - name: multi-instance and non-root acceptance (P11, design 0001 §10.3)
+        # 放在本任务最后：system 阶段会重装本机的 /opt/syapp
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor scripts/ci/p11-acceptance.sh "$(ls dist/syapp-*.tar.gz)" all
       - uses: actions/upload-artifact@v4
         continue-on-error: true   # 账号存储配额满时不阻塞流水线
         with:

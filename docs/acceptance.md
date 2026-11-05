@@ -14,6 +14,8 @@
 | 从 v0.1.0 升级数据库无数据丢失 | `scripts/ci/upgrade-from-v010.sh`：真实的 v0.1.0 控制台建库写数据，当前控制台打开同一个库（SQLite 与 PostgreSQL），逐项核对：<br>- 业务数据、密码；<br>- 安装 ID、授权；<br>- 审计哈希。<br>之后回滚与发布仍正常。 | `ci`（postgres） |
 | 各角色可见页面与按钮符合矩阵；未授权功能置灰；发布进度实时刷新 | `web/e2e/ui-acceptance.cjs`（Playwright + Chromium，在 demo 环境中）：<br>- 四个角色的界面矩阵，以及同一操作的服务端 403；<br>- 标准版与过期授权下的置灰；<br>- 点击发布后不刷新页面，节点状态自动变为“已生效”。 | `demo-e2e`（sqlite） |
 | 开启 3 条常用规则后 QPS 下降 ≤ 15%，其余 P10 验收 | `scripts/ci/lua-acceptance.sh`（见 `docs/lua.md`） | `lua` |
+| 同机多实例与非 root 运行（设计 0001 第 10.3 节 MI-01～05、07，RL-01、02） | `scripts/ci/p11-acceptance.sh`（真实数据面）：<br>- user 阶段：普通用户安装两个实例、无 root 进程、wrapper 拒绝以 root 运行、主机级热升级（第二个实例注入失败后重试）与删除实例期间持续请求 0 失败；<br>- system 阶段：三个实例，单实例 reload 不影响其他实例、端口冲突被拒绝、跨实例 sudo 被拒绝、reopen-all、主机级热升级与删除实例期间 0 失败、有具名实例时卸载被拒绝。<br>MI-06 由 `go test ./internal/wrapper/` 覆盖，RL-03 由 `internal/instance` 的 ensure 用例覆盖。 | `ci`（dataplane） |
+| 品牌定制（BR-01～04） | `make brand-matrix`（本地）：生成的改名 patch、全部 Go 程序与节点包中没有默认品牌名；BR-03 由 `internal/console/api` 的注册用例与 `pkgsig` 的包名校验覆盖。真实的定制品牌数据面构建见 `docs/brand.md` | 本地 |
 
 ## 压测客户端与“0 失败请求”的口径
 
