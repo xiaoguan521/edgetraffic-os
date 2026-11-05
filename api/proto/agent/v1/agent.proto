@@ -25,6 +25,18 @@ message EnrollRequest {
   string hostname = 3;
   string machine_fingerprint = 4;
   string agent_version = 5;
+  InstanceInfo instance = 6;    // 本 agent 托管的实例（同机多实例，设计 0001）；旧版 agent 不发送，视为默认实例
+}
+
+// InstanceInfo 是 agent 本机的实例档案（<实例前缀>/instance.json），供控制台核对节点组档案与同机冲突。
+// 只是上报数据，不是指令。
+message InstanceInfo {
+  string name = 1;              // 实例名，空串为默认实例
+  string mode = 2;              // system | user
+  string root = 3;              // user 模式的安装根目录（system 模式为空）
+  uint32 http_port = 4;
+  uint32 https_port = 5;
+  uint32 status_port = 6;
 }
 
 message EnrollResponse {
@@ -52,6 +64,7 @@ message Hello {
   string applied_revision_id = 4;
   string machine_fingerprint = 5;
   string lua_addon = 6;              // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
+  InstanceInfo instance = 7;         // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
 }
 
 message Heartbeat {

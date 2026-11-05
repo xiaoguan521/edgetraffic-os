@@ -83,7 +83,7 @@ func (x CommandResult_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CommandResult_Status.Descriptor instead.
 func (CommandResult_Status) EnumDescriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6, 0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7, 0}
 }
 
 type TailLog_File int32
@@ -132,7 +132,7 @@ func (x TailLog_File) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TailLog_File.Descriptor instead.
 func (TailLog_File) EnumDescriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{13, 0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14, 0}
 }
 
 type Signal_Kind int32
@@ -181,7 +181,7 @@ func (x Signal_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Signal_Kind.Descriptor instead.
 func (Signal_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14, 0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{15, 0}
 }
 
 type DriftFile_Change int32
@@ -233,7 +233,7 @@ func (x DriftFile_Change) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DriftFile_Change.Descriptor instead.
 func (DriftFile_Change) EnumDescriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17, 0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18, 0}
 }
 
 type UpgradeDataplane_Action int32
@@ -285,7 +285,7 @@ func (x UpgradeDataplane_Action) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use UpgradeDataplane_Action.Descriptor instead.
 func (UpgradeDataplane_Action) EnumDescriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18, 0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{19, 0}
 }
 
 type EnrollRequest struct {
@@ -295,6 +295,7 @@ type EnrollRequest struct {
 	Hostname           string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	MachineFingerprint string                 `protobuf:"bytes,4,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
 	AgentVersion       string                 `protobuf:"bytes,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	Instance           *InstanceInfo          `protobuf:"bytes,6,opt,name=instance,proto3" json:"instance,omitempty"` // 本 agent 托管的实例（同机多实例，设计 0001）；旧版 agent 不发送，视为默认实例
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -364,6 +365,99 @@ func (x *EnrollRequest) GetAgentVersion() string {
 	return ""
 }
 
+func (x *EnrollRequest) GetInstance() *InstanceInfo {
+	if x != nil {
+		return x.Instance
+	}
+	return nil
+}
+
+// InstanceInfo 是 agent 本机的实例档案（<实例前缀>/instance.json），供控制台核对节点组档案与同机冲突。
+// 只是上报数据，不是指令。
+type InstanceInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // 实例名，空串为默认实例
+	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"` // system | user
+	Root          string                 `protobuf:"bytes,3,opt,name=root,proto3" json:"root,omitempty"` // user 模式的安装根目录（system 模式为空）
+	HttpPort      uint32                 `protobuf:"varint,4,opt,name=http_port,json=httpPort,proto3" json:"http_port,omitempty"`
+	HttpsPort     uint32                 `protobuf:"varint,5,opt,name=https_port,json=httpsPort,proto3" json:"https_port,omitempty"`
+	StatusPort    uint32                 `protobuf:"varint,6,opt,name=status_port,json=statusPort,proto3" json:"status_port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceInfo) Reset() {
+	*x = InstanceInfo{}
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceInfo) ProtoMessage() {}
+
+func (x *InstanceInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceInfo.ProtoReflect.Descriptor instead.
+func (*InstanceInfo) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *InstanceInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InstanceInfo) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *InstanceInfo) GetRoot() string {
+	if x != nil {
+		return x.Root
+	}
+	return ""
+}
+
+func (x *InstanceInfo) GetHttpPort() uint32 {
+	if x != nil {
+		return x.HttpPort
+	}
+	return 0
+}
+
+func (x *InstanceInfo) GetHttpsPort() uint32 {
+	if x != nil {
+		return x.HttpsPort
+	}
+	return 0
+}
+
+func (x *InstanceInfo) GetStatusPort() uint32 {
+	if x != nil {
+		return x.StatusPort
+	}
+	return 0
+}
+
 type EnrollResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -376,7 +470,7 @@ type EnrollResponse struct {
 
 func (x *EnrollResponse) Reset() {
 	*x = EnrollResponse{}
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	mi := &file_agent_v1_agent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +482,7 @@ func (x *EnrollResponse) String() string {
 func (*EnrollResponse) ProtoMessage() {}
 
 func (x *EnrollResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	mi := &file_agent_v1_agent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -401,7 +495,7 @@ func (x *EnrollResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollResponse.ProtoReflect.Descriptor instead.
 func (*EnrollResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *EnrollResponse) GetNodeId() string {
@@ -449,7 +543,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -461,7 +555,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -474,7 +568,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{2}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AgentMessage) GetMsgId() string {
@@ -578,13 +672,14 @@ type Hello struct {
 	AppliedRevisionId  string                 `protobuf:"bytes,4,opt,name=applied_revision_id,json=appliedRevisionId,proto3" json:"applied_revision_id,omitempty"`
 	MachineFingerprint string                 `protobuf:"bytes,5,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
 	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"` // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
+	Instance           *InstanceInfo          `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`                 // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
 	*x = Hello{}
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +691,7 @@ func (x *Hello) String() string {
 func (*Hello) ProtoMessage() {}
 
 func (x *Hello) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +704,7 @@ func (x *Hello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hello.ProtoReflect.Descriptor instead.
 func (*Hello) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Hello) GetAgentVersion() string {
@@ -654,6 +749,13 @@ func (x *Hello) GetLuaAddon() string {
 	return ""
 }
 
+func (x *Hello) GetInstance() *InstanceInfo {
+	if x != nil {
+		return x.Instance
+	}
+	return nil
+}
+
 type Heartbeat struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	TsUnix            int64                  `protobuf:"varint,1,opt,name=ts_unix,json=tsUnix,proto3" json:"ts_unix,omitempty"`
@@ -670,7 +772,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -682,7 +784,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -695,7 +797,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Heartbeat) GetTsUnix() int64 {
@@ -772,7 +874,7 @@ type SiteMinute struct {
 
 func (x *SiteMinute) Reset() {
 	*x = SiteMinute{}
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -784,7 +886,7 @@ func (x *SiteMinute) String() string {
 func (*SiteMinute) ProtoMessage() {}
 
 func (x *SiteMinute) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -797,7 +899,7 @@ func (x *SiteMinute) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SiteMinute.ProtoReflect.Descriptor instead.
 func (*SiteMinute) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SiteMinute) GetSite() string {
@@ -882,7 +984,7 @@ type CommandResult struct {
 
 func (x *CommandResult) Reset() {
 	*x = CommandResult{}
-	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -894,7 +996,7 @@ func (x *CommandResult) String() string {
 func (*CommandResult) ProtoMessage() {}
 
 func (x *CommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -907,7 +1009,7 @@ func (x *CommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResult.ProtoReflect.Descriptor instead.
 func (*CommandResult) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CommandResult) GetCmdId() string {
@@ -949,7 +1051,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -961,7 +1063,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -974,7 +1076,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *LogChunk) GetTailId() string {
@@ -1020,7 +1122,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1032,7 +1134,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1045,7 +1147,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ServerMessage) GetCmdId() string {
@@ -1213,7 +1315,7 @@ type ApplyRevision struct {
 
 func (x *ApplyRevision) Reset() {
 	*x = ApplyRevision{}
-	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_agent_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1225,7 +1327,7 @@ func (x *ApplyRevision) String() string {
 func (*ApplyRevision) ProtoMessage() {}
 
 func (x *ApplyRevision) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_agent_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1238,7 +1340,7 @@ func (x *ApplyRevision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyRevision.ProtoReflect.Descriptor instead.
 func (*ApplyRevision) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ApplyRevision) GetRevisionId() string {
@@ -1288,7 +1390,7 @@ type PostCheck struct {
 
 func (x *PostCheck) Reset() {
 	*x = PostCheck{}
-	mi := &file_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1300,7 +1402,7 @@ func (x *PostCheck) String() string {
 func (*PostCheck) ProtoMessage() {}
 
 func (x *PostCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1313,7 +1415,7 @@ func (x *PostCheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostCheck.ProtoReflect.Descriptor instead.
 func (*PostCheck) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PostCheck) GetHost() string {
@@ -1353,7 +1455,7 @@ type Rollback struct {
 
 func (x *Rollback) Reset() {
 	*x = Rollback{}
-	mi := &file_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_agent_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1365,7 +1467,7 @@ func (x *Rollback) String() string {
 func (*Rollback) ProtoMessage() {}
 
 func (x *Rollback) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_agent_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1378,7 +1480,7 @@ func (x *Rollback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rollback.ProtoReflect.Descriptor instead.
 func (*Rollback) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Rollback) GetToRevisionId() string {
@@ -1397,7 +1499,7 @@ type Probe struct {
 
 func (x *Probe) Reset() {
 	*x = Probe{}
-	mi := &file_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_agent_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1409,7 +1511,7 @@ func (x *Probe) String() string {
 func (*Probe) ProtoMessage() {}
 
 func (x *Probe) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_agent_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1422,7 +1524,7 @@ func (x *Probe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Probe.ProtoReflect.Descriptor instead.
 func (*Probe) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Probe) GetRevisionId() string {
@@ -1443,7 +1545,7 @@ type TailLog struct {
 
 func (x *TailLog) Reset() {
 	*x = TailLog{}
-	mi := &file_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_agent_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1455,7 +1557,7 @@ func (x *TailLog) String() string {
 func (*TailLog) ProtoMessage() {}
 
 func (x *TailLog) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_agent_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1468,7 +1570,7 @@ func (x *TailLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailLog.ProtoReflect.Descriptor instead.
 func (*TailLog) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TailLog) GetTailId() string {
@@ -1501,7 +1603,7 @@ type Signal struct {
 
 func (x *Signal) Reset() {
 	*x = Signal{}
-	mi := &file_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_agent_v1_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1513,7 +1615,7 @@ func (x *Signal) String() string {
 func (*Signal) ProtoMessage() {}
 
 func (x *Signal) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_agent_v1_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1526,7 +1628,7 @@ func (x *Signal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Signal.ProtoReflect.Descriptor instead.
 func (*Signal) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Signal) GetKind() Signal_Kind {
@@ -1545,7 +1647,7 @@ type LicenseUpdate struct {
 
 func (x *LicenseUpdate) Reset() {
 	*x = LicenseUpdate{}
-	mi := &file_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_agent_v1_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1557,7 +1659,7 @@ func (x *LicenseUpdate) String() string {
 func (*LicenseUpdate) ProtoMessage() {}
 
 func (x *LicenseUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_agent_v1_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1570,7 +1672,7 @@ func (x *LicenseUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LicenseUpdate.ProtoReflect.Descriptor instead.
 func (*LicenseUpdate) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LicenseUpdate) GetRaw() string {
@@ -1594,7 +1696,7 @@ type DriftReport struct {
 
 func (x *DriftReport) Reset() {
 	*x = DriftReport{}
-	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_agent_v1_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1606,7 +1708,7 @@ func (x *DriftReport) String() string {
 func (*DriftReport) ProtoMessage() {}
 
 func (x *DriftReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_agent_v1_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1619,7 +1721,7 @@ func (x *DriftReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftReport.ProtoReflect.Descriptor instead.
 func (*DriftReport) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DriftReport) GetRevisionId() string {
@@ -1657,7 +1759,7 @@ type DriftFile struct {
 
 func (x *DriftFile) Reset() {
 	*x = DriftFile{}
-	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_agent_v1_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1669,7 +1771,7 @@ func (x *DriftFile) String() string {
 func (*DriftFile) ProtoMessage() {}
 
 func (x *DriftFile) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_agent_v1_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1682,7 +1784,7 @@ func (x *DriftFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftFile.ProtoReflect.Descriptor instead.
 func (*DriftFile) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{17}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DriftFile) GetPath() string {
@@ -1744,7 +1846,7 @@ type UpgradeDataplane struct {
 
 func (x *UpgradeDataplane) Reset() {
 	*x = UpgradeDataplane{}
-	mi := &file_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_agent_v1_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1756,7 +1858,7 @@ func (x *UpgradeDataplane) String() string {
 func (*UpgradeDataplane) ProtoMessage() {}
 
 func (x *UpgradeDataplane) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_agent_v1_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1769,7 +1871,7 @@ func (x *UpgradeDataplane) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeDataplane.ProtoReflect.Descriptor instead.
 func (*UpgradeDataplane) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *UpgradeDataplane) GetAction() UpgradeDataplane_Action {
@@ -1833,7 +1935,7 @@ type UpgradeAgent struct {
 
 func (x *UpgradeAgent) Reset() {
 	*x = UpgradeAgent{}
-	mi := &file_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_agent_v1_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1845,7 +1947,7 @@ func (x *UpgradeAgent) String() string {
 func (*UpgradeAgent) ProtoMessage() {}
 
 func (x *UpgradeAgent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_agent_v1_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1858,7 +1960,7 @@ func (x *UpgradeAgent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeAgent.ProtoReflect.Descriptor instead.
 func (*UpgradeAgent) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UpgradeAgent) GetVersion() string {
@@ -1894,7 +1996,7 @@ type FetchPackageRequest struct {
 
 func (x *FetchPackageRequest) Reset() {
 	*x = FetchPackageRequest{}
-	mi := &file_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_agent_v1_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +2008,7 @@ func (x *FetchPackageRequest) String() string {
 func (*FetchPackageRequest) ProtoMessage() {}
 
 func (x *FetchPackageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_agent_v1_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +2021,7 @@ func (x *FetchPackageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchPackageRequest.ProtoReflect.Descriptor instead.
 func (*FetchPackageRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{20}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *FetchPackageRequest) GetName() string {
@@ -1959,7 +2061,7 @@ type FetchBundleRequest struct {
 
 func (x *FetchBundleRequest) Reset() {
 	*x = FetchBundleRequest{}
-	mi := &file_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_agent_v1_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1971,7 +2073,7 @@ func (x *FetchBundleRequest) String() string {
 func (*FetchBundleRequest) ProtoMessage() {}
 
 func (x *FetchBundleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_agent_v1_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1984,7 +2086,7 @@ func (x *FetchBundleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchBundleRequest.ProtoReflect.Descriptor instead.
 func (*FetchBundleRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{21}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *FetchBundleRequest) GetRevisionId() string {
@@ -2005,7 +2107,7 @@ type BundleChunk struct {
 
 func (x *BundleChunk) Reset() {
 	*x = BundleChunk{}
-	mi := &file_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_agent_v1_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2017,7 +2119,7 @@ func (x *BundleChunk) String() string {
 func (*BundleChunk) ProtoMessage() {}
 
 func (x *BundleChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_agent_v1_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2030,7 +2132,7 @@ func (x *BundleChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BundleChunk.ProtoReflect.Descriptor instead.
 func (*BundleChunk) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{22}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *BundleChunk) GetData() []byte {
@@ -2058,13 +2160,23 @@ var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x14edgetraffic.agent.v1\"\xbd\x01\n" +
+	"\x14agent/v1/agent.proto\x12\x14edgetraffic.agent.v1\"\xfd\x01\n" +
 	"\rEnrollRequest\x12!\n" +
 	"\fenroll_token\x18\x01 \x01(\tR\venrollToken\x12\x17\n" +
 	"\acsr_der\x18\x02 \x01(\fR\x06csrDer\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12/\n" +
 	"\x13machine_fingerprint\x18\x04 \x01(\tR\x12machineFingerprint\x12#\n" +
-	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\"\x98\x01\n" +
+	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\x12>\n" +
+	"\binstance\x18\x06 \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\"\xa7\x01\n" +
+	"\fInstanceInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +
+	"\x04root\x18\x03 \x01(\tR\x04root\x12\x1b\n" +
+	"\thttp_port\x18\x04 \x01(\rR\bhttpPort\x12\x1d\n" +
+	"\n" +
+	"https_port\x18\x05 \x01(\rR\thttpsPort\x12\x1f\n" +
+	"\vstatus_port\x18\x06 \x01(\rR\n" +
+	"statusPort\"\x98\x01\n" +
 	"\x0eEnrollResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12&\n" +
 	"\x0fclient_cert_der\x18\x02 \x01(\fR\rclientCertDer\x12\x1e\n" +
@@ -2078,14 +2190,15 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06result\x18\f \x01(\v2#.edgetraffic.agent.v1.CommandResultH\x00R\x06result\x122\n" +
 	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03log\x129\n" +
 	"\x05drift\x18\x0e \x01(\v2!.edgetraffic.agent.v1.DriftReportH\x00R\x05driftB\x06\n" +
-	"\x04body\"\xff\x01\n" +
+	"\x04body\"\xbf\x02\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x120\n" +
 	"\x14syapp_version_output\x18\x02 \x01(\tR\x12syappVersionOutput\x12!\n" +
 	"\fsyapp_sha256\x18\x03 \x01(\tR\vsyappSha256\x12.\n" +
 	"\x13applied_revision_id\x18\x04 \x01(\tR\x11appliedRevisionId\x12/\n" +
 	"\x13machine_fingerprint\x18\x05 \x01(\tR\x12machineFingerprint\x12\x1b\n" +
-	"\tlua_addon\x18\x06 \x01(\tR\bluaAddon\"\xc0\x02\n" +
+	"\tlua_addon\x18\x06 \x01(\tR\bluaAddon\x12>\n" +
+	"\binstance\x18\a \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\"\xc0\x02\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -2249,7 +2362,7 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_agent_v1_agent_proto_goTypes = []any{
 	(CommandResult_Status)(0),    // 0: edgetraffic.agent.v1.CommandResult.Status
 	(TailLog_File)(0),            // 1: edgetraffic.agent.v1.TailLog.File
@@ -2257,65 +2370,68 @@ var file_agent_v1_agent_proto_goTypes = []any{
 	(DriftFile_Change)(0),        // 3: edgetraffic.agent.v1.DriftFile.Change
 	(UpgradeDataplane_Action)(0), // 4: edgetraffic.agent.v1.UpgradeDataplane.Action
 	(*EnrollRequest)(nil),        // 5: edgetraffic.agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),       // 6: edgetraffic.agent.v1.EnrollResponse
-	(*AgentMessage)(nil),         // 7: edgetraffic.agent.v1.AgentMessage
-	(*Hello)(nil),                // 8: edgetraffic.agent.v1.Hello
-	(*Heartbeat)(nil),            // 9: edgetraffic.agent.v1.Heartbeat
-	(*SiteMinute)(nil),           // 10: edgetraffic.agent.v1.SiteMinute
-	(*CommandResult)(nil),        // 11: edgetraffic.agent.v1.CommandResult
-	(*LogChunk)(nil),             // 12: edgetraffic.agent.v1.LogChunk
-	(*ServerMessage)(nil),        // 13: edgetraffic.agent.v1.ServerMessage
-	(*ApplyRevision)(nil),        // 14: edgetraffic.agent.v1.ApplyRevision
-	(*PostCheck)(nil),            // 15: edgetraffic.agent.v1.PostCheck
-	(*Rollback)(nil),             // 16: edgetraffic.agent.v1.Rollback
-	(*Probe)(nil),                // 17: edgetraffic.agent.v1.Probe
-	(*TailLog)(nil),              // 18: edgetraffic.agent.v1.TailLog
-	(*Signal)(nil),               // 19: edgetraffic.agent.v1.Signal
-	(*LicenseUpdate)(nil),        // 20: edgetraffic.agent.v1.LicenseUpdate
-	(*DriftReport)(nil),          // 21: edgetraffic.agent.v1.DriftReport
-	(*DriftFile)(nil),            // 22: edgetraffic.agent.v1.DriftFile
-	(*UpgradeDataplane)(nil),     // 23: edgetraffic.agent.v1.UpgradeDataplane
-	(*UpgradeAgent)(nil),         // 24: edgetraffic.agent.v1.UpgradeAgent
-	(*FetchPackageRequest)(nil),  // 25: edgetraffic.agent.v1.FetchPackageRequest
-	(*FetchBundleRequest)(nil),   // 26: edgetraffic.agent.v1.FetchBundleRequest
-	(*BundleChunk)(nil),          // 27: edgetraffic.agent.v1.BundleChunk
+	(*InstanceInfo)(nil),         // 6: edgetraffic.agent.v1.InstanceInfo
+	(*EnrollResponse)(nil),       // 7: edgetraffic.agent.v1.EnrollResponse
+	(*AgentMessage)(nil),         // 8: edgetraffic.agent.v1.AgentMessage
+	(*Hello)(nil),                // 9: edgetraffic.agent.v1.Hello
+	(*Heartbeat)(nil),            // 10: edgetraffic.agent.v1.Heartbeat
+	(*SiteMinute)(nil),           // 11: edgetraffic.agent.v1.SiteMinute
+	(*CommandResult)(nil),        // 12: edgetraffic.agent.v1.CommandResult
+	(*LogChunk)(nil),             // 13: edgetraffic.agent.v1.LogChunk
+	(*ServerMessage)(nil),        // 14: edgetraffic.agent.v1.ServerMessage
+	(*ApplyRevision)(nil),        // 15: edgetraffic.agent.v1.ApplyRevision
+	(*PostCheck)(nil),            // 16: edgetraffic.agent.v1.PostCheck
+	(*Rollback)(nil),             // 17: edgetraffic.agent.v1.Rollback
+	(*Probe)(nil),                // 18: edgetraffic.agent.v1.Probe
+	(*TailLog)(nil),              // 19: edgetraffic.agent.v1.TailLog
+	(*Signal)(nil),               // 20: edgetraffic.agent.v1.Signal
+	(*LicenseUpdate)(nil),        // 21: edgetraffic.agent.v1.LicenseUpdate
+	(*DriftReport)(nil),          // 22: edgetraffic.agent.v1.DriftReport
+	(*DriftFile)(nil),            // 23: edgetraffic.agent.v1.DriftFile
+	(*UpgradeDataplane)(nil),     // 24: edgetraffic.agent.v1.UpgradeDataplane
+	(*UpgradeAgent)(nil),         // 25: edgetraffic.agent.v1.UpgradeAgent
+	(*FetchPackageRequest)(nil),  // 26: edgetraffic.agent.v1.FetchPackageRequest
+	(*FetchBundleRequest)(nil),   // 27: edgetraffic.agent.v1.FetchBundleRequest
+	(*BundleChunk)(nil),          // 28: edgetraffic.agent.v1.BundleChunk
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	8,  // 0: edgetraffic.agent.v1.AgentMessage.hello:type_name -> edgetraffic.agent.v1.Hello
-	9,  // 1: edgetraffic.agent.v1.AgentMessage.heartbeat:type_name -> edgetraffic.agent.v1.Heartbeat
-	11, // 2: edgetraffic.agent.v1.AgentMessage.result:type_name -> edgetraffic.agent.v1.CommandResult
-	12, // 3: edgetraffic.agent.v1.AgentMessage.log:type_name -> edgetraffic.agent.v1.LogChunk
-	21, // 4: edgetraffic.agent.v1.AgentMessage.drift:type_name -> edgetraffic.agent.v1.DriftReport
-	10, // 5: edgetraffic.agent.v1.Heartbeat.site_minutes:type_name -> edgetraffic.agent.v1.SiteMinute
-	0,  // 6: edgetraffic.agent.v1.CommandResult.status:type_name -> edgetraffic.agent.v1.CommandResult.Status
-	14, // 7: edgetraffic.agent.v1.ServerMessage.apply:type_name -> edgetraffic.agent.v1.ApplyRevision
-	16, // 8: edgetraffic.agent.v1.ServerMessage.rollback:type_name -> edgetraffic.agent.v1.Rollback
-	17, // 9: edgetraffic.agent.v1.ServerMessage.probe:type_name -> edgetraffic.agent.v1.Probe
-	18, // 10: edgetraffic.agent.v1.ServerMessage.tail:type_name -> edgetraffic.agent.v1.TailLog
-	19, // 11: edgetraffic.agent.v1.ServerMessage.signal:type_name -> edgetraffic.agent.v1.Signal
-	20, // 12: edgetraffic.agent.v1.ServerMessage.license:type_name -> edgetraffic.agent.v1.LicenseUpdate
-	23, // 13: edgetraffic.agent.v1.ServerMessage.upgrade:type_name -> edgetraffic.agent.v1.UpgradeDataplane
-	24, // 14: edgetraffic.agent.v1.ServerMessage.upgrade_agent:type_name -> edgetraffic.agent.v1.UpgradeAgent
-	15, // 15: edgetraffic.agent.v1.ApplyRevision.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
-	1,  // 16: edgetraffic.agent.v1.TailLog.file:type_name -> edgetraffic.agent.v1.TailLog.File
-	2,  // 17: edgetraffic.agent.v1.Signal.kind:type_name -> edgetraffic.agent.v1.Signal.Kind
-	22, // 18: edgetraffic.agent.v1.DriftReport.files:type_name -> edgetraffic.agent.v1.DriftFile
-	3,  // 19: edgetraffic.agent.v1.DriftFile.change:type_name -> edgetraffic.agent.v1.DriftFile.Change
-	4,  // 20: edgetraffic.agent.v1.UpgradeDataplane.action:type_name -> edgetraffic.agent.v1.UpgradeDataplane.Action
-	15, // 21: edgetraffic.agent.v1.UpgradeDataplane.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
-	5,  // 22: edgetraffic.agent.v1.AgentGateway.Enroll:input_type -> edgetraffic.agent.v1.EnrollRequest
-	7,  // 23: edgetraffic.agent.v1.AgentGateway.Connect:input_type -> edgetraffic.agent.v1.AgentMessage
-	26, // 24: edgetraffic.agent.v1.AgentGateway.FetchBundle:input_type -> edgetraffic.agent.v1.FetchBundleRequest
-	25, // 25: edgetraffic.agent.v1.AgentGateway.FetchPackage:input_type -> edgetraffic.agent.v1.FetchPackageRequest
-	6,  // 26: edgetraffic.agent.v1.AgentGateway.Enroll:output_type -> edgetraffic.agent.v1.EnrollResponse
-	13, // 27: edgetraffic.agent.v1.AgentGateway.Connect:output_type -> edgetraffic.agent.v1.ServerMessage
-	27, // 28: edgetraffic.agent.v1.AgentGateway.FetchBundle:output_type -> edgetraffic.agent.v1.BundleChunk
-	27, // 29: edgetraffic.agent.v1.AgentGateway.FetchPackage:output_type -> edgetraffic.agent.v1.BundleChunk
-	26, // [26:30] is the sub-list for method output_type
-	22, // [22:26] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	6,  // 0: edgetraffic.agent.v1.EnrollRequest.instance:type_name -> edgetraffic.agent.v1.InstanceInfo
+	9,  // 1: edgetraffic.agent.v1.AgentMessage.hello:type_name -> edgetraffic.agent.v1.Hello
+	10, // 2: edgetraffic.agent.v1.AgentMessage.heartbeat:type_name -> edgetraffic.agent.v1.Heartbeat
+	12, // 3: edgetraffic.agent.v1.AgentMessage.result:type_name -> edgetraffic.agent.v1.CommandResult
+	13, // 4: edgetraffic.agent.v1.AgentMessage.log:type_name -> edgetraffic.agent.v1.LogChunk
+	22, // 5: edgetraffic.agent.v1.AgentMessage.drift:type_name -> edgetraffic.agent.v1.DriftReport
+	6,  // 6: edgetraffic.agent.v1.Hello.instance:type_name -> edgetraffic.agent.v1.InstanceInfo
+	11, // 7: edgetraffic.agent.v1.Heartbeat.site_minutes:type_name -> edgetraffic.agent.v1.SiteMinute
+	0,  // 8: edgetraffic.agent.v1.CommandResult.status:type_name -> edgetraffic.agent.v1.CommandResult.Status
+	15, // 9: edgetraffic.agent.v1.ServerMessage.apply:type_name -> edgetraffic.agent.v1.ApplyRevision
+	17, // 10: edgetraffic.agent.v1.ServerMessage.rollback:type_name -> edgetraffic.agent.v1.Rollback
+	18, // 11: edgetraffic.agent.v1.ServerMessage.probe:type_name -> edgetraffic.agent.v1.Probe
+	19, // 12: edgetraffic.agent.v1.ServerMessage.tail:type_name -> edgetraffic.agent.v1.TailLog
+	20, // 13: edgetraffic.agent.v1.ServerMessage.signal:type_name -> edgetraffic.agent.v1.Signal
+	21, // 14: edgetraffic.agent.v1.ServerMessage.license:type_name -> edgetraffic.agent.v1.LicenseUpdate
+	24, // 15: edgetraffic.agent.v1.ServerMessage.upgrade:type_name -> edgetraffic.agent.v1.UpgradeDataplane
+	25, // 16: edgetraffic.agent.v1.ServerMessage.upgrade_agent:type_name -> edgetraffic.agent.v1.UpgradeAgent
+	16, // 17: edgetraffic.agent.v1.ApplyRevision.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
+	1,  // 18: edgetraffic.agent.v1.TailLog.file:type_name -> edgetraffic.agent.v1.TailLog.File
+	2,  // 19: edgetraffic.agent.v1.Signal.kind:type_name -> edgetraffic.agent.v1.Signal.Kind
+	23, // 20: edgetraffic.agent.v1.DriftReport.files:type_name -> edgetraffic.agent.v1.DriftFile
+	3,  // 21: edgetraffic.agent.v1.DriftFile.change:type_name -> edgetraffic.agent.v1.DriftFile.Change
+	4,  // 22: edgetraffic.agent.v1.UpgradeDataplane.action:type_name -> edgetraffic.agent.v1.UpgradeDataplane.Action
+	16, // 23: edgetraffic.agent.v1.UpgradeDataplane.post_checks:type_name -> edgetraffic.agent.v1.PostCheck
+	5,  // 24: edgetraffic.agent.v1.AgentGateway.Enroll:input_type -> edgetraffic.agent.v1.EnrollRequest
+	8,  // 25: edgetraffic.agent.v1.AgentGateway.Connect:input_type -> edgetraffic.agent.v1.AgentMessage
+	27, // 26: edgetraffic.agent.v1.AgentGateway.FetchBundle:input_type -> edgetraffic.agent.v1.FetchBundleRequest
+	26, // 27: edgetraffic.agent.v1.AgentGateway.FetchPackage:input_type -> edgetraffic.agent.v1.FetchPackageRequest
+	7,  // 28: edgetraffic.agent.v1.AgentGateway.Enroll:output_type -> edgetraffic.agent.v1.EnrollResponse
+	14, // 29: edgetraffic.agent.v1.AgentGateway.Connect:output_type -> edgetraffic.agent.v1.ServerMessage
+	28, // 30: edgetraffic.agent.v1.AgentGateway.FetchBundle:output_type -> edgetraffic.agent.v1.BundleChunk
+	28, // 31: edgetraffic.agent.v1.AgentGateway.FetchPackage:output_type -> edgetraffic.agent.v1.BundleChunk
+	28, // [28:32] is the sub-list for method output_type
+	24, // [24:28] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -2323,14 +2439,14 @@ func file_agent_v1_agent_proto_init() {
 	if File_agent_v1_agent_proto != nil {
 		return
 	}
-	file_agent_v1_agent_proto_msgTypes[2].OneofWrappers = []any{
+	file_agent_v1_agent_proto_msgTypes[3].OneofWrappers = []any{
 		(*AgentMessage_Hello)(nil),
 		(*AgentMessage_Heartbeat)(nil),
 		(*AgentMessage_Result)(nil),
 		(*AgentMessage_Log)(nil),
 		(*AgentMessage_Drift)(nil),
 	}
-	file_agent_v1_agent_proto_msgTypes[8].OneofWrappers = []any{
+	file_agent_v1_agent_proto_msgTypes[9].OneofWrappers = []any{
 		(*ServerMessage_Apply)(nil),
 		(*ServerMessage_Rollback)(nil),
 		(*ServerMessage_Probe)(nil),
@@ -2346,7 +2462,7 @@ func file_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
