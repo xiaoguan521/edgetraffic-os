@@ -98,7 +98,11 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 	if err != nil {
 		return render.Input{}, err
 	}
-	in := render.Input{Revision: rev, AllowedNet: allowed, RealIPFrom: realIP, MimeTypes: d.MimeTypes}
+	prof, err := groupProfile(g)
+	if err != nil {
+		return render.Input{}, err
+	}
+	in := render.Input{Revision: rev, AllowedNet: allowed, RealIPFrom: realIP, MimeTypes: d.MimeTypes, Profile: prof}
 	q := d.q()
 	// 查询失败必须报错：否则会渲染出一份没有站点的配置并下发到全部节点
 	sites, err := q.Site.WithContext(bg).Where(q.Site.GroupID.Eq(groupID), q.Site.Enabled.Is(true)).Order(q.Site.Name).Find()
@@ -391,6 +395,11 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		lk.Unlock()
 		return nil, err
 	}
+	prof, err := groupProfile(g) // 国密路径按本组实例的版本目录改写
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
 	var changed []string
 	if certID != 0 && d.Certs.Kind(certID) == store.KindSM2 {
 		g, err := d.Certs.ResolveGM(certID)
@@ -463,7 +472,7 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		}
 		r.ID = fmt.Sprintf("r%06d", r.Seq)
 		// 国密指令引用本版本目录的绝对路径，随新版本号改写（agent 只容许这一处改写）
-		b := render.Repack(r.ID, render.RebaseRevision(files, cur.ID, r.ID))
+		b := render.Repack(r.ID, render.RebaseRevisionFor(prof, files, cur.ID, r.ID))
 		tgz, err := b.TarGz()
 		if err != nil {
 			return err

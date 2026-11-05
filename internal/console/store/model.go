@@ -39,8 +39,10 @@ type NodeGroup struct {
 	AllowedCIDRs      string `gorm:"column:allowed_cidrs" json:"allowed_cidrs"` // 逗号分隔
 	RealIPFrom        string `json:"real_ip_from"`                              // 逗号分隔
 	CurrentRevisionID string `gorm:"size:16" json:"current_revision_id"`
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// InstanceProfile 是节点组的实例档案（render.Profile 的 JSON；空串为默认实例），设计 0001 第 3.4、5.2 节
+	InstanceProfile string `json:"instance_profile"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type Node struct {
@@ -48,6 +50,7 @@ type Node struct {
 	GroupID         uint       `gorm:"index" json:"group_id"`
 	Name            string     `json:"name"`
 	Hostname        string     `json:"hostname"`
+	HostKey         string     `gorm:"index;size:64" json:"host_key"` // /etc/machine-id 的 sha256（agent 注册与 Hello 上报），同机实例的冲突检查以它为单位
 	RemoteAddr      string     `json:"remote_addr"`
 	CertSerial      string     `json:"-"`
 	Status          string     `gorm:"size:16" json:"status"` // online | offline | revoked

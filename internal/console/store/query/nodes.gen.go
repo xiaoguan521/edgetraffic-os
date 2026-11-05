@@ -31,6 +31,7 @@ func newNode(db *gorm.DB, opts ...gen.DOOption) node {
 	_node.GroupID = field.NewUint(tableName, "group_id")
 	_node.Name = field.NewString(tableName, "name")
 	_node.Hostname = field.NewString(tableName, "hostname")
+	_node.HostKey = field.NewString(tableName, "host_key")
 	_node.RemoteAddr = field.NewString(tableName, "remote_addr")
 	_node.CertSerial = field.NewString(tableName, "cert_serial")
 	_node.Status = field.NewString(tableName, "status")
@@ -63,6 +64,7 @@ type node struct {
 	GroupID         field.Uint
 	Name            field.String
 	Hostname        field.String
+	HostKey         field.String
 	RemoteAddr      field.String
 	CertSerial      field.String
 	Status          field.String
@@ -101,6 +103,7 @@ func (n *node) updateTableName(table string) *node {
 	n.GroupID = field.NewUint(table, "group_id")
 	n.Name = field.NewString(table, "name")
 	n.Hostname = field.NewString(table, "hostname")
+	n.HostKey = field.NewString(table, "host_key")
 	n.RemoteAddr = field.NewString(table, "remote_addr")
 	n.CertSerial = field.NewString(table, "cert_serial")
 	n.Status = field.NewString(table, "status")
@@ -143,11 +146,12 @@ func (n *node) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (n *node) fillFieldMap() {
-	n.fieldMap = make(map[string]field.Expr, 22)
+	n.fieldMap = make(map[string]field.Expr, 23)
 	n.fieldMap["id"] = n.ID
 	n.fieldMap["group_id"] = n.GroupID
 	n.fieldMap["name"] = n.Name
 	n.fieldMap["hostname"] = n.Hostname
+	n.fieldMap["host_key"] = n.HostKey
 	n.fieldMap["remote_addr"] = n.RemoteAddr
 	n.fieldMap["cert_serial"] = n.CertSerial
 	n.fieldMap["status"] = n.Status

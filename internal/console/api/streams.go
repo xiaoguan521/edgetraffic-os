@@ -64,8 +64,11 @@ func (s *Server) validateStream(groupID uint, sp render.StreamProxy) error {
 	if len(in.MimeTypes) == 0 {
 		in.MimeTypes = render.DefaultMimeTypes()
 	}
-	_, err = render.Render(in)
-	return err
+	if _, err = render.Render(in); err != nil {
+		return err
+	}
+	// 同一主机上其他实例的端口（同组内的冲突已由渲染器检查）
+	return s.Deploy.CheckStreamPorts(groupID, sp)
 }
 
 func (s *Server) saveStream(c *gin.Context) {

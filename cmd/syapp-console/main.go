@@ -133,6 +133,7 @@ func run(log *slog.Logger, o options) error {
 	gw := &gateway.Server{Store: st, CA: ca, CmdKey: cmdKey, Lic: lic, Audit: aud, Log: log}
 	dep := &deploy.Service{Store: st, Certs: crt, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes(), Box: box}
 	gw.OnOnline = dep.Align
+	gw.CheckHost = func(groupID uint, hostKey string) error { return dep.CheckEnrollHost(groupID, hostKey, 0) }
 	dep.Feature = func(f string) bool { return lic.Snapshot().Feature(license.Feature(f)) }
 	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
 	alr := &alerts.Service{Store: st, Box: box, Log: log, DataDir: dataDir, IMAllow: func() bool { return lic.Snapshot().Feature(license.FeatureAlertIM) }}

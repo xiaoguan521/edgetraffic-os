@@ -33,6 +33,7 @@ func newNodeGroup(db *gorm.DB, opts ...gen.DOOption) nodeGroup {
 	_nodeGroup.AllowedCIDRs = field.NewString(tableName, "allowed_cidrs")
 	_nodeGroup.RealIPFrom = field.NewString(tableName, "real_ip_from")
 	_nodeGroup.CurrentRevisionID = field.NewString(tableName, "current_revision_id")
+	_nodeGroup.InstanceProfile = field.NewString(tableName, "instance_profile")
 	_nodeGroup.CreatedAt = field.NewTime(tableName, "created_at")
 	_nodeGroup.UpdatedAt = field.NewTime(tableName, "updated_at")
 
@@ -51,6 +52,7 @@ type nodeGroup struct {
 	AllowedCIDRs      field.String
 	RealIPFrom        field.String
 	CurrentRevisionID field.String
+	InstanceProfile   field.String
 	CreatedAt         field.Time
 	UpdatedAt         field.Time
 
@@ -75,6 +77,7 @@ func (n *nodeGroup) updateTableName(table string) *nodeGroup {
 	n.AllowedCIDRs = field.NewString(table, "allowed_cidrs")
 	n.RealIPFrom = field.NewString(table, "real_ip_from")
 	n.CurrentRevisionID = field.NewString(table, "current_revision_id")
+	n.InstanceProfile = field.NewString(table, "instance_profile")
 	n.CreatedAt = field.NewTime(table, "created_at")
 	n.UpdatedAt = field.NewTime(table, "updated_at")
 
@@ -103,13 +106,14 @@ func (n *nodeGroup) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (n *nodeGroup) fillFieldMap() {
-	n.fieldMap = make(map[string]field.Expr, 8)
+	n.fieldMap = make(map[string]field.Expr, 9)
 	n.fieldMap["id"] = n.ID
 	n.fieldMap["name"] = n.Name
 	n.fieldMap["description"] = n.Description
 	n.fieldMap["allowed_cidrs"] = n.AllowedCIDRs
 	n.fieldMap["real_ip_from"] = n.RealIPFrom
 	n.fieldMap["current_revision_id"] = n.CurrentRevisionID
+	n.fieldMap["instance_profile"] = n.InstanceProfile
 	n.fieldMap["created_at"] = n.CreatedAt
 	n.fieldMap["updated_at"] = n.UpdatedAt
 }
