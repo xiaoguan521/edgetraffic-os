@@ -137,8 +137,9 @@ if grep -q "$TOK" "$W/console.log" "$W/data/"*.db 2>/dev/null; then bad "令牌�
 "${C[@]}" -X DELETE "$B/api-tokens/$tid" >/dev/null
 expect "撤销后令牌失效" "$("${T[@]}" "$B/sites")" "UNAUTHORIZED"
 
+# 告警地址保存时会解析主机并拒绝内网地址（SSRF 防护）：用公网 IP 字面量，不依赖 DNS，冒烟中不会真正发送
 echo "== 告警（P9）"
-expect "创建钉钉通道（密钥加密保存）" "$("${C[@]}" -X POST "$B/alert-channels" -d '{"name":"dt","type":"dingtalk","url":"https://oapi.example.com/robot/send?access_token=x","secret":"SECsmoke","enabled":true}')" '"type":"dingtalk"'
+expect "创建钉钉通道（密钥加密保存）" "$("${C[@]}" -X POST "$B/alert-channels" -d '{"name":"dt","type":"dingtalk","url":"https://1.1.1.1/robot/send?access_token=x","secret":"SECsmoke","enabled":true}')" '"type":"dingtalk"'
 expect "保存告警规则" "$("${C[@]}" -X PUT "$B/alert-rules/cert_expiry" -d '{"enabled":true,"threshold":30,"channel_ids":[1]}')" '"ok":true'
 al=$("${C[@]}" "$B/alerts")
 expect "告警页数据" "$al" '"has_secret":true'
