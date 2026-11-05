@@ -12,11 +12,26 @@ const groups = ref<any[]>([])
 const nodes = ref<any[]>([])
 const gid = ref<number>(0)
 const group = computed(() => groups.value.find((g) => g.id === gid.value))
+const profile = ref<any>(null)
+const view = ref<'group' | 'host'>('group')
+const hosts = ref<any[]>([])
 
 async function load() {
   groups.value = await api.get('/node-groups')
   if (!gid.value && groups.value.length) gid.value = groups.value[0].id
-  nodes.value = (await api.get('/nodes', { group_id: gid.value })).filter((n: any) => n.status !== 'revoked')
+  const [n, p, h] = await Promise.all([api.get('/nodes', { group_id: gid.value }), api.get(`/node-groups/${gid.value}/profile`), api.get('/hosts')])
+  nodes.value = n.filter((x: any) => x.status !== 'revoked')
+  profile.value = p
+  hosts.value = h
+}
+const instanceLabel = computed(() => {
+  const p = profile.value
+  if (!p) return ''
+  const e = p.effective || {}
+  return `${p.instance || '默认实例'} · ${p.mode === 'user' ? `user 模式（${p.root}）` : 'system 模式'} · HTTP ${e.http_port} / HTTPS ${e.https_port}`
+})
+function dataplaneVersion(n: any) {
+  return (n.syapp_version || '').replace(brand.proc + ' version: ', '')
 }
 let t: number | undefined
 onMounted(() => {
@@ -42,16 +57,33 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => message.success('已复制'))
 }
 
-// 节点组设置
+// 节点组设置（含实例档案：同机多实例与 user 模式，设计 0001 第 3.4、5.2 节）
 const editing = ref(false)
 const gform = reactive({ description: '', allowed_cidrs: '', real_ip_from: '' })
+const pform = reactive({ instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
+const locked = computed(() => nodes.value.length > 0) // 组内已有节点：实例名、模式、根目录不可改
 function openGroup() {
   Object.assign(gform, { description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
+  const p = profile.value || {}
+  const e = p.effective || {}
+  Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
   editing.value = true
+}
+function profileChanged() {
+  const p = profile.value || {}
+  const e = p.effective || {}
+  return pform.instance !== (p.instance || '') || pform.mode !== (p.mode || 'system') || pform.root !== (p.root || '') ||
+    pform.http_port !== e.http_port || pform.https_port !== e.https_port || pform.status_port !== e.status_port || pform.nofile !== (p.nofile || 0)
 }
 async function saveGroup() {
   try {
     await api.put(`/node-groups/${gid.value}`, gform)
+    if (profileChanged()) {
+      const body: any = { instance: pform.instance, http_port: pform.http_port, https_port: pform.https_port, status_port: pform.status_port }
+      if (pform.mode === 'user') Object.assign(body, { mode: 'user', root: pform.root })
+      if (pform.nofile) body.nofile = pform.nofile
+      await api.put(`/node-groups/${gid.value}/profile`, body)
+    }
     message.success('已保存，发布后生效')
     editing.value = false
     load()
@@ -125,18 +157,40 @@ function mb(b: number) {
         <p>节点上的 {{ brand.agent }} 只向控制台发起连接，节点不需要开放任何管理端口。</p>
       </div>
       <a-space>
+        <a-segmented v-model:value="view" :options="[{ label: '按节点组', value: 'group' }, { label: '按主机', value: 'host' }]" />
         <a-button v-if="session.can('operator')" @click="openGroup">节点组设置</a-button>
         <a-button v-if="session.can('operator')" type="primary" :loading="enrolling" :disabled="!session.writable" @click="addNode">添加节点</a-button>
       </a-space>
     </div>
 
-    <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" style="margin-bottom: 16px" @change="load" />
+    <div v-if="view === 'host'" class="panel">
+      <p class="sub" style="margin-top: 0">同一台主机（按机器标识识别）上的实例共用一个 {{ brand.id }} 二进制；每个实例属于一个节点组，端口互不冲突。</p>
+      <a-empty v-if="!hosts.length" description="还没有节点" />
+      <div v-for="h in hosts" :key="h.host" class="hostcard">
+        <div class="hhead">
+          <b>{{ h.name || h.host }}</b> <span class="sub code">{{ h.host }}</span>
+          <a-tag v-if="h.mixed" color="gold" style="margin-left: 8px">实例版本不一致：{{ h.versions.join('、') }}</a-tag>
+        </div>
+        <a-table :data-source="h.nodes" row-key="id" :pagination="false" size="small"
+          :columns="[{ title: '节点', dataIndex: 'name', width: '26%' }, { title: '节点组', dataIndex: 'group_name', width: '16%' }, { title: '实例', key: 'inst', width: '14%' }, { title: 'HTTP / HTTPS', key: 'ports', width: '18%' }, { title: '运行版本', key: 'ver', width: '14%' }, { title: '状态', key: 'st' }]" table-layout="fixed">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'inst'">{{ record.instance || '默认' }}<a-tag v-if="record.mode === 'user'" style="margin-left: 6px">user</a-tag></template>
+            <template v-else-if="column.key === 'ports'"><span class="num">{{ record.http_port }} / {{ record.https_port }}</span></template>
+            <template v-else-if="column.key === 'ver'">{{ record.running_version || '—' }}</template>
+            <template v-else-if="column.key === 'st'"><a-badge :status="record.status === 'online' ? 'success' : 'default'" :text="record.status === 'online' ? '在线' : '离线'" /></template>
+          </template>
+        </a-table>
+      </div>
+    </div>
 
-    <div class="panel">
+    <a-segmented v-if="view === 'group' && groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" style="margin-bottom: 16px" @change="load" />
+
+    <div class="panel" v-if="view === 'group'">
       <div class="gsum" v-if="group">
         <span>节点组 <b>{{ group.name }}</b></span>
         <span>组版本 <b class="num">{{ group.current_revision_id || '未发布' }}</b></span>
         <span>允许回源网段 <b class="code">{{ group.allowed_cidrs || '未设置' }}</b></span>
+        <span v-if="profile">实例档案 <b>{{ instanceLabel }}</b></span>
       </div>
       <a-table :columns="columns" :data-source="nodes" row-key="id" :pagination="false">
         <template #emptyText>
@@ -162,7 +216,7 @@ function mb(b: number) {
             <a-tag v-if="group?.current_revision_id && record.applied_revision !== group.current_revision_id && record.status === 'online'" color="gold" style="margin-left: 6px">落后</a-tag>
           </template>
           <template v-else-if="column.key === 'dataplane'">
-            <div>{{ (record.syapp_version || '').replace(brand.proc + ' version: ', '') || '—' }}<a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag><a-tooltip v-if="record.lua_addon" :title="`${brand.lua} ${record.lua_addon}`"><a-tag color="purple" class="gm">Lua</a-tag></a-tooltip></div>
+            <div>{{ dataplaneVersion(record) || '—' }}<a-tooltip v-if="record.running_version && dataplaneVersion(record) && !dataplaneVersion(record).includes(record.running_version)" :title="`本实例仍在运行 ${record.running_version}：同机其他实例已升级了共用的二进制`"><a-tag color="gold" class="gm">运行 {{ record.running_version }}</a-tag></a-tooltip><a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag><a-tooltip v-if="record.lua_addon" :title="`${brand.lua} ${record.lua_addon}`"><a-tag color="purple" class="gm">Lua</a-tag></a-tooltip></div>
             <div class="sub">agent {{ record.agent_version }}</div>
           </template>
           <template v-else-if="column.key === 'load'">
@@ -184,7 +238,10 @@ function mb(b: number) {
 
     <a-modal :open="!!enroll" title="添加节点" :footer="null" width="720px" @cancel="enroll = null">
       <template v-if="enroll">
-        <p>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+        <p v-if="enroll.mode === 'user'">在边缘服务器上以安装用户（不需要 root，也不需要 sudo）执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。
+          新服务器请先解压 user 模式节点包，用 <span class="code">./install-user.sh {{ enroll.root }} --http {{ enroll.http_port }} --https {{ enroll.https_port }} --status {{ enroll.status_port }} --console {{ enroll.server }} --token &lt;令牌&gt; --ca-fingerprint &lt;指纹&gt;</span> 一步安装并注册。</p>
+        <p v-else-if="enroll.instance">在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令：按节点组的实例档案创建实例 <b>{{ enroll.instance }}</b>（HTTP {{ enroll.http_port }} / HTTPS {{ enroll.https_port }}）并注册。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+        <p v-else>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
         <pre class="cmd code">{{ enroll.command }}</pre>
         <a-button type="primary" @click="copy(enroll.command)">复制命令</a-button>
         <a-descriptions :column="1" size="small" style="margin-top: 20px">
@@ -204,6 +261,26 @@ function mb(b: number) {
         <a-form-item label="CDN / 负载均衡回源网段" :extra="`填写后，${brand.id} 从 X-Forwarded-For 中取客户端真实 IP。`">
           <a-input v-model:value="gform.real_ip_from" class="code" placeholder="例如 10.0.0.0/8" />
         </a-form-item>
+        <a-divider orientation="left" style="font-size: 13px">实例档案</a-divider>
+        <p class="sub" style="margin-top: -8px">组内所有节点使用同一个档案。同一台服务器上运行多套 {{ brand.id }} 时，每套属于不同的节点组，实例名与端口不能冲突。{{ locked ? '组内已有节点：实例名、运行方式与安装目录不能再改，端口可以改（改后需在各节点上按新端口重建实例）。' : '' }}</p>
+        <a-form-item label="实例名" extra="留空为默认实例；具名实例只能用小写字母、数字和短横线。">
+          <a-input v-model:value="pform.instance" class="code" :disabled="locked" placeholder="默认实例" />
+        </a-form-item>
+        <a-form-item label="运行方式">
+          <a-radio-group v-model:value="pform.mode" :disabled="locked">
+            <a-radio value="system">system（root 安装软件包）</a-radio>
+            <a-radio value="user">user（普通用户安装，不需要 root）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item v-if="pform.mode === 'user'" label="安装根目录" extra="节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。">
+          <a-input v-model:value="pform.root" class="code" :disabled="locked" placeholder="/home/ops/edge" />
+        </a-form-item>
+        <a-space wrap>
+          <a-form-item label="HTTP 端口"><a-input-number v-model:value="pform.http_port" :min="1" :max="65535" /></a-form-item>
+          <a-form-item label="HTTPS 端口"><a-input-number v-model:value="pform.https_port" :min="1" :max="65535" /></a-form-item>
+          <a-form-item label="状态页端口（仅本机）"><a-input-number v-model:value="pform.status_port" :min="1" :max="65535" /></a-form-item>
+        </a-space>
+        <p v-if="pform.http_port !== 80" class="sub">HTTP 端口不是 80：ACME 自动签发需要前置负载均衡把域名的 80 端口转发到 {{ pform.http_port }}，否则请使用上传证书。</p>
       </a-form>
     </a-modal>
     <a-drawer :open="!!drift" :width="760" :title="`${driftNode?.name} 的手工改动`" @close="drift = null">
@@ -234,6 +311,12 @@ function mb(b: number) {
 </template>
 
 <style scoped>
+.hostcard {
+  margin-bottom: 18px;
+}
+.hhead {
+  margin-bottom: 6px;
+}
 .gm {
   margin-left: 6px;
   font-size: 11px;
