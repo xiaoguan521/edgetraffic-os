@@ -1,6 +1,6 @@
 # 设计 0001：部署布局 —— 同机多实例、非 root 运行、品牌可定制
 
-- 状态：**草案，待评审**（评审通过后拆为 P11-A ~ P11-D 开发，并按第 9 节修改 `CLAUDE.md`）
+- 状态：**已评审（D1、D2、D6 按建议执行，其余待决策项按建议默认）**；3.2 节在实现时修订（评审通过后拆为 P11-A ~ P11-D 开发，并按第 9 节修改 `CLAUDE.md`）
 - 日期：2026-11-05
 - 涉及规格书章节：4 数据面、5 agent、6 渲染器、7 控制台、8 授权、9 安全、12 路线
 - 关联：ADR 0001（数据面只改名）、ADR 0002（agent 只主动外连）、提交 9b0716a（多实例 wrapper 初版）
@@ -56,28 +56,16 @@
 
 代码中只有 `internal/layout` 一个包负责根据 `(B, M, R, I)` 计算路径。agent、wrapper、实例管理命令和渲染器都调用它，**任何地方都不允许再拼写路径或写死程序名**。wrapper 永远只接收实例名，不接收路径，路径由它自己算出，这是保持提权安全的关键。
 
-### 3.2 实例前缀与相对路径
+### 3.2 按档案渲染绝对路径（实现时修订）
 
-每个实例有一个**实例前缀** `P`。数据面一律用下面的方式启动：
+> 初稿方案是“配置一律用相对路径，以 `-p` 前缀启动”。实现时发现它要求节点上先有 `run/`、`logs/`、`cache/` 软链：控制台先升级、节点安装包后升级时，新配置的 `-t` 会失败，发布被卡住。因此改为下面的方案（P11-A 第二步，PR #26）。
 
-```
-B -p P/ -e logs/error.log -c conf/current/B.conf
-```
-
-渲染出的配置中，凡是能用相对路径的一律用相对路径，由 syapp 相对于 `-p` 前缀或配置文件目录解析：
-
-| 配置项 | 渲染为 | 解析基准 |
-| --- | --- | --- |
-| `pid` | `run/B.pid` | 前缀 |
-| `error_log` / `access_log` | `logs/error.log` / `logs/access.json` | 前缀 |
-| `*_temp_path`（client_body、proxy、fastcgi、uwsgi、scgi） | `cache/<类型>_temp` | 前缀。必须显式写出，用来覆盖编译期的 `/var/cache/B` |
-| 静态资源 `alias` | `conf/current/sites/<站点>/<路由>/` | 前缀 |
-| `include`、`ssl_certificate` | 与现在一样，相对于版本目录 | 配置文件所在目录 |
-| `load_module`（Lua） | `modules/<版本>/...` | 前缀（具名实例的 `P/modules` 是指向共用模块目录的软链） |
-| 国密 `ssl_conf_command` 中的证书路径 | **绝对路径** `P/conf/current/certs/...` | syapp 不解析这类路径，参数直接交给加密库，所以只能用绝对路径 |
-| `-e logs/error.log` | 启动早期的错误日志 | 避免普通用户启动时尝试写编译期的 `/var/log/B` |
-
-这样做的效果：**配置包里除了国密证书路径，不包含任何与品牌、模式、安装根目录或实例名相关的内容**。
+- 渲染器的输入带上节点组的**实例档案**（3.4 节）。pid、错误日志、访问日志、四层代理日志、临时目录、静态资源 `alias`、国密证书路径、Lua 模块与密钥路径，全部由 `internal/layout` 根据档案算出绝对路径。
+- 同组节点共用同一个档案（5.1 节原则 1），所以同组节点拿到的配置包仍然逐字节相同。
+- 档案为零值（默认实例）时，渲染结果与引入档案前**逐字节相同**，已部署节点不需要任何迁移。
+- 临时目录与编译期默认值不同时，才显式写出 `*_temp_path`；只有 system 模式才输出 `user` 指令。
+- `load_module` 在 system 模式下仍相对于编译期前缀（同机实例共用 `/opt/B/modules`），在 user 模式下用绝对路径。
+- 启动方式：默认实例不变；具名实例和 user 模式以 `-c <实例的 current 配置>` 启动，user 模式另加 `-e <实例错误日志>`，避免启动早期写编译期的 `/var/log/B`。
 
 ### 3.3 路径表
 
@@ -87,9 +75,9 @@ B -p P/ -e logs/error.log -c conf/current/B.conf
 | --- | --- | --- |
 | 实例前缀 `P` | `/opt/B` | `/opt/B/instances/I` |
 | 配置版本 | `P/conf/releases/`、`P/conf/current` | 同左 |
-| `P/run` | 软链到 `/run/B` | 软链到 `/run/B-I` |
-| `P/logs` | 软链到 `/var/log/B` | 软链到 `/var/log/B-I` |
-| `P/cache` | 软链到 `/var/cache/B` | 软链到 `/var/cache/B-I` |
+| 运行目录（pid） | `/run/B` | `/run/B-I` |
+| 日志目录 | `/var/log/B` | `/var/log/B-I` |
+| 临时目录 | `/var/cache/B` | `/var/cache/B-I` |
 | agent 状态目录 | `/var/lib/B-agent` | `/var/lib/B-agent-I` |
 | 数据面服务单元 | `B.service` | `B@I.service` |
 | agent 服务单元 | `B-agent.service` | `B-agent@I.service` |
@@ -97,7 +85,7 @@ B -p P/ -e logs/error.log -c conf/current/B.conf
 | worker 运行用户 | `B` | `B`（共用） |
 | 本机共用部分 | 二进制 `/opt/B/sbin/B`（软链到 `versions/`）、版本库 `/opt/B/versions/`、Lua 模块 `/opt/B/modules/`、`/usr/libexec/B/B-wrapper`、`/usr/bin/B-agent`、`/usr/sbin/B-instance` | |
 
-`P/run`、`P/logs`、`P/cache` 用软链指向标准目录，既满足相对路径方案，又让运维习惯的 `/var/log/B-I` 位置保持不变。`/run` 下的目标目录由 systemd 的 `RuntimeDirectory=` 或 tmpfiles 在开机时创建。
+`/run` 下的目录由 systemd 的 `RuntimeDirectory=` 或 tmpfiles 在开机时创建。
 
 **user 模式**（安装根目录为 `R`，所有内容都在 `R` 之下，归安装用户所有）
 
@@ -213,7 +201,7 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 ```
 
 - 子命令和参数校验规则不变。`--instance` 只能是第一个参数，取值必须匹配实例名规则，并且对应的实例必须已经由 `B-instance add` 创建：前缀目录存在、归 root 所有、包含 `instance.json`。所有路径由 wrapper 根据布局计算，不接受外部传入的路径。
-- reload、reopen、quit 改为 `B -p P/ -s <信号>`，syapp 从 `P/run/B.pid` 找到正确的进程，这样就修复了信号发到默认实例的问题。
+- 具名实例的 reload、reopen、quit 用 `B -c <实例的 current 配置> -s <信号>`。由于实例配置中的 `pid` 已按档案渲染为本实例的路径，syapp 会找到正确的进程，这样就修复了信号发到默认实例的问题。
 - **每个具名实例使用独立的 agent 用户 `B-agent-I` 和独立的 sudoers 文件** `/etc/sudoers.d/B-agent-I`，由 `B-instance add` 生成，写入前用 `visudo -cf` 校验。文件内容固定 7 行，实例名直接写死：
 
   ```
@@ -328,7 +316,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 评审通过后，这些条款与实现在同一个 PR 中修改：
 
-1. “`--conf-path=/opt/syapp/conf/current/syapp.conf`” 改为：数据面一律以 `-p <实例前缀>/ -e logs/error.log -c conf/current/<B>.conf` 启动；配置中的路径用相对路径，只有加密库直接使用的路径例外。
+1. “`--conf-path=/opt/syapp/conf/current/syapp.conf`” 补充：这是默认实例的配置路径；具名实例以 `-c <实例前缀>/conf/current/<B>.conf` 启动，配置中的绝对路径一律由渲染器按节点组档案生成。
 2. wrapper 的命令格式增加 `[--instance I]` 前缀；sudoers 规定为：默认实例 7 行，每个具名实例一个独立文件，同样 7 行，实例名写死，禁止对实例名使用通配。
 3. 漂移 diff 上报的目录限制，从固定的 `/opt/syapp/conf/releases/` 改为“本实例前缀下的 `conf/releases/`”。
 4. “不得停止 syapp”增加一条例外：只有运维人员显式执行的 `B-instance remove` 和卸载安装包，可以对该实例执行优雅退出。
@@ -349,7 +337,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 | 阶段 | 内容 | 预计（AI 编码，工作日） | 依赖 |
 | --- | --- | --- | --- |
-| P11-A 布局与品牌基础 | 新增 `internal/layout`、`internal/brand`；42 个文件改为调用这两个包；模板改为相对路径；`-p -e -c` 启动方式；黄金用例通过真实 `B -t` 和实际启动；`TestNoBrandLiteral` | 3–4 | — |
+| P11-A 布局与品牌基础 | 新增 `internal/layout`、`internal/brand`；Go 代码改为调用这两个包；`TestNoBrandLiteral`（PR #25）。渲染器接收实例档案并按档案渲染路径和端口；默认档案输出不变；具名实例与 user 模式的输出通过真实 `B -t`（PR #26） | 3–4 | — |
 | P11-B 多实例（system 模式） | 实例档案（控制台、渲染器、agent）；新的 wrapper 和 sudoers 契约及注入测试；主机级升级编排与状态拆分；`B-instance`；logrotate、tmpfiles、防火墙；安装包卸载保护 | 5–6 | A |
 | P11-C 非 root 运行 | user 模式布局、免安装包、`systemd --user` 和 cron 兜底、agent 内置日志轮转；方式 B（降权运行）开关 | 3–4 | A，可与 B 并行 |
 | P11-D 品牌参数化构建 | patch 模板与生成器（长度计算、HPACK）；构建、打包、单元文件模板化；前端运行时获取品牌；注册与升级包的品牌校验；`make brand-matrix` 与泄漏扫描 | 4–5 | A，可与 B、C 并行 |
