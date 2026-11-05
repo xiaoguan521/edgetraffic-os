@@ -208,6 +208,27 @@ func (s *Service) Orders(limit int) []OrderView {
 	return out
 }
 
+// portHint：节点组的 HTTP 端口不是 80 时（同机多实例或 user 模式，设计 0001 第 5.2 节），
+// CA 访问域名的 80 端口必须由前置负载均衡或端口转发送到该端口，否则 HTTP-01 验证无法通过。
+func (s *Service) portHint(groups []uint) string {
+	var parts []string
+	for _, id := range groups {
+		g, err := store.First[store.NodeGroup](s.Store, id)
+		if err != nil || g.InstanceProfile == "" {
+			continue
+		}
+		var p render.Profile
+		if json.Unmarshal([]byte(g.InstanceProfile), &p) != nil || p.HTTP() == 80 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("节点组 %s 的 HTTP 端口为 %d", g.Name, p.HTTP()))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "、") + "：HTTP-01 验证要求 CA 访问域名的 80 端口能转发到该端口；无法转发时请改用上传证书"
+}
+
 // groupsFor 找出线上版本中有站点服务这些域名的节点组，并检查每个域名都能被某个组应答。
 func (s *Service) groupsFor(domains []string) ([]uint, error) {
 	q := s.q()
@@ -401,6 +422,9 @@ func (s *Service) run(o *store.AcmeOrder, domains []string, groups []uint, user 
 		s.mu.Unlock()
 	}()
 	fail := func(err error) {
+		if h := s.portHint(groups); h != "" {
+			err = fmt.Errorf("%w（%s）", err, h)
+		}
 		s.clearChallenges(o.ID)
 		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer ccancel()

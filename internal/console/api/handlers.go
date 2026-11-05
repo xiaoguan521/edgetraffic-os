@@ -411,13 +411,31 @@ func (s *Server) enrollToken(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	mode := prof.Mode
+	if mode == "" {
+		mode = "system"
+	}
 	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint,
-		"command": enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint)})
+		"command": enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint), "mode": mode, "instance": prof.Instance, "root": prof.Root,
+		"http_port": prof.HTTP(), "https_port": prof.HTTPS(), "status_port": prof.Status()})
 }
 
 // enrollCommand 返回在节点上执行的注册命令：默认实例注册已安装的 agent；
 // 具名实例用 <品牌>-instance add 按节点组档案创建实例并注册（设计 0001 第 5.7 节）。
+// user 模式（设计 0001 第 6 节）：以安装用户执行，不用 sudo，命令都带安装根目录。
 func enrollCommand(p render.Profile, server, token, caFP string) string {
+	if p.Mode == "user" {
+		r := p.Root
+		reg := fmt.Sprintf("-server %s -token %s -ca-fingerprint %s", server, token, caFP)
+		if p.Instance == "" {
+			return fmt.Sprintf("%s/bin/%s enroll -root %s %s && %s/bin/%s-instance --root %s ensure", r, brand.Agent(), r, reg, r, brand.ID(), r)
+		}
+		cmd := fmt.Sprintf("%s/bin/%s-instance --root %s add %s --http %d --https %d --status %d", r, brand.ID(), r, p.Instance, p.HTTP(), p.HTTPS(), p.Status())
+		if p.NoFile != 0 {
+			cmd += fmt.Sprintf(" --nofile %d", p.NoFile)
+		}
+		return cmd + fmt.Sprintf(" --console %s --token %s --ca-fingerprint %s", server, token, caFP)
+	}
 	if p.Instance == "" {
 		return fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now %s",
 			brand.Agent(), server, token, caFP, brand.Agent())

@@ -111,6 +111,48 @@ func (s *Server) getUpgrade(c *gin.Context) {
 	c.JSON(http.StatusOK, v)
 }
 
+func (s *Server) retryUpgrade(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	up, err := s.Deploy.RetryUpgrade(id, c.GetString("user"), c.ClientIP())
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, up)
+}
+
+func (s *Server) rollbackHosts(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	up, err := s.Deploy.RollbackHosts(id, req.Version, c.GetString("user"), c.ClientIP())
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, up)
+}
+
+func (s *Server) listHosts(c *gin.Context) {
+	h, err := s.Deploy.Hosts()
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, h)
+}
+
 func (s *Server) startAgentUpgrade(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {

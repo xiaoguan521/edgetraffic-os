@@ -40,6 +40,7 @@ const (
 	KindDeployRollback = "deployment_rolled_back" // 近期发布失败或灰度自动回滚
 	KindBackupStale    = "backup_stale"           // 阈值：距上次成功备份的小时数
 	KindDiskUsage      = "disk_usage"             // 阈值：控制台数据目录磁盘或 inode 使用率（%）
+	KindHostVersionMix = "host_version_mixed"     // 同一主机上的实例运行着不同的数据面版本（设计 0001 第 5.6 节）
 )
 
 // Defaults 是规则的默认阈值。
@@ -51,6 +52,7 @@ var Defaults = map[string]float64{
 	KindDeployRollback: 0,
 	KindBackupStale:    24,
 	KindDiskUsage:      85,
+	KindHostVersionMix: 0,
 }
 
 // KindName 是规则的中文名。
@@ -62,6 +64,7 @@ var KindName = map[string]string{
 	KindDeployRollback: "发布失败或自动回滚",
 	KindBackupStale:    "备份超期未执行",
 	KindDiskUsage:      "控制台磁盘空间不足",
+	KindHostVersionMix: "同机实例版本不一致",
 }
 
 // MinRequests 是计算 5xx 率的最少请求数（流量太小时比例没有意义）。
@@ -624,6 +627,30 @@ func (s *Service) Evaluate() error {
 			for _, n := range nodes {
 				if now.Sub(*n.LastSeenAt) >= time.Duration(r.Threshold*float64(time.Minute)) {
 					found = append(found, finding{r.Kind, "node:" + n.Name, fmt.Sprintf("节点 %s 已离线（最后心跳 %s）", n.Name, n.LastSeenAt.Format("01-02 15:04:05"))})
+				}
+			}
+		case KindHostVersionMix:
+			nodes, err := q.Node.WithContext(bg).Where(q.Node.HostKey.Neq(""), q.Node.RunningVersion.Neq(""), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+			if err != nil {
+				return err
+			}
+			by := map[string][]*store.Node{}
+			var keys []string
+			for _, n := range nodes {
+				if _, ok := by[n.HostKey]; !ok {
+					keys = append(keys, n.HostKey)
+				}
+				by[n.HostKey] = append(by[n.HostKey], n)
+			}
+			for _, k := range keys {
+				vs := map[string]bool{}
+				var parts []string
+				for _, n := range by[k] {
+					vs[n.RunningVersion] = true
+					parts = append(parts, n.Name+"="+n.RunningVersion)
+				}
+				if len(vs) > 1 {
+					found = append(found, finding{r.Kind, "host:" + k[:min(12, len(k))], fmt.Sprintf("主机 %s 上的实例运行着不同的数据面版本（%s），请完成或回退该主机的升级", by[k][0].Hostname, strings.Join(parts, "、"))})
 				}
 			}
 		case KindDrift:

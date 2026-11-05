@@ -147,6 +147,10 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/node-groups/:id/agent-upgrade", role(store.RoleOperator), s.writable, s.startAgentUpgrade)
 	a.GET("/upgrades", s.listUpgrades)
 	a.GET("/upgrades/:id", s.getUpgrade)
+	// 同机多实例（设计 0001 第 5.6 节）：主机部分升级后重试剩余实例，或把已升级的实例整体回退
+	a.POST("/upgrades/:id/retry", role(store.RoleOperator), s.writable, s.retryUpgrade)
+	a.POST("/upgrades/:id/rollback-hosts", role(store.RoleOperator), s.writable, s.rollbackHosts)
+	a.GET("/hosts", s.listHosts)
 
 	// 配置导入（P7，规格书 12.4）
 	a.GET("/imports", role(store.RoleOperator), s.listImports)

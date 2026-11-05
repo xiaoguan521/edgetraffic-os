@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,19 +88,34 @@ func (d *Service) ListPackages() ([]*store.DataplanePackage, error) {
 		Order(p.ID.Desc()).Find()
 }
 
-// UpgradeNode 是一台节点在升级中的状态。
+// UpgradeNode 是一个节点（实例）在升级中的状态。
 type UpgradeNode struct {
 	NodeID  uint   `json:"node_id"`
 	Name    string `json:"name"`
 	Batch   int    `json:"batch"`
 	Status  string `json:"status"` // pending | upgrading | upgraded | rolled_back | failed | skipped | offline
 	Message string `json:"message"`
+	// 同机多实例（设计 0001 第 5.6 节）：数据面二进制按主机共用，升级以主机为单位
+	Host     string `json:"host,omitempty"`      // 主机标识（HostKey 前 12 位；旧版 agent 不上报时每个节点自成一台主机）
+	HostName string `json:"host_name,omitempty"` // 主机名（取该主机第一个节点上报的主机名）
+	GroupID  uint   `json:"group_id,omitempty"`
+	Sibling  bool   `json:"sibling,omitempty"` // 同机其他节点组的实例，随主机一起升级
+}
+
+// UpgradeHost 汇总一台主机的升级结果。
+type UpgradeHost struct {
+	Host   string `json:"host"`
+	Name   string `json:"name"`
+	Batch  int    `json:"batch"`
+	Status string `json:"status"` // pending | upgrading | done | failed | partial | skipped
+	Nodes  []uint `json:"nodes"`
 }
 
 // UpgradeView 是升级详情。
 type UpgradeView struct {
 	*store.DataplaneUpgrade
 	Nodes []UpgradeNode `json:"nodes"`
+	Hosts []UpgradeHost `json:"hosts"`
 }
 
 // planBatches：先 1 台，再约 10%（至少 1 台），其余全量。
@@ -125,7 +142,149 @@ func planBatches(ids []uint) [][]uint {
 	return out
 }
 
-// StartUpgrade 校验版本库后在后台分批执行升级。
+// hostKey 返回节点所在主机的标识；旧版 agent 不上报主机标识时，每个节点自成一台主机（与引入同机多实例之前的行为一致）。
+func hostKey(n *store.Node) string {
+	if n.HostKey != "" {
+		return n.HostKey
+	}
+	return fmt.Sprintf("node-%d", n.ID)
+}
+
+func shortHost(k string) string {
+	if len(k) > 12 && !strings.HasPrefix(k, "node-") {
+		return k[:12]
+	}
+	return k
+}
+
+// upgradeParticipants 返回升级节点组 groupID 时涉及的全部节点：组内节点，加上这些节点所在主机上其他节点组的实例。
+func (d *Service) upgradeParticipants(groupID uint) ([]*store.Node, error) {
+	q := d.q()
+	nodes, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(groupID), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for _, n := range nodes {
+		if n.HostKey != "" {
+			keys = append(keys, n.HostKey)
+		}
+	}
+	if len(keys) == 0 {
+		return nodes, nil
+	}
+	sib, err := q.Node.WithContext(bg).Where(q.Node.HostKey.In(keys...), q.Node.GroupID.Neq(groupID), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+	if err != nil {
+		return nil, err
+	}
+	return append(nodes, sib...), nil
+}
+
+// checkUpgradable 校验版本库中有每个节点需要的升级包，以及各节点组的变体约束。
+func (d *Service) checkUpgradable(nodes []*store.Node, version, variant string) error {
+	if !pkgsig.VersionRe.MatchString(version) || !pkgsig.Variants[variant] {
+		return errors.New("版本号或变体无效")
+	}
+	if len(nodes) == 0 {
+		return errors.New("该节点组没有节点")
+	}
+	p := d.q().DataplanePackage
+	gm := map[uint]bool{}
+	for _, n := range nodes {
+		if _, seen := gm[n.GroupID]; !seen {
+			gm[n.GroupID] = d.HasGMSites(n.GroupID)
+		}
+		if variant != "gmssl" && gm[n.GroupID] {
+			g, _ := store.First[store.NodeGroup](d.Store, n.GroupID)
+			name := fmt.Sprint(n.GroupID)
+			if g != nil {
+				name = g.Name
+			}
+			return fmt.Errorf("节点组 %s 有启用国密双证书的站点，只能升级到国密版（gmssl）；同机实例共用一个数据面二进制，节点 %s 也在升级范围内。如需换成其他变体，请先去掉这些站点的国密证书并发布", name, n.Name)
+		}
+		if n.Arch == "" {
+			return fmt.Errorf("节点 %s 的 agent 版本过旧（未上报架构），请先升级 agent", n.Name)
+		}
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.ID()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq(variant)).Count(); c == 0 {
+			return fmt.Errorf("版本库中没有 %s %s %s %s 的升级包", brand.ID(), version, n.Arch, variant)
+		}
+	}
+	// 装有 syapp-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
+	for _, n := range luaNodes(nodes) {
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.Lua()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
+			return fmt.Errorf("节点 %s 装有 %s 附加包：版本库中还需要 %s %s %s 的附加包", n.Name, brand.Lua(), brand.Lua(), version, n.Arch)
+		}
+	}
+	return nil
+}
+
+// lockGroups 锁住升级涉及的全部节点组（同机实例跨组时，相关组都不能同时开始另一个升级）。
+func lockGroups(nodes []*store.Node) (func(), error) {
+	var ids []uint
+	seen := map[uint]bool{}
+	for _, n := range nodes {
+		if !seen[n.GroupID] {
+			seen[n.GroupID] = true
+			ids = append(ids, n.GroupID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var held []*sync.Mutex
+	unlock := func() {
+		for _, m := range held {
+			m.Unlock()
+		}
+	}
+	for _, id := range ids {
+		mu, _ := upgradeLocks.LoadOrStore(id, &sync.Mutex{})
+		lk := mu.(*sync.Mutex)
+		if !lk.TryLock() {
+			unlock()
+			return nil, ErrUpgradeRunning
+		}
+		held = append(held, lk)
+	}
+	return unlock, nil
+}
+
+// hostPlan 按主机编排：主机按先 1 台、再约 10%、其余全量分批；同一主机上的实例在同一批内依次升级，
+// 本组的实例在前，同机其他组的实例在后（设计 0001 第 5.6 节）。
+func hostPlan(nodes []*store.Node, groupID uint) []UpgradeNode {
+	sorted := append([]*store.Node(nil), nodes...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i].GroupID == groupID, sorted[j].GroupID == groupID
+		if a != b {
+			return a
+		}
+		return sorted[i].ID < sorted[j].ID
+	})
+	var order []string
+	members := map[string][]*store.Node{}
+	for _, n := range sorted {
+		k := hostKey(n)
+		if _, ok := members[k]; !ok {
+			order = append(order, k)
+		}
+		members[k] = append(members[k], n)
+	}
+	idx := make([]uint, len(order)) // planBatches 只看数量
+	var plan []UpgradeNode
+	pos := 0
+	for bi, b := range planBatches(idx) {
+		for range b {
+			k := order[pos]
+			pos++
+			name := members[k][0].Hostname
+			for _, n := range members[k] {
+				plan = append(plan, UpgradeNode{NodeID: n.ID, Name: n.Name, Batch: bi + 1, Status: "pending",
+					Host: shortHost(k), HostName: name, GroupID: n.GroupID, Sibling: n.GroupID != groupID})
+			}
+		}
+	}
+	return plan
+}
+
+// StartUpgrade 校验版本库后在后台按主机分批执行升级。
 func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) (*store.DataplaneUpgrade, error) {
 	if !pkgsig.VersionRe.MatchString(version) || !pkgsig.Variants[variant] {
 		return nil, errors.New("版本号或变体无效")
@@ -133,59 +292,100 @@ func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) 
 	if _, err := store.First[store.NodeGroup](d.Store, groupID); err != nil {
 		return nil, err
 	}
-	if variant != "gmssl" && d.HasGMSites(groupID) {
-		return nil, errors.New("节点组有启用国密双证书的站点，只能升级到国密版（gmssl）；如需换成其他变体，请先去掉这些站点的国密证书并发布")
-	}
-	q := d.q()
-	nodes, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(groupID), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+	nodes, err := d.upgradeParticipants(groupID)
 	if err != nil {
 		return nil, err
 	}
-	if len(nodes) == 0 {
-		return nil, errors.New("该节点组没有节点")
+	if err := d.checkUpgradable(nodes, version, variant); err != nil {
+		return nil, err
 	}
-	p := q.DataplanePackage
-	for _, n := range nodes {
-		if n.Arch == "" {
-			return nil, fmt.Errorf("节点 %s 的 agent 版本过旧（未上报架构），请先升级 agent", n.Name)
+	return d.launchUpgrade(groupID, version, variant, hostPlan(nodes, groupID), nodes, user, ip, "dataplane.upgrade_start", 0)
+}
+
+// RetryUpgrade 对一次已结束的升级中未完成的实例（失败、回退、跳过、离线）以同一版本重新执行，
+// 用于“主机部分升级”后的“重试剩余实例”。已升级的实例不再执行。
+func (d *Service) RetryUpgrade(id uint, user, ip string) (*store.DataplaneUpgrade, error) {
+	prev, err := d.GetUpgrade(id)
+	if err != nil {
+		return nil, err
+	}
+	if prev.Variant == "agent" || prev.Status == "running" {
+		return nil, errors.New("只能重试已结束的数据面升级")
+	}
+	var ids []uint
+	for _, n := range prev.Nodes {
+		if n.Status != "upgraded" {
+			ids = append(ids, n.NodeID)
 		}
-		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.ID()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq(variant)).Count(); c == 0 {
-			return nil, fmt.Errorf("版本库中没有 %s %s %s %s 的升级包", brand.ID(), version, n.Arch, variant)
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("该升级的所有实例都已完成")
+	}
+	return d.restart(prev, ids, prev.Version, user, ip, "dataplane.upgrade_retry")
+}
+
+// RollbackHosts 把“主机部分升级”中已升级的实例按同样的热升级流程切到 version（通常是升级前的版本），
+// 使主机上的实例回到同一版本。任何实例都不会停止。
+func (d *Service) RollbackHosts(id uint, version, user, ip string) (*store.DataplaneUpgrade, error) {
+	prev, err := d.GetUpgrade(id)
+	if err != nil {
+		return nil, err
+	}
+	if prev.Variant == "agent" || prev.Status == "running" {
+		return nil, errors.New("只能回退已结束的数据面升级")
+	}
+	partial := map[string]bool{}
+	for _, h := range prev.Hosts {
+		if h.Status == "partial" {
+			partial[h.Host] = true
 		}
 	}
-	// 装有 syapp-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
-	for _, n := range luaNodes(nodes) {
-		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.Lua()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
-			return nil, fmt.Errorf("节点 %s 装有 %s 附加包：版本库中还需要 %s %s %s 的附加包", n.Name, brand.Lua(), brand.Lua(), version, n.Arch)
+	var ids []uint
+	for _, n := range prev.Nodes {
+		if partial[n.Host] && n.Status == "upgraded" {
+			ids = append(ids, n.NodeID)
 		}
 	}
-	mu, _ := upgradeLocks.LoadOrStore(groupID, &sync.Mutex{})
-	lk := mu.(*sync.Mutex)
-	if !lk.TryLock() {
-		return nil, ErrUpgradeRunning
+	if len(ids) == 0 {
+		return nil, errors.New("没有部分升级的主机")
 	}
-	ids := make([]uint, len(nodes))
-	names := map[uint]string{}
-	for i, n := range nodes {
-		ids[i] = n.ID
-		names[n.ID] = n.Name
+	return d.restart(prev, ids, version, user, ip, "dataplane.upgrade_rollback_hosts")
+}
+
+func (d *Service) restart(prev *UpgradeView, ids []uint, version, user, ip, action string) (*store.DataplaneUpgrade, error) {
+	q := d.q()
+	nodes, err := q.Node.WithContext(bg).Where(q.Node.ID.In(ids...), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
+	if err != nil {
+		return nil, err
 	}
-	var plan []UpgradeNode
-	for bi, b := range planBatches(ids) {
-		for _, id := range b {
-			plan = append(plan, UpgradeNode{NodeID: id, Name: names[id], Batch: bi + 1, Status: "pending"})
-		}
+	if err := d.checkUpgradable(nodes, version, prev.Variant); err != nil {
+		return nil, err
+	}
+	return d.launchUpgrade(prev.GroupID, version, prev.Variant, hostPlan(nodes, prev.GroupID), nodes, user, ip, action, prev.ID)
+}
+
+func (d *Service) launchUpgrade(groupID uint, version, variant string, plan []UpgradeNode, nodes []*store.Node, user, ip, action string, from uint) (*store.DataplaneUpgrade, error) {
+	unlock, err := lockGroups(nodes)
+	if err != nil {
+		return nil, err
 	}
 	pj, _ := json.Marshal(plan)
 	up := &store.DataplaneUpgrade{GroupID: groupID, Version: version, Variant: variant, Status: "running", Nodes: string(pj), CreatedBy: user}
-	if err := q.DataplaneUpgrade.WithContext(bg).Create(up); err != nil {
-		lk.Unlock()
+	if err := d.q().DataplaneUpgrade.WithContext(bg).Create(up); err != nil {
+		unlock()
 		return nil, err
 	}
-	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "dataplane.upgrade_start", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
-		Detail: map[string]any{"upgrade": up.ID, "version": version, "variant": variant, "nodes": len(plan)}})
+	hosts := map[string]bool{}
+	for _, n := range plan {
+		hosts[n.Host] = true
+	}
+	detail := map[string]any{"upgrade": up.ID, "version": version, "variant": variant, "nodes": len(plan), "hosts": len(hosts)}
+	if from != 0 {
+		detail["from_upgrade"] = from
+	}
+	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: action, ObjectType: "node_group", ObjectID: fmt.Sprint(groupID), Detail: detail})
 	go func() {
-		defer lk.Unlock()
+		defer unlock()
 		d.runUpgrade(up, plan)
 	}()
 	return up, nil
@@ -211,7 +411,6 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 		}
 		return []byte(pkg.Sig)
 	}
-	sigFor := func(arch string) []byte { return sigOf(brand.ID(), arch, up.Variant) }
 	ag := d.agents()
 	var mu sync.Mutex // 保护 plan、failed 与 save
 	failed := false
@@ -224,19 +423,20 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 		save("running", false)
 		mu.Unlock()
 	}
-	upgradeOne := func(n *UpgradeNode) {
+	// upgradeOne 升级一个实例，返回是否成功（已提交）
+	upgradeOne := func(n *UpgradeNode) bool {
 		node, err := store.First[store.Node](d.Store, n.NodeID)
 		if err != nil || !ag.Online(n.NodeID) {
 			set(n, "offline", "节点离线，未升级", true) // 离线节点也停止：避免部分节点在新旧版本间混跑而无人察觉
-			return
+			return false
 		}
 		set(n, "upgrading", "", false)
-		sig := sigFor(node.Arch)
+		sig := sigOf(brand.ID(), node.Arch, up.Variant)
 		var ps pkgsig.Sig
 		_ = json.Unmarshal(sig, &ps)
 		msg := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Upgrade{Upgrade: &agentv1.UpgradeDataplane{
 			Action: agentv1.UpgradeDataplane_START, Version: up.Version, PackageSha256: ps.SHA256, SignatureJson: sig,
-			PostChecks: d.groupPostChecks(up.GroupID), TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
+			PostChecks: d.groupPostChecks(node.GroupID), TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
 		if node.LuaAddon != "" {
 			msg.GetUpgrade().LuaSignatureJson = sigOf(brand.Lua(), node.Arch, "lua")
 		}
@@ -255,34 +455,66 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 					m += "：" + c.Message
 				}
 				set(n, "failed", m, true)
-			} else {
-				set(n, "upgraded", res.Message, false)
+				return false
 			}
+			set(n, "upgraded", res.Message, false)
+			return true
 		case res.Status == agentv1.CommandResult_ROLLED_BACK:
 			set(n, "rolled_back", res.Message, true)
 		default:
 			set(n, "failed", res.Status.String()+" "+res.Message, true)
 		}
+		return false
 	}
-	// 批与批之间串行；批内最多 UpgradeParallel 台同时升级。任一台失败后，同批尚未开始的节点与后续批次都不再执行
-	for bi := 1; ; bi++ {
-		var batch []*UpgradeNode
-		for i := range plan {
-			if plan[i].Batch == bi {
-				batch = append(batch, &plan[i])
+	// upgradeHost：主机内的实例依次升级。第一个实例失败时 agent 已中止、软链切回，主机保持旧版本；
+	// 之后的实例失败时该实例回到旧 master，主机处于“部分升级”，剩余实例不再执行（可重试剩余实例或整体回退）
+	upgradeHost := func(h []*UpgradeNode) {
+		for i, n := range h {
+			if upgradeOne(n) {
+				continue
 			}
+			why := "同机第一个实例升级失败，主机保持原版本"
+			if i > 0 {
+				why = "同机实例升级失败，主机部分升级：可重试剩余实例或整体回退"
+			}
+			mu.Lock()
+			for _, r := range h[i+1:] {
+				r.Status, r.Message = "skipped", why
+			}
+			save("running", false)
+			mu.Unlock()
+			return
 		}
-		if len(batch) == 0 {
+	}
+	// 批与批之间串行；批内最多 UpgradeParallel 台主机同时升级。任一实例失败后，尚未开始的主机与后续批次都不再执行；
+	// 已经开始的主机会把它的实例做完（不主动留下只升了一部分的主机）
+	for bi := 1; ; bi++ {
+		var hosts [][]*UpgradeNode
+		at := map[string]int{}
+		for i := range plan {
+			if plan[i].Batch != bi {
+				continue
+			}
+			k := plan[i].Host
+			if _, ok := at[k]; !ok {
+				at[k] = len(hosts)
+				hosts = append(hosts, nil)
+			}
+			hosts[at[k]] = append(hosts[at[k]], &plan[i])
+		}
+		if len(hosts) == 0 {
 			break
 		}
 		sem := make(chan struct{}, UpgradeParallel)
 		var wg sync.WaitGroup
-		for _, n := range batch {
+		for _, h := range hosts {
 			sem <- struct{}{}
 			mu.Lock()
 			stop := failed
 			if stop {
-				n.Status, n.Message = "skipped", "前面的节点失败，已停止"
+				for _, n := range h {
+					n.Status, n.Message = "skipped", "前面的节点失败，已停止"
+				}
 			}
 			mu.Unlock()
 			if stop {
@@ -290,21 +522,25 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 				continue
 			}
 			wg.Add(1)
-			go func(n *UpgradeNode) {
+			go func(h []*UpgradeNode) {
 				defer func() { <-sem; wg.Done() }()
-				upgradeOne(n)
-			}(n)
+				upgradeHost(h)
+			}(h)
 		}
 		wg.Wait()
 	}
-	mu.Lock()
-	save("running", false)
-	mu.Unlock()
 	status := "done"
 	if failed {
 		status = "failed"
+		for _, h := range summarizeHosts(plan) {
+			if h.Status == "partial" {
+				status = "partial"
+			}
+		}
 	}
+	mu.Lock()
 	save(status, true)
+	mu.Unlock()
 	ok := 0
 	for _, n := range plan {
 		if n.Status == "upgraded" {
@@ -314,6 +550,63 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 	d.Log.Info("dataplane upgrade finished", "upgrade", up.ID, "version", up.Version, "status", status, "upgraded", ok)
 	_ = d.Audit.Write(audit.Entry{Username: up.CreatedBy, Action: "dataplane.upgrade_result", ObjectType: "node_group", ObjectID: fmt.Sprint(up.GroupID),
 		Result: status, Detail: map[string]any{"upgrade": up.ID, "version": up.Version, "upgraded": ok, "nodes": plan}})
+}
+
+// summarizeHosts 汇总每台主机的升级结果：全部升级为 done；有的升级了、有的没有为 partial；
+// 都没有升级时，有失败为 failed、都是跳过为 skipped。
+func summarizeHosts(plan []UpgradeNode) []UpgradeHost {
+	var out []UpgradeHost
+	at := map[string]int{}
+	for _, n := range plan {
+		k := n.Host
+		if k == "" {
+			k = fmt.Sprintf("node-%d", n.NodeID) // 引入主机编排之前的升级记录
+		}
+		i, ok := at[k]
+		if !ok {
+			i = len(out)
+			at[k] = i
+			out = append(out, UpgradeHost{Host: k, Name: n.HostName, Batch: n.Batch})
+		}
+		out[i].Nodes = append(out[i].Nodes, n.NodeID)
+	}
+	for i := range out {
+		var upgraded, bad, busy, pending int
+		for _, id := range out[i].Nodes {
+			for _, n := range plan {
+				if n.NodeID != id {
+					continue
+				}
+				switch n.Status {
+				case "upgraded":
+					upgraded++
+				case "upgrading":
+					busy++
+				case "pending":
+					pending++
+				case "skipped":
+				default:
+					bad++
+				}
+			}
+		}
+		total := len(out[i].Nodes)
+		switch {
+		case busy > 0 || (upgraded > 0 && pending > 0):
+			out[i].Status = "upgrading"
+		case upgraded == total:
+			out[i].Status = "done"
+		case upgraded > 0:
+			out[i].Status = "partial"
+		case bad > 0:
+			out[i].Status = "failed"
+		case pending == total:
+			out[i].Status = "pending"
+		default:
+			out[i].Status = "skipped"
+		}
+	}
+	return out
 }
 
 // groupPostChecks 返回节点组当前版本的探活项（与发布相同）。
@@ -338,6 +631,7 @@ func (d *Service) GetUpgrade(id uint) (*UpgradeView, error) {
 	}
 	v := &UpgradeView{DataplaneUpgrade: row, Nodes: []UpgradeNode{}}
 	_ = json.Unmarshal([]byte(row.Nodes), &v.Nodes)
+	v.Hosts = summarizeHosts(v.Nodes)
 	return v, nil
 }
 
@@ -356,6 +650,7 @@ func (d *Service) ListUpgrades(groupID uint) ([]*UpgradeView, error) {
 	for _, r := range rows {
 		v := &UpgradeView{DataplaneUpgrade: r, Nodes: []UpgradeNode{}}
 		_ = json.Unmarshal([]byte(r.Nodes), &v.Nodes)
+		v.Hosts = summarizeHosts(v.Nodes)
 		out = append(out, v)
 	}
 	return out, nil

@@ -94,3 +94,16 @@ func TestSettingsValidation(t *testing.T) {
 		t.Fatalf("settings: %+v", st)
 	}
 }
+
+// 节点组 HTTP 端口不是 80 时，失败信息提示需要端口转发或改用上传证书。
+func TestPortHint(t *testing.T) {
+	s := newSvc(t)
+	s.Store.DB.Create(&store.NodeGroup{Name: "default"})
+	s.Store.DB.Create(&store.NodeGroup{Name: "blue", InstanceProfile: `{"instance":"blue","http_port":18080,"https_port":18443,"status_port":8082}`})
+	if h := s.portHint([]uint{1}); h != "" {
+		t.Fatalf("default group hint %q", h)
+	}
+	if h := s.portHint([]uint{1, 2}); !strings.Contains(h, "blue") || !strings.Contains(h, "18080") || !strings.Contains(h, "上传证书") {
+		t.Fatalf("hint %q", h)
+	}
+}
