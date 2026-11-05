@@ -24,7 +24,6 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/conn"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
-	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
@@ -50,23 +49,40 @@ func main() {
 		return
 	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	lay := layout.System("")
+	instance := fs.String("instance", envOr(brand.Env("INSTANCE"), ""), "托管的实例名（同机多实例；默认实例留空），路径与端口由实例档案决定")
 	server := fs.String("server", envOr(brand.Env("CONSOLE"), ""), "控制台 gRPC 地址 host:port")
-	stateDir := fs.String("state-dir", lay.AgentState(), "身份与状态目录")
-	confRoot := fs.String("conf-root", lay.ConfRoot(), "数据面配置根目录")
-	wrapper := fs.String("wrapper", envOr(brand.Env("WRAPPER"), "sudo -n "+lay.WrapperBin()), "提权入口（按空格切分，不经过 shell）")
+	stateDir := fs.String("state-dir", "", "身份与状态目录（默认按实例计算）")
+	confRoot := fs.String("conf-root", "", "数据面配置根目录（默认按实例计算）")
+	wrapper := fs.String("wrapper", envOr(brand.Env("WRAPPER"), ""), "提权入口（按空格切分，不经过 shell；默认按实例计算）")
 	token := fs.String("token", "", "一次性注册令牌（enroll）")
 	caFP := fs.String("ca-fingerprint", "", "控制台 CA 证书 sha256 指纹（enroll）")
 	replaceLocal := fs.Bool("replace-local-config", false, "本机有独立模式下的自定义配置时，备份后由控制台接管（enroll）")
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	prof, lay, err := loadInstance(*instance)
+	if err != nil {
+		fatal(log, cmd, err)
+	}
+	if *stateDir == "" {
+		*stateDir = lay.AgentState()
+	}
+	if *confRoot == "" {
+		*confRoot = lay.ConfRoot()
+	}
+	if *wrapper == "" {
+		*wrapper = "sudo -n " + lay.WrapperBin()
+		if lay.Instance() != "" {
+			*wrapper += " --instance " + lay.Instance()
+		}
+	}
 	cfg := conn.Config{
 		Server: *server, StateDir: *stateDir, SyappBin: lay.Bin(), Modules: lay.Modules(),
-		StatusURL: lay.StatusURL(8081), AccessLog: lay.AccessLog(),
+		StatusURL: lay.StatusURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
 			ConfRoot: *confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
 			LockFile: lay.AgentLock(), Wrapper: strings.Fields(*wrapper),
+			HTTPPort: prof.HTTP(), HTTPSPort: prof.HTTPS(),
 		},
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -125,7 +141,7 @@ func main() {
 
 // bootstrap 写入空站点的初始版本 r000000，使 syapp 能以基线配置启动。
 func bootstrap(cfg conn.Config) error {
-	b, err := render.Baseline()
+	b, err := render.BaselineFor(cfg.Profile)
 	if err != nil {
 		return err
 	}

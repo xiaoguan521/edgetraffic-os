@@ -19,7 +19,12 @@ const BaselineRevision = "r000000"
 
 // Baseline 渲染没有任何站点的初始版本。
 func Baseline() (*Bundle, error) {
-	return Render(Input{Revision: BaselineRevision, MimeTypes: DefaultMimeTypes()})
+	return BaselineFor(Profile{})
+}
+
+// BaselineFor 返回指定实例档案的初始版本（具名实例与 user 模式的路径、端口按档案生成）。
+func BaselineFor(p Profile) (*Bundle, error) {
+	return Render(Input{Revision: BaselineRevision, MimeTypes: DefaultMimeTypes(), Profile: p})
 }
 
 // StandaloneFiles 返回独立模式的附带文件，键为相对 /opt/syapp 的路径。
