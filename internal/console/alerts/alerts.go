@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/smtp"
 	"net/url"
 	"sort"
@@ -54,6 +55,11 @@ type Service struct {
 	IMAllow func() bool // 授权是否包含 alert_im
 	HTTP    *http.Client
 	Now     func() time.Time
+
+	// targetValidator is kept private so production callers cannot accidentally
+	// disable the webhook target guard. Tests use it to route requests to a
+	// local httptest server.
+	targetValidator func(context.Context, *url.URL) error
 }
 
 func (s *Service) q() *query.Query { return query.Use(s.Store.DB) }
@@ -69,10 +75,197 @@ func (s *Service) client() *http.Client {
 	if s.HTTP != nil {
 		return s.HTTP
 	}
-	return &http.Client{Timeout: 10 * time.Second}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
+	transport.Proxy = nil
+	transport.DialTLSContext = nil
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := lookupAlertIPs(ctx, host, policyPublicOnly)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, errors.New("告警地址没有可连接的 IP")
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+		// A custom CheckRedirect replaces net/http's default 10-hop limit, so
+		// enforce it here as well.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxAlertRedirects {
+				return errors.New("告警地址重定向次数过多")
+			}
+			return s.validateAlertTarget(req.Context(), req.URL)
+		},
+	}
 }
 
 var bg = context.Background()
+
+const maxAlertRedirects = 10
+
+// ipPolicy selects which address ranges an alert channel may reach.
+type ipPolicy int
+
+const (
+	// policyPublicOnly is used for webhook / WeCom / DingTalk targets.
+	policyPublicOnly ipPolicy = iota
+	// policyAllowPrivate is used for SMTP: mail relays commonly sit on the
+	// intranet, but loopback, link-local and cloud metadata stay blocked.
+	policyAllowPrivate
+)
+
+func mustPrefixes(ss ...string) []netip.Prefix {
+	out := make([]netip.Prefix, len(ss))
+	for i, s := range ss {
+		out[i] = netip.MustParsePrefix(s)
+	}
+	return out
+}
+
+var (
+	// Never reachable from any alert channel.
+	alwaysBlockedPrefixes = mustPrefixes(
+		"0.0.0.0/8",          // "this network", including 0.0.0.0
+		"127.0.0.0/8",        // loopback
+		"169.254.0.0/16",     // link-local, including 169.254.169.254 metadata
+		"192.0.0.0/24",       // IETF protocol assignments
+		"224.0.0.0/4",        // multicast
+		"240.0.0.0/4",        // reserved, including 255.255.255.255
+		"100.100.100.200/32", // Alibaba Cloud metadata (inside 100.64.0.0/10)
+		"::/96",              // unspecified and deprecated IPv4-compatible addresses
+		"::1/128",            // loopback
+		"fe80::/10",          // link-local
+		"ff00::/8",           // multicast
+		"64:ff9b:1::/48",     // local-use NAT64 (RFC 8215), embedding is not fixed
+		"2001::/32",          // Teredo, can tunnel to arbitrary IPv4
+		"fd00:ec2::254/128",  // AWS IPv6 metadata
+	)
+	// Blocked for policyPublicOnly in addition to alwaysBlockedPrefixes.
+	privateBlockedPrefixes = mustPrefixes(
+		"10.0.0.0/8",
+		"100.64.0.0/10", // RFC 6598 shared address space
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"198.18.0.0/15",                                     // benchmarking
+		"192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", // documentation
+		"fc00::/7",      // unique local
+		"fec0::/10",     // deprecated site-local
+		"2001:db8::/32", // documentation
+	)
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96") // RFC 6052, IPv4 in the last 32 bits
+	sixToFour      = netip.MustParsePrefix("2002::/16")    // RFC 3056, IPv4 in bits 16-47
+)
+
+func blockedAlertIP(ip net.IP, policy ipPolicy) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	return blockedAlertAddr(addr, policy)
+}
+
+func blockedAlertAddr(a netip.Addr, policy ipPolicy) bool {
+	a = a.Unmap()
+	if a.Is6() {
+		// IPv6 forms that embed an IPv4 address are judged by that address.
+		b := a.As16()
+		if nat64WellKnown.Contains(a) {
+			return blockedAlertAddr(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), policy)
+		}
+		if sixToFour.Contains(a) {
+			return blockedAlertAddr(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), policy)
+		}
+	}
+	for _, p := range alwaysBlockedPrefixes {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	if policy == policyPublicOnly {
+		for _, p := range privateBlockedPrefixes {
+			if p.Contains(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lookupAlertIPs(ctx context.Context, host string, policy ipPolicy) ([]net.IP, error) {
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("告警地址主机解析失败: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, errors.New("告警地址没有解析到 IP")
+	}
+	for _, ip := range ips {
+		if blockedAlertIP(ip, policy) {
+			if policy == policyAllowPrivate {
+				return nil, fmt.Errorf("邮件服务器解析到禁止访问的本机、链路本地或云元数据地址 %q", ip.String())
+			}
+			return nil, fmt.Errorf("告警地址解析到禁止访问的本机、内网或链路本地地址 %q", ip.String())
+		}
+	}
+	return ips, nil
+}
+
+func validateAlertURL(ctx context.Context, u *url.URL) error {
+	if u == nil {
+		return errors.New("地址不能为空")
+	}
+	switch u.Scheme {
+	case "http", "https":
+		if u.Host == "" || u.User != nil || u.Hostname() == "" {
+			return errors.New("地址必须是 http(s) URL，且不得包含用户信息")
+		}
+		_, err := lookupAlertIPs(ctx, u.Hostname(), policyPublicOnly)
+		return err
+	case "smtp", "smtps":
+		if u.Hostname() == "" || u.Port() == "" {
+			return errors.New("邮件服务器格式为 smtp://主机:端口 或 smtps://主机:端口")
+		}
+		_, err := lookupAlertIPs(ctx, u.Hostname(), policyAllowPrivate)
+		return err
+	}
+	return errors.New("地址必须是 http(s) URL，且不得包含用户信息")
+}
+
+func (s *Service) validateAlertTarget(ctx context.Context, u *url.URL) error {
+	if s.targetValidator != nil {
+		return s.targetValidator(ctx, u)
+	}
+	return validateAlertURL(ctx, u)
+}
+
+func (s *Service) validateChannelTarget(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(bg, 10*time.Second)
+	defer cancel()
+	return s.validateAlertTarget(ctx, u)
+}
 
 // Rules 返回全部规则（不存在的按默认值补齐，默认关闭）。
 func (s *Service) Rules() ([]*store.AlertRule, error) {
@@ -170,6 +363,11 @@ func (s *Service) SaveChannel(id uint, in ChannelInput, user string) (*store.Ale
 	if err := in.validate(s.IMAllow == nil || s.IMAllow()); err != nil {
 		return nil, err
 	}
+	if in.Type == "webhook" || in.Type == "wecom" || in.Type == "dingtalk" || in.Type == "email" {
+		if err := s.validateChannelTarget(in.URL); err != nil {
+			return nil, err
+		}
+	}
 	ac := s.q().AlertChannel
 	row := &store.AlertChannel{CreatedBy: user}
 	if id != 0 {
@@ -240,7 +438,16 @@ func (s *Service) Send(ch *store.AlertChannel, m Message) error {
 
 func (s *Service) post(u string, body any) error {
 	b, _ := json.Marshal(body)
-	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(b))
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(bg, 10*time.Second)
+	defer cancel()
+	if err := s.validateAlertTarget(ctx, parsed); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -264,13 +471,57 @@ func (s *Service) post(u string, body any) error {
 	return nil
 }
 
+// dialSMTP resolves the mail server, rejects loopback / link-local / metadata
+// addresses, then connects to the checked IP itself so a DNS rebinding answer
+// cannot swap the target between the check and the connection.
+func (s *Service) dialSMTP(u *url.URL) (net.Conn, error) {
+	host, port := u.Hostname(), u.Port()
+	ctx, cancel := context.WithTimeout(bg, 10*time.Second)
+	defer cancel()
+	var addrs []string
+	if s.targetValidator != nil {
+		// Test seam: route to a local server without the production guard.
+		if err := s.targetValidator(ctx, u); err != nil {
+			return nil, err
+		}
+		addrs = []string{net.JoinHostPort(host, port)}
+	} else {
+		ips, err := lookupAlertIPs(ctx, host, policyAllowPrivate)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			addrs = append(addrs, net.JoinHostPort(ip.String(), port))
+		}
+	}
+	d := net.Dialer{Timeout: 10 * time.Second}
+	var lastErr error
+	for _, addr := range addrs {
+		var conn net.Conn
+		var err error
+		if u.Scheme == "smtps" {
+			// ServerName stays the configured host name for certificate checks.
+			conn, err = tls.DialWithDialer(&d, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+		} else {
+			conn, err = d.DialContext(ctx, "tcp", addr)
+		}
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("邮件服务器没有可连接的 IP")
+	}
+	return nil, lastErr
+}
+
 func (s *Service) mail(ch *store.AlertChannel, pass string, m Message) error {
 	u, err := url.Parse(ch.URL)
 	if err != nil {
 		return err
 	}
 	host := u.Hostname()
-	addr := net.JoinHostPort(host, u.Port())
 	to := strings.Split(ch.MailTo, ",")
 	for i := range to {
 		to[i] = strings.TrimSpace(to[i])
@@ -279,13 +530,7 @@ func (s *Service) mail(ch *store.AlertChannel, pass string, m Message) error {
 	msg := "From: " + ch.MailFrom + "\r\nTo: " + strings.Join(to, ", ") + "\r\nSubject: " + subject +
 		"\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
 		base64.StdEncoding.EncodeToString([]byte(m.Text)) + "\r\n"
-	var conn net.Conn
-	d := net.Dialer{Timeout: 10 * time.Second}
-	if u.Scheme == "smtps" {
-		conn, err = tls.DialWithDialer(&d, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-	} else {
-		conn, err = d.Dial("tcp", addr)
-	}
+	conn, err := s.dialSMTP(u)
 	if err != nil {
 		return err
 	}
