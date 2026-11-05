@@ -406,8 +406,27 @@ func (s *Server) enrollToken(c *gin.Context) {
 		return
 	}
 	s.audit(c, "node.enroll_token", "node_group", fmt.Sprint(id), map[string]any{"expires_at": exp})
-	cmd := fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now %s", brand.Agent(), s.GRPCAddr, tok, s.CAFingerprint, brand.Agent())
-	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint, "command": cmd})
+	prof, err := s.Deploy.Profile(id)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint,
+		"command": enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint)})
+}
+
+// enrollCommand 返回在节点上执行的注册命令：默认实例注册已安装的 agent；
+// 具名实例用 <品牌>-instance add 按节点组档案创建实例并注册（设计 0001 第 5.7 节）。
+func enrollCommand(p render.Profile, server, token, caFP string) string {
+	if p.Instance == "" {
+		return fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now %s",
+			brand.Agent(), server, token, caFP, brand.Agent())
+	}
+	cmd := fmt.Sprintf("sudo %s-instance add %s --http %d --https %d --status %d", brand.ID(), p.Instance, p.HTTP(), p.HTTPS(), p.Status())
+	if p.NoFile != 0 {
+		cmd += fmt.Sprintf(" --nofile %d", p.NoFile)
+	}
+	return cmd + fmt.Sprintf(" --console %s --token %s --ca-fingerprint %s", server, token, caFP)
 }
 
 // ---------- 节点 ----------

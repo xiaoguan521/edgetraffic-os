@@ -197,3 +197,34 @@ const InstanceFile = "instance.json"
 
 // InstanceFile 返回本实例的档案路径。
 func (l Layout) InstanceFile() string { return path.Join(l.Prefix(), InstanceFile) }
+
+// Group 返回数据面与 agent 共用的系统组。
+func Group() string { return brand.ID() }
+
+// WorkerUser 返回数据面 worker 进程用户（同机实例共用）。
+func WorkerUser() string { return brand.ID() }
+
+// AgentUser 返回该实例 agent 的运行用户：每个具名实例单独一个，被攻破的 agent 不能操作其他实例（设计 0001 第 5.5 节）。
+func (l Layout) AgentUser() string { return brand.Agent() + l.suffix() }
+
+// DataplaneUnit 返回该实例数据面的 systemd 单元名。
+func (l Layout) DataplaneUnit() string {
+	if l.instance == "" {
+		return brand.ID() + ".service"
+	}
+	return brand.ID() + "@" + l.instance + ".service"
+}
+
+// AgentUnit 返回该实例 agent 的 systemd 单元名。
+func (l Layout) AgentUnit() string {
+	if l.instance == "" {
+		return brand.Agent() + ".service"
+	}
+	return brand.Agent() + "@" + l.instance + ".service"
+}
+
+// SudoersFile 返回该实例 agent 的 sudoers 文件。
+func (l Layout) SudoersFile() string { return path.Join("/etc/sudoers.d", l.AgentUser()) }
+
+// InstancesDir 返回具名实例前缀的父目录。
+func (l Layout) InstancesDir() string { return path.Join(l.root, "instances") }

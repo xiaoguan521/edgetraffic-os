@@ -57,6 +57,7 @@ put "$HERE/rootfs/opt/syapp/sbin/syapp" /opt/syapp/sbin/syapp
 put "$HERE/rootfs/usr/bin/syapp-agent" /usr/bin/syapp-agent
 put "$HERE/rootfs/usr/libexec/syapp/syapp-wrapper" /usr/libexec/syapp/syapp-wrapper
 put "$HERE/rootfs/usr/sbin/syapp-firewall" /usr/sbin/syapp-firewall
+put "$HERE/rootfs/usr/sbin/syapp-instance" /usr/sbin/syapp-instance
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syapp" /etc/logrotate.d/syapp
 install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syapp.conf" /etc/tmpfiles.d/syapp.conf

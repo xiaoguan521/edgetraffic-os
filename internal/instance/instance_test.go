@@ -1,0 +1,346 @@
+package instance
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
+)
+
+type fakeEnv struct {
+	Env
+	cmds   []string
+	failOn string // 执行到包含此子串的命令时失败
+}
+
+func newFake(t *testing.T) *fakeEnv {
+	t.Helper()
+	f := &fakeEnv{}
+	f.Env = Env{
+		Root: t.TempDir(),
+		Out:  &bytes.Buffer{},
+		Run: func(name string, args ...string) error {
+			c := strings.Join(append([]string{name}, args...), " ")
+			f.cmds = append(f.cmds, c)
+			if f.failOn != "" && strings.Contains(c, f.failOn) {
+				return os.ErrPermission
+			}
+			// 模拟真实 bootstrap 的结果：写出该实例的当前配置
+			if len(args) >= 2 && args[len(args)-2] == "-instance" && strings.Contains(c, " bootstrap ") {
+				conf := f.path(layout.System(args[len(args)-1]).CurrentConf())
+				_ = os.MkdirAll(filepath.Dir(conf), 0o755)
+				_ = os.WriteFile(conf, []byte("# baseline\n"), 0o644)
+			}
+			return nil
+		},
+		Listening: func() (map[string]bool, error) { return map[string]bool{}, nil },
+	}
+	return f
+}
+
+func (f *fakeEnv) ran(sub string) bool {
+	for _, c := range f.cmds {
+		if strings.Contains(c, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+var blue = render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
+
+func TestAddCreatesInstance(t *testing.T) {
+	f := newFake(t)
+	err := f.Add(AddOptions{Profile: blue, Console: "console.example.com:9443", Token: "tok", CAFingerprint: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := layout.System("blue")
+	// 实例档案：root 所有、他人不可写，内容为档案
+	st, err := os.Stat(f.path(l.InstanceFile()))
+	if err != nil || st.Mode().Perm() != 0o644 {
+		t.Fatalf("instance.json: %v %v", st, err)
+	}
+	b, _ := os.ReadFile(f.path(l.InstanceFile()))
+	var got render.Profile
+	if err := json.Unmarshal(b, &got); err != nil || got != blue {
+		t.Fatalf("instance.json = %s", b)
+	}
+	if st, _ := os.Stat(f.path(l.Prefix())); st == nil || st.Mode().Perm() != 0o755 {
+		t.Fatal("prefix dir must be 0755")
+	}
+	for _, d := range []string{l.ReleasesDir(), l.LogDir(), l.CacheDir(), l.AgentState()} {
+		if _, err := os.Stat(f.path(d)); err != nil {
+			t.Errorf("missing dir %s", d)
+		}
+	}
+	// 每实例 sudoers：7 行、实例名写死、0440
+	sb, err := os.ReadFile(f.path(l.SudoersFile()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(f.path(l.SudoersFile())); st.Mode().Perm() != 0o440 {
+		t.Fatalf("sudoers mode %v", st.Mode())
+	}
+	var rules []string
+	for _, line := range strings.Split(string(sb), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			rules = append(rules, line)
+		}
+	}
+	if len(rules) != 7 {
+		t.Fatalf("sudoers rules = %d:\n%s", len(rules), sb)
+	}
+	for _, r := range rules {
+		if !strings.HasPrefix(r, "syapp-agent-blue ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper --instance blue ") {
+			t.Errorf("rule not pinned to the instance: %q", r)
+		}
+	}
+	if strings.Count(string(sb), "*") != 2 {
+		t.Errorf("only test and upgrade-start may take a wildcard:\n%s", sb)
+	}
+	// 命令顺序：建用户 → visudo 校验 → 初始版本 → syapp -t → 启动数据面 → 注册 → 启动 agent
+	want := []string{
+		"useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp-agent-blue",
+		"visudo -cf ",
+		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent bootstrap -instance blue",
+		"/opt/syapp/sbin/syapp -t -q -c /opt/syapp/instances/blue/conf/current/syapp.conf",
+		"systemctl enable --now syapp@blue.service",
+		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent enroll -instance blue -server console.example.com:9443 -token tok -ca-fingerprint abc",
+		"systemctl enable --now syapp-agent@blue.service",
+	}
+	i := 0
+	for _, c := range f.cmds {
+		if i < len(want) && strings.HasPrefix(c, want[i]) {
+			i++
+		}
+	}
+	if i != len(want) {
+		t.Fatalf("commands out of order or missing (matched %d of %d):\n%s", i, len(want), strings.Join(f.cmds, "\n"))
+	}
+	// 再次添加同名实例：拒绝
+	if err := f.Add(AddOptions{Profile: blue}); err == nil || !strings.Contains(err.Error(), "already") {
+		t.Fatalf("duplicate add: %v", err)
+	}
+}
+
+func TestAddWithoutConsoleDoesNotStartAgent(t *testing.T) {
+	f := newFake(t)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("enroll") || f.ran("syapp-agent@blue.service") {
+		t.Fatalf("agent started without enrollment:\n%s", strings.Join(f.cmds, "\n"))
+	}
+	if !strings.Contains(f.Out.(*bytes.Buffer).String(), "-instance blue") {
+		t.Error("output must tell the operator how to enroll later")
+	}
+}
+
+func TestAddRejectsConflicts(t *testing.T) {
+	f := newFake(t)
+	// 默认实例已安装（80 / 443 / 8081）
+	if err := os.MkdirAll(f.path(layout.System("").ConfRoot()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range map[string]render.Profile{
+		"https clashes with default": {Instance: "green", HTTPPort: 28080, HTTPSPort: 443, StatusPort: 8083},
+		"status clashes with blue":   {Instance: "green", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8082},
+		"default instance via add":   {},
+		"invalid profile":            {Instance: "green", HTTPPort: 28080, HTTPSPort: 28080},
+	} {
+		if err := f.Add(AddOptions{Profile: p}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// 端口已被其他程序监听
+	f.Listening = func() (map[string]bool, error) { return map[string]bool{"tcp/28443": true}, nil }
+	if err := f.Add(AddOptions{Profile: render.Profile{Instance: "green", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8083}}); err == nil || !strings.Contains(err.Error(), "28443") {
+		t.Fatalf("listening port: %v", err)
+	}
+}
+
+func TestAddFailureTellsHowToCleanUp(t *testing.T) {
+	f := newFake(t)
+	f.failOn = "visudo"
+	err := f.Add(AddOptions{Profile: blue})
+	if err == nil || !strings.Contains(err.Error(), "remove blue") {
+		t.Fatalf("want cleanup hint, got %v", err)
+	}
+	// visudo 校验失败时不留下 sudoers 文件
+	if _, err := os.Stat(f.path(layout.System("blue").SudoersFile())); err == nil {
+		t.Fatal("unchecked sudoers file left in place")
+	}
+	if f.ran("systemctl enable") {
+		t.Fatal("services started after a failed step")
+	}
+}
+
+func TestRemove(t *testing.T) {
+	f := newFake(t)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	green := render.Profile{Instance: "green", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8083}
+	if err := f.Add(AddOptions{Profile: green}); err != nil {
+		t.Fatal(err)
+	}
+	l := layout.System("blue")
+	// 不带 --yes：只打印计划，不做任何事
+	f.cmds = nil
+	if err := f.Remove("blue", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cmds) != 0 {
+		t.Fatalf("dry run executed commands: %v", f.cmds)
+	}
+	if _, err := os.Stat(f.path(l.InstanceFile())); err != nil {
+		t.Fatal("dry run removed files")
+	}
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"systemctl disable --now syapp-agent@blue.service", "systemctl disable --now syapp@blue.service", "userdel syapp-agent-blue"} {
+		if !f.ran(want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	for _, gone := range []string{l.Prefix(), l.AgentState(), l.SudoersFile()} {
+		if _, err := os.Stat(f.path(gone)); err == nil {
+			t.Errorf("%s not removed", gone)
+		}
+	}
+	// 不加 --purge 保留日志
+	if _, err := os.Stat(f.path(l.LogDir())); err != nil {
+		t.Error("logs removed without --purge")
+	}
+	// 其他实例不受影响
+	g := layout.System("green")
+	for _, keep := range []string{g.InstanceFile(), g.SudoersFile(), g.ReleasesDir()} {
+		if _, err := os.Stat(f.path(keep)); err != nil {
+			t.Errorf("green lost %s", keep)
+		}
+	}
+	if f.ran("syapp@green") || f.ran("syapp-agent-green") {
+		t.Fatal("removing blue touched green")
+	}
+	// --purge 同时删日志与缓存
+	if err := f.Remove("green", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path(g.LogDir())); err == nil {
+		t.Error("--purge kept logs")
+	}
+	// 不存在的实例、默认实例、非法名称
+	for _, n := range []string{"nope", "", "../etc"} {
+		if err := f.Remove(n, true, true); err == nil {
+			t.Errorf("remove %q accepted", n)
+		}
+	}
+}
+
+func TestListAndCheck(t *testing.T) {
+	f := newFake(t)
+	if err := os.MkdirAll(f.path(layout.System("").ConfRoot()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	// 运行中的 master：pid 文件指向存在的进程
+	l := layout.System("blue")
+	if err := os.MkdirAll(f.path(l.RunDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(f.path(l.PidFile()), []byte("4242\n"), 0o644)
+	_ = os.MkdirAll(f.path("/proc/4242"), 0o755)
+	list, err := f.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Name != "" || list[1].Name != "blue" || !list[1].Running || list[0].Running {
+		t.Fatalf("list = %+v", list)
+	}
+	if probs := f.Check(); len(probs) != 0 {
+		t.Fatalf("healthy host reported problems: %v", probs)
+	}
+	// 手工改坏：sudoers 被删除、另一个实例档案与 blue 端口冲突
+	_ = os.Remove(f.path(l.SudoersFile()))
+	bad := layout.System("red")
+	_ = os.MkdirAll(f.path(bad.Prefix()), 0o755)
+	b, _ := json.Marshal(render.Profile{Instance: "red", HTTPPort: 18080, HTTPSPort: 38443, StatusPort: 8090})
+	_ = os.WriteFile(f.path(bad.InstanceFile()), b, 0o644)
+	probs := strings.Join(f.Check(), "\n")
+	for _, want := range []string{"sudoers", "tcp/18080"} {
+		if !strings.Contains(probs, want) {
+			t.Errorf("check did not report %q:\n%s", want, probs)
+		}
+	}
+}
+
+func TestListeningFromProc(t *testing.T) {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "proc/net"), 0o755)
+	tcp := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:1F91 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 2 1 0000000000000000 100 0 0 10 0
+   2: 0A000001:C350 0A000002:0050 01 00000000:00000000 00:00000000 00000000     0        0 3 1 0000000000000000 100 0 0 10 0
+`
+	_ = os.WriteFile(filepath.Join(root, "proc/net/tcp"), []byte(tcp), 0o644)
+	udp := `  sl  local_address rem_address   st
+   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 4 2 0000000000000000 0
+`
+	_ = os.WriteFile(filepath.Join(root, "proc/net/udp"), []byte(udp), 0o644)
+	got, err := ListeningFromProc(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tcp/80", "tcp/8081", "udp/53"} {
+		if !got[want] {
+			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+	if got["tcp/50000"] {
+		t.Error("established (non-listening) socket counted")
+	}
+}
+
+// 生成的 sudoers 必须能通过真实的 visudo 语法检查（没有 visudo 的环境跳过）。
+func TestSudoersPassesVisudo(t *testing.T) {
+	visudo, err := exec.LookPath("visudo")
+	if err != nil {
+		t.Skip("visudo not installed")
+	}
+	f := filepath.Join(t.TempDir(), "sudoers")
+	if err := os.WriteFile(f, []byte(Sudoers(layout.System("blue"))), 0o440); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(visudo, "-cf", f).CombinedOutput(); err != nil {
+		t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
+	}
+}
+
+func TestReopenAll(t *testing.T) {
+	f := newFake(t)
+	_ = os.MkdirAll(f.path(layout.System("").ConfRoot()), 0o755)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	f.cmds = nil
+	if err := f.ReopenAll(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/opt/syapp/sbin/syapp -s reopen", "/opt/syapp/sbin/syapp -c /opt/syapp/instances/blue/conf/current/syapp.conf -s reopen"}
+	if strings.Join(f.cmds, "|") != strings.Join(want, "|") {
+		t.Fatalf("commands = %q", f.cmds)
+	}
+}

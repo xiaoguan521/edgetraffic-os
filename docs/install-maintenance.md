@@ -539,110 +539,48 @@ sudo /opt/syapp/sbin/syapp \
 
 `-p` 不会复制或重新安装二进制，只改变本次进程使用的运行前缀；`-c` 也不会自动修改配置中的 `pid`、日志和临时目录。多实例必须在各自配置中显式设置这些路径，不能只靠 `-p` 隔离。
 
-### 8.4 一台服务器运行多套 syapp
+### 8.4 一台服务器运行多套 syapp（同机多实例）
 
-多实例适用于独立模式。当前 `syapp-agent` 默认管理固定的 `/opt/syapp`、`/run/syapp`、`/var/log/syapp` 和 `127.0.0.1:8081` 状态页，因此一台服务器上的多套实例不能直接由同一个默认 Agent 分别托管。需要控制台托管时，通常一台服务器运行一套 Agent 管理的 syapp；多套实例应使用独立 systemd 单元，或扩展 Agent 使每个实例拥有独立的配置根、PID、日志和状态地址。
+同一台服务器可以运行多个 syapp 实例，各用不同端口，并分别由控制台托管、发布、热升级和卸载。设计见 `docs/design/0001-deploy-layout.md`。
 
-每套实例至少要独立设置以下项目：
+**前提**：节点已按 8.1 节安装了软件包（默认实例照常存在）。每个具名实例对应控制台中一个**节点组**，节点组的“实例档案”（实例名与端口）决定该组所有节点上的路径与监听端口；同一台服务器上的实例必须属于不同的节点组。
 
-| 项目 | `blue` 示例 | `green` 示例 |
+**1. 在控制台设置节点组的实例档案**（`PUT /api/v1/node-groups/<id>/profile`），例如实例名 `blue`、HTTP 18080、HTTPS 18443、状态页 8082。组内已有节点后实例名不能再改，端口可以改。控制台会检查同一台服务器上的实例名与端口（含四层代理端口）是否冲突。
+
+**2. 在节点上创建实例并注册**：在该节点组的“添加节点”中生成命令，形如：
+
+```bash
+sudo syapp-instance add blue --http 18080 --https 18443 --status 8082 \
+  --console <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>
+```
+
+它会依次：检查端口未被占用且不与本机其他实例冲突；创建该实例专用的 agent 用户 `syapp-agent-blue` 与只允许操作本实例的 `/etc/sudoers.d/syapp-agent-blue`（经 `visudo` 校验）；创建目录与 `/opt/syapp/instances/blue/instance.json`；生成初始配置并用 `syapp -t` 校验；启动 `syapp@blue.service`；注册并启动 `syapp-agent@blue.service`。不带 `--console` 等参数时只创建并启动数据面，输出稍后注册的命令。
+
+| 项目 | 默认实例 | 具名实例 `blue` |
 | --- | --- | --- |
-| 配置目录 | `/etc/syapp/instances/blue` | `/etc/syapp/instances/green` |
-| 配置文件 | `/etc/syapp/instances/blue/syapp.conf` | `/etc/syapp/instances/green/syapp.conf` |
-| 对外监听端口 | `18080/18443` | `28080/28443` |
-| PID 文件 | `/run/syapp-blue/syapp.pid` | `/run/syapp-green/syapp.pid` |
-| 锁文件 | `/run/syapp-blue/syapp.lock` | `/run/syapp-green/syapp.lock` |
-| 错误/访问日志 | `/var/log/syapp-blue/` | `/var/log/syapp-green/` |
-| 临时目录 | `/var/cache/syapp-blue/` | `/var/cache/syapp-green/` |
-| 本机状态页 | `127.0.0.1:8081` | `127.0.0.1:8082` |
+| 配置 | `/opt/syapp/conf/current/syapp.conf` | `/opt/syapp/instances/blue/conf/current/syapp.conf` |
+| PID | `/run/syapp/syapp.pid` | `/run/syapp-blue/syapp.pid` |
+| 日志 / 缓存 | `/var/log/syapp/`、`/var/cache/syapp/` | `/var/log/syapp-blue/`、`/var/cache/syapp-blue/` |
+| agent 状态 | `/var/lib/syapp-agent` | `/var/lib/syapp-agent-blue` |
+| 服务 | `syapp.service`、`syapp-agent.service` | `syapp@blue.service`、`syapp-agent@blue.service` |
 
-#### 8.4.1 准备实例配置
+二进制 `/opt/syapp/sbin/syapp` 与版本库由同机实例共用。
 
-可以从独立模式基线复制一份配置作为起点。不要直接编辑控制台正在使用的 `conf/current`：
+**3. 日常管理**
 
 ```bash
-sudo mkdir -p /etc/syapp/instances/blue
-sudo cp -aL /opt/syapp/conf/current/. /etc/syapp/instances/blue/
-sudo mkdir -p /var/log/syapp-blue /var/cache/syapp-blue
-sudo vi /etc/syapp/instances/blue/syapp.conf
+sudo syapp-instance list                  # 实例、端口与数据面运行状态
+sudo syapp-instance check                 # 端口 / 名称冲突与缺失文件
+sudo systemctl reload syapp@blue          # 平滑重载单个实例（不影响其他实例）
+sudo syapp-instance remove blue           # 只显示将执行的操作
+sudo syapp-instance remove blue --yes     # 优雅停止并删除实例（保留日志；加 --purge 一并删除日志与缓存）
 ```
 
-在 `blue` 的主配置中，把默认的共享路径改成实例专用路径：
+删除实例后，请在控制台“节点”页删除对应节点。日志轮转（logrotate）会对所有实例执行 `syapp-instance reopen-all`。
 
-```nginx
-user  syapp;
-worker_processes  auto;
-pid         /run/syapp-blue/syapp.pid;
-lock_file   /run/syapp-blue/syapp.lock;
-error_log   /var/log/syapp-blue/error.log  warn;
+**卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syapp-instance remove`，或执行 `uninstall.sh --all`。软件包升级不会停止任何实例。
 
-http {
-    access_log  /var/log/syapp-blue/access.json  edge_json;
-
-    client_body_temp_path  /var/cache/syapp-blue/client_temp;
-    proxy_temp_path        /var/cache/syapp-blue/proxy_temp;
-    fastcgi_temp_path      /var/cache/syapp-blue/fastcgi_temp;
-    uwsgi_temp_path        /var/cache/syapp-blue/uwsgi_temp;
-    scgi_temp_path         /var/cache/syapp-blue/scgi_temp;
-
-    include /etc/syapp/instances/blue/mime.types;
-    include /etc/syapp/instances/blue/conf.d/*.conf;
-}
-```
-
-复制的基线配置中还有一个供 Agent 使用的 `127.0.0.1:8081` 状态页。多实例独立运行时，应把 `green` 的该监听改成 `127.0.0.1:8082`，并确保业务站点的 `listen` 端口不重复：
-
-```nginx
-# /etc/syapp/instances/blue/conf.d/site.conf
-server {
-    listen 18080;
-    server_name blue.example.com;
-    # 其他 server/location 配置
-}
-```
-
-如果配置中启用了 `stream`，还要把 `stream.d/*.conf` 指向当前实例目录；如果启用了 Lua，两个实例可以共用同一套已安装的 `/opt/syapp/modules/lua`，但必须使用与二进制版本匹配的模块。
-
-#### 8.4.2 使用 systemd 模板单元
-
-创建 `/etc/systemd/system/syapp@.service`：
-
-```ini
-[Unit]
-Description=EdgeTraffic OS data plane instance %i
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=forking
-PIDFile=/run/syapp-%i/syapp.pid
-RuntimeDirectory=syapp-%i
-RuntimeDirectoryPreserve=yes
-ExecStartPre=/opt/syapp/sbin/syapp -p /etc/syapp/instances/%i -c /etc/syapp/instances/%i/syapp.conf -t -q
-ExecStart=/opt/syapp/sbin/syapp -p /etc/syapp/instances/%i -c /etc/syapp/instances/%i/syapp.conf
-ExecReload=/opt/syapp/sbin/syapp -p /etc/syapp/instances/%i -c /etc/syapp/instances/%i/syapp.conf -s reload
-ExecStop=/opt/syapp/sbin/syapp -p /etc/syapp/instances/%i -c /etc/syapp/instances/%i/syapp.conf -s quit
-LimitNOFILE=65535
-PrivateTmp=true
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启动、校验和重载不同实例：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now syapp@blue
-sudo systemctl enable --now syapp@green
-
-sudo systemctl status syapp@blue --no-pager
-sudo systemctl status syapp@green --no-pager
-sudo systemctl reload syapp@blue
-```
-
-每个实例必须使用唯一的监听端口；两个实例共用一个 `pid`、`lock_file`、日志目录、临时目录或状态页端口，会导致启动失败、日志相互覆盖或状态采集冲突。
+**当前限制**（v0.3 开发中）：节点防火墙 `syapp-firewall` 仍只放行 80/443，具名实例的端口需要手工加 `--allow-tcp`；同机实例的热升级需按主机依次执行（控制台的主机级编排尚未完成）；节点组页面暂无实例档案的编辑界面，请使用 API。
 
 ### 8.5 与 Nginx 配置的差异
 

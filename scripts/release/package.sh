@@ -136,9 +136,10 @@ case "${1:-}" in
     go run -trimpath ./cmd/syapp-agent package-defaults -out "$r/opt/syapp"   # 初始版本与独立模式示例
     gobuild linux "$arch" "$r/usr/bin" ./cmd/syapp-agent
     gobuild linux "$arch" "$r/usr/libexec/syapp" ./cmd/syapp-wrapper
+    gobuild linux "$arch" "$r/usr/sbin" ./cmd/syapp-instance
     cp dataplane/packaging/sudoers/syapp-agent "$r/etc/sudoers.d/syapp-agent"
-    cp dataplane/packaging/systemd/syapp.service \
-       dataplane/packaging/systemd/syapp-agent.service \
+    cp dataplane/packaging/systemd/syapp.service dataplane/packaging/systemd/syapp@.service \
+       dataplane/packaging/systemd/syapp-agent.service dataplane/packaging/systemd/syapp-agent@.service \
        dataplane/packaging/systemd/syapp-firewall.service "$r/etc/systemd/system/"
     install -m 0755 dataplane/packaging/firewall/syapp-firewall "$r/usr/sbin/syapp-firewall"
     cp dataplane/packaging/logrotate/syapp "$r/etc/logrotate.d/syapp"
@@ -160,11 +161,13 @@ case "${1:-}" in
     tar -C "$st/syapp" -xzf "$syapp_tgz"
     go run -trimpath ./cmd/syapp-agent package-defaults -out "$st/syapp/opt/syapp"   # syapp 软件包可独立使用
     cp dataplane/packaging/systemd/syapp.service "$st/syapp/syapp.service"
+    cp dataplane/packaging/systemd/syapp@.service "$st/syapp/syapp@.service"
     cp dataplane/packaging/logrotate/syapp "$st/syapp/logrotate"
     cp dataplane/packaging/tmpfiles/syapp.conf "$st/syapp/tmpfiles.conf"
-    gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper
+    gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper ./cmd/syapp-instance
     cp dataplane/packaging/sudoers/syapp-agent "$st/agent/sudoers"
     cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"
+    cp dataplane/packaging/systemd/syapp-agent@.service "$st/agent/syapp-agent@.service"
     cp dataplane/packaging/systemd/syapp-firewall.service "$st/agent/syapp-firewall.service"
     install -m 0755 dataplane/packaging/firewall/syapp-firewall "$st/agent/syapp-firewall"
     gobuild linux "$arch" "$st/console" ./cmd/syapp-console

@@ -1,0 +1,452 @@
+// Package instance 实现同机多实例的管理命令 <品牌>-instance（设计 0001 第 5.7 节）：
+// add / remove / list / check。
+//
+// 文件系统根与外部命令可注入（Env），测试在临时目录中完整执行 add / remove 并核对发出的命令；
+// 外部命令一律以参数切片执行，不经过 shell。所有路径由 internal/layout 按校验过的实例名计算。
+package instance
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
+)
+
+// Env 是命令运行的环境。
+type Env struct {
+	Root      string                                  // 文件系统根：生产为 "/"
+	Run       func(name string, args ...string) error // 执行外部命令（参数切片，不经过 shell）
+	Out       io.Writer                               // 面向运维人员的输出
+	Listening func() (map[string]bool, error)         // 本机正在监听的端口（"tcp/80"、"udp/53"）
+}
+
+func (e Env) path(p string) string { return filepath.Join(e.Root, filepath.FromSlash(p)) }
+
+func (e Env) say(format string, a ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", a...) }
+
+// AddOptions 是 add 的参数。
+type AddOptions struct {
+	Profile render.Profile
+	// 三项同时提供时，add 完成后立即注册到控制台并启动 agent
+	Console, Token, CAFingerprint string
+}
+
+// Info 是 list 的一行。
+type Info struct {
+	Name    string // 空串为默认实例
+	Profile render.Profile
+	Running bool // master 进程存在
+	PID     int
+}
+
+var (
+	// ErrExists 表示实例已存在。
+	ErrExists = errors.New("instance already exists")
+	// ErrNotFound 表示实例不存在。
+	ErrNotFound = errors.New("instance not found")
+)
+
+// Add 创建并启动一个具名实例。
+func (e Env) Add(o AddOptions) error {
+	p := o.Profile
+	if p.Instance == "" {
+		return errors.New("add 只用于具名实例；默认实例由安装包创建")
+	}
+	if p.Mode != "" && p.Mode != string(layout.ModeSystem) {
+		return errors.New("add 创建 system 模式的实例；user 模式请使用免安装包（设计 0001 第 6 节）")
+	}
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	enroll := o.Console != "" || o.Token != "" || o.CAFingerprint != ""
+	if enroll && (o.Console == "" || o.Token == "" || o.CAFingerprint == "") {
+		return errors.New("--console、--token、--ca-fingerprint 需同时提供")
+	}
+	l := layout.System(p.Instance)
+	if _, err := os.Stat(e.path(l.InstanceFile())); err == nil {
+		return fmt.Errorf("%w: %s（%s）", ErrExists, p.Instance, l.Prefix())
+	}
+	installed, err := e.installed()
+	if err != nil {
+		return err
+	}
+	if probs := conflicts(append(installed, Info{Name: p.Instance, Profile: p})); len(probs) > 0 {
+		return fmt.Errorf("端口或实例名冲突：%s", strings.Join(probs, "；"))
+	}
+	if e.Listening != nil {
+		busy, err := e.Listening()
+		if err != nil {
+			return err
+		}
+		for _, k := range sortedKeys(ports(p)) {
+			if busy[k] {
+				return fmt.Errorf("端口 %s 已被本机其他程序监听", k)
+			}
+		}
+	}
+	if err := e.add(o, l); err != nil {
+		return fmt.Errorf("%w（实例未完整创建，可执行 %s remove %s --yes 清理后重试）", err, brand.ID()+"-instance", p.Instance)
+	}
+	return nil
+}
+
+func (e Env) add(o AddOptions, l layout.Layout) error {
+	user, group := l.AgentUser(), layout.Group()
+	e.say("== 创建实例 %s（%s）", l.Instance(), l.Prefix())
+	if err := e.Run("useradd", "-r", "-g", group, "-d", "/nonexistent", "-s", "/usr/sbin/nologin", user); err != nil {
+		return fmt.Errorf("创建用户 %s: %w", user, err)
+	}
+	// 目录：实例前缀与档案属于 root（wrapper 据此确认实例由 root 创建）；配置目录与 agent 状态目录属于该实例的 agent 用户
+	for _, d := range []struct {
+		dir   string
+		mode  os.FileMode
+		owner string
+	}{
+		{l.Prefix(), 0o755, ""},
+		{l.ConfRoot(), 0o755, user},
+		{l.ReleasesDir(), 0o755, user},
+		{l.LogDir(), 0o755, ""},
+		{l.CacheDir(), 0o755, ""},
+		{l.AgentState(), 0o750, user},
+	} {
+		if err := os.MkdirAll(e.path(d.dir), d.mode); err != nil {
+			return err
+		}
+		if err := os.Chmod(e.path(d.dir), d.mode); err != nil {
+			return err
+		}
+		if d.owner != "" {
+			if err := e.Run("chown", d.owner+":"+group, d.dir); err != nil {
+				return err
+			}
+		}
+	}
+	b, _ := json.MarshalIndent(o.Profile, "", "  ")
+	if err := writeFile(e.path(l.InstanceFile()), append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	// sudoers：写入临时文件，visudo 校验通过才生效
+	sp := e.path(l.SudoersFile())
+	if err := os.MkdirAll(filepath.Dir(sp), 0o750); err != nil {
+		return err
+	}
+	tmp := sp + ".new"
+	if err := writeFile(tmp, []byte(Sudoers(l)), 0o440); err != nil {
+		return err
+	}
+	if err := e.Run("visudo", "-cf", l.SudoersFile()+".new"); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sudoers 校验失败: %w", err)
+	}
+	if err := os.Rename(tmp, sp); err != nil {
+		return err
+	}
+	if err := e.Run("systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	// 初始版本由该实例的 agent 用户写入（与默认实例的安装流程一致），再用真实二进制校验
+	if err := e.Run("runuser", "-u", user, "--", l.AgentBin(), "bootstrap", "-instance", l.Instance()); err != nil {
+		return fmt.Errorf("生成初始配置: %w", err)
+	}
+	if err := e.Run(l.Bin(), "-t", "-q", "-c", l.CurrentConf()); err != nil {
+		return fmt.Errorf("初始配置校验失败: %w", err)
+	}
+	if err := e.Run("systemctl", "enable", "--now", l.DataplaneUnit()); err != nil {
+		return fmt.Errorf("启动 %s: %w", l.DataplaneUnit(), err)
+	}
+	p := o.Profile
+	e.say("%s 已启动：HTTP %d / HTTPS %d / 状态页 127.0.0.1:%d", l.DataplaneUnit(), p.HTTP(), p.HTTPS(), p.Status())
+	if o.Console == "" {
+		e.say("下一步：在控制台为实例档案为 %s 的节点组生成注册令牌，然后执行：", l.Instance())
+		e.say("  runuser -u %s -- %s enroll -instance %s -server <控制台> -token <令牌> -ca-fingerprint <指纹>", user, l.AgentBin(), l.Instance())
+		e.say("  systemctl enable --now %s", l.AgentUnit())
+		return nil
+	}
+	if err := e.Run("runuser", "-u", user, "--", l.AgentBin(), "enroll", "-instance", l.Instance(),
+		"-server", o.Console, "-token", o.Token, "-ca-fingerprint", o.CAFingerprint); err != nil {
+		return fmt.Errorf("注册到控制台: %w", err)
+	}
+	if err := e.Run("systemctl", "enable", "--now", l.AgentUnit()); err != nil {
+		return fmt.Errorf("启动 %s: %w", l.AgentUnit(), err)
+	}
+	e.say("%s 已启动，几秒后节点会出现在控制台。", l.AgentUnit())
+	return nil
+}
+
+// Remove 删除一个具名实例。yes 为 false 时只打印将执行的操作。
+func (e Env) Remove(name string, purge, yes bool) error {
+	if name == "" || !layout.ValidInstance(name) {
+		return errors.New("remove 只用于具名实例，且实例名必须合法；默认实例随安装包卸载")
+	}
+	l := layout.System(name)
+	if _, err := os.Stat(e.path(l.InstanceFile())); err != nil {
+		if _, derr := os.Stat(e.path(l.Prefix())); derr != nil {
+			return fmt.Errorf("%w: %s", ErrNotFound, name)
+		}
+		// 半途失败的 add 只留下部分目录：仍允许清理
+	}
+	dirs := []string{l.Prefix(), l.AgentState()}
+	if purge {
+		dirs = append(dirs, l.LogDir(), l.CacheDir())
+	}
+	if !yes {
+		e.say("将删除实例 %s（加 --yes 执行）：", name)
+		e.say("  停止并停用 %s、%s（数据面优雅退出，现有连接处理完再结束）", l.AgentUnit(), l.DataplaneUnit())
+		e.say("  删除 %s、用户 %s", l.SudoersFile(), l.AgentUser())
+		e.say("  删除目录 %s", strings.Join(dirs, "、"))
+		if !purge {
+			e.say("  保留日志 %s 与缓存 %s（加 --purge 一并删除）", l.LogDir(), l.CacheDir())
+		}
+		return nil
+	}
+	// 先停 agent，再让数据面优雅退出；单元不存在等错误不影响后续清理
+	_ = e.Run("systemctl", "disable", "--now", l.AgentUnit())
+	_ = e.Run("systemctl", "disable", "--now", l.DataplaneUnit())
+	if err := os.Remove(e.path(l.SudoersFile())); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = e.Run("userdel", l.AgentUser())
+	for _, d := range dirs {
+		if err := removeInstanceDir(e.path(d), name); err != nil {
+			return err
+		}
+	}
+	_ = e.Run("systemctl", "daemon-reload")
+	e.say("实例 %s 已删除。请在控制台“节点”页删除对应节点。", name)
+	return nil
+}
+
+// removeInstanceDir 删除一个属于该实例的目录；路径必须带实例名，防止误删共用目录。
+func removeInstanceDir(dir, name string) error {
+	base := filepath.Base(dir)
+	if base != name && !strings.HasSuffix(base, "-"+name) {
+		return fmt.Errorf("refusing to remove %s: not an instance directory of %s", dir, name)
+	}
+	return os.RemoveAll(dir)
+}
+
+// installed 返回本机已安装的实例（默认实例在前，其余按名称排序）。
+func (e Env) installed() ([]Info, error) {
+	var out []Info
+	def := layout.System("")
+	if _, err := os.Stat(e.path(def.ConfRoot())); err == nil {
+		out = append(out, Info{Name: "", Profile: render.Profile{}})
+	}
+	entries, err := os.ReadDir(e.path(def.InstancesDir()))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, de := range entries {
+		name := de.Name()
+		if !de.IsDir() || !layout.ValidInstance(name) || name == "" {
+			continue
+		}
+		b, err := os.ReadFile(e.path(layout.System(name).InstanceFile()))
+		if err != nil {
+			continue // 半途失败的 add：check 会报告
+		}
+		var p render.Profile
+		if err := json.Unmarshal(b, &p); err != nil {
+			continue
+		}
+		out = append(out, Info{Name: name, Profile: p})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// List 返回已安装实例及其 master 是否在运行。
+func (e Env) List() ([]Info, error) {
+	list, err := e.installed()
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		l := layout.System(list[i].Name)
+		b, err := os.ReadFile(e.path(l.PidFile()))
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if _, err := os.Stat(e.path("/proc/" + strconv.Itoa(pid))); err == nil {
+			list[i].Running, list[i].PID = true, pid
+		}
+	}
+	return list, nil
+}
+
+// Check 返回本机实例布局中的问题（端口或名称冲突、缺少文件），没有问题时为空。
+func (e Env) Check() []string {
+	list, err := e.installed()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	probs := conflicts(list)
+	for _, in := range list {
+		if in.Name == "" {
+			continue
+		}
+		l := layout.System(in.Name)
+		if in.Profile.Instance != in.Name {
+			probs = append(probs, fmt.Sprintf("实例 %s 的 %s 写的是 %q", in.Name, layout.InstanceFile, in.Profile.Instance))
+		}
+		if err := in.Profile.Validate(); err != nil {
+			probs = append(probs, fmt.Sprintf("实例 %s 的档案不合法：%v", in.Name, err))
+		}
+		for _, f := range []struct{ path, what string }{
+			{l.SudoersFile(), "sudoers"},
+			{l.CurrentConf(), "当前配置"},
+			{l.AgentState(), "agent 状态目录"},
+		} {
+			if _, err := os.Stat(e.path(f.path)); err != nil {
+				probs = append(probs, fmt.Sprintf("实例 %s 缺少 %s（%s）", in.Name, f.what, f.path))
+			}
+		}
+	}
+	// 半途失败的 add：有目录但没有档案
+	entries, _ := os.ReadDir(e.path(layout.System("").InstancesDir()))
+	for _, de := range entries {
+		if _, err := os.Stat(e.path(layout.System("").InstancesDir() + "/" + de.Name() + "/" + layout.InstanceFile)); err != nil {
+			probs = append(probs, fmt.Sprintf("目录 %s 没有 %s（未完整创建的实例，可执行 remove 清理）", de.Name(), layout.InstanceFile))
+		}
+	}
+	sort.Strings(probs)
+	return probs
+}
+
+// ports 返回一个实例占用的端口。
+func ports(p render.Profile) map[string]string {
+	return map[string]string{
+		"tcp/" + strconv.Itoa(p.HTTP()):   "HTTP",
+		"tcp/" + strconv.Itoa(p.HTTPS()):  "HTTPS",
+		"tcp/" + strconv.Itoa(p.Status()): "状态页",
+	}
+}
+
+func label(name string) string {
+	if name == "" {
+		return "默认实例"
+	}
+	return "实例 " + name
+}
+
+// conflicts 返回实例之间的名称与端口冲突。
+func conflicts(list []Info) []string {
+	var probs []string
+	owner := map[string]string{}
+	names := map[string]bool{}
+	for _, in := range list {
+		if names[in.Name] {
+			probs = append(probs, label(in.Name)+" 已存在")
+			continue
+		}
+		names[in.Name] = true
+		for _, k := range sortedKeys(ports(in.Profile)) {
+			if other, ok := owner[k]; ok {
+				probs = append(probs, fmt.Sprintf("端口 %s：%s 与 %s 冲突", k, label(in.Name), other))
+				continue
+			}
+			owner[k] = label(in.Name)
+		}
+	}
+	return probs
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Sudoers 返回该实例 agent 的 sudoers 内容：7 行，实例名写死，只有 test 与 upgrade-start 带参数通配。
+func Sudoers(l layout.Layout) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s —— 实例 %s 的 agent 只能操作本实例（%s instance add 生成，请勿手改）\n", l.SudoersFile(), l.Instance(), brand.ID())
+	for _, sub := range []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"} {
+		fmt.Fprintf(&b, "%s ALL=(root) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), l.WrapperBin(), l.Instance(), sub)
+	}
+	return b.String()
+}
+
+func writeFile(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// ListeningFromProc 读取 root/proc/net/{tcp,tcp6,udp,udp6} 中处于监听状态的本地端口。
+func ListeningFromProc(root string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, f := range []struct{ name, proto, state string }{
+		{"tcp", "tcp", "0A"}, {"tcp6", "tcp", "0A"}, // TCP_LISTEN
+		{"udp", "udp", "07"}, {"udp6", "udp", "07"}, // 已绑定的 UDP 套接字
+	} {
+		fh, err := os.Open(filepath.Join(root, "proc", "net", f.name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		sc := bufio.NewScanner(fh)
+		for sc.Scan() {
+			fields := strings.Fields(sc.Text())
+			if len(fields) < 4 || fields[3] != f.state {
+				continue
+			}
+			i := strings.LastIndexByte(fields[1], ':')
+			if i < 0 {
+				continue
+			}
+			if port, err := strconv.ParseUint(fields[1][i+1:], 16, 16); err == nil {
+				out[f.proto+"/"+strconv.FormatUint(port, 10)] = true
+			}
+		}
+		_ = fh.Close()
+	}
+	return out, nil
+}
+
+// ReopenAll 让本机每个实例重新打开日志文件（供 logrotate 的 postrotate 调用）；返回第一个错误，但会处理完所有实例。
+func (e Env) ReopenAll() error {
+	list, err := e.installed()
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, in := range list {
+		l := layout.System(in.Name)
+		args := []string{"-s", "reopen"}
+		if in.Name != "" {
+			args = []string{"-c", l.CurrentConf(), "-s", "reopen"}
+		}
+		if err := e.Run(l.Bin(), args...); err != nil && first == nil {
+			first = fmt.Errorf("%s: %w", label(in.Name), err)
+		}
+	}
+	return first
+}

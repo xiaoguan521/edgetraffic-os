@@ -3,18 +3,37 @@
 #
 #   sudo ./uninstall.sh           停止服务并移除程序与 systemd 单元（保留配置版本与日志）
 #   sudo ./uninstall.sh --purge   同时清除 /opt/syapp、/var/lib/syapp-agent、/var/log/syapp、/var/cache/syapp
+#   sudo ./uninstall.sh --instance <名称> [--purge]   只删除一个同机实例（等同 syapp-instance remove <名称> --yes）
+#   sudo ./uninstall.sh --all [--purge]   先删除全部同机实例，再卸载节点
 set -euo pipefail
 
-PURGE=0
+PURGE=0; INSTANCE=""; ALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --purge) PURGE=1; shift ;;
-    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+    --instance) INSTANCE="${2:-}"; shift 2 ;;
+    --all) ALL=1; shift ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] || { echo "uninstall: 请以 root 运行" >&2; exit 1; }
+
+purge_arg=(); [[ $PURGE -eq 1 ]] && purge_arg=(--purge)
+if [[ -n "$INSTANCE" ]]; then
+  exec /usr/sbin/syapp-instance remove "$INSTANCE" --yes "${purge_arg[@]+"${purge_arg[@]}"}"
+fi
+insts=()
+for f in /opt/syapp/instances/*/instance.json; do [[ -f "$f" ]] && insts+=("$(basename "$(dirname "$f")")"); done
+if [[ ${#insts[@]} -gt 0 ]]; then
+  if [[ $ALL -ne 1 ]]; then
+    echo "本机还有同机多实例：${insts[*]}" >&2
+    echo "请先用 --instance <名称> 逐个删除，或加 --all 一并删除" >&2
+    exit 1
+  fi
+  for i in "${insts[@]}"; do /usr/sbin/syapp-instance remove "$i" --yes "${purge_arg[@]+"${purge_arg[@]}"}"; done
+fi
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   systemctl disable --now syapp-agent.service >/dev/null 2>&1 || true

@@ -29,6 +29,12 @@ contents:
     file_info: { mode: 0440, owner: root, group: root }
   - src: ${STAGE}/agent/syapp-agent.service
     dst: /usr/lib/systemd/system/syapp-agent.service
+  - src: ${STAGE}/agent/syapp-agent@.service
+    dst: /usr/lib/systemd/system/syapp-agent@.service
+  # 同机多实例管理：add / remove / list / check / reopen-all（设计 0001 第 5.7 节）
+  - src: ${STAGE}/agent/syapp-instance
+    dst: /usr/sbin/syapp-instance
+    file_info: { mode: 0755, owner: root, group: root }
   # 可选的节点防火墙：默认不启用，由管理员执行 syapp-firewall enable --ssh-from ...
   - src: ${STAGE}/agent/syapp-firewall
     dst: /usr/sbin/syapp-firewall
