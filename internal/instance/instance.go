@@ -175,6 +175,7 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	}
 	p := o.Profile
 	e.say("%s 已启动：HTTP %d / HTTPS %d / 状态页 127.0.0.1:%d", l.DataplaneUnit(), p.HTTP(), p.HTTPS(), p.Status())
+	e.syncFirewall()
 	if o.Console == "" {
 		e.say("下一步：在控制台为实例档案为 %s 的节点组生成注册令牌，然后执行：", l.Instance())
 		e.say("  runuser -u %s -- %s enroll -instance %s -server <控制台> -token <令牌> -ca-fingerprint <指纹>", user, l.AgentBin(), l.Instance())
@@ -234,8 +235,46 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		}
 	}
 	_ = e.Run("systemctl", "daemon-reload")
+	e.syncFirewall()
 	e.say("实例 %s 已删除。请在控制台“节点”页删除对应节点。", name)
 	return nil
+}
+
+// FirewallRefreshUnit 是发布后自动刷新防火墙规则的 path 单元（设计 0001 第 5.8 节）。
+func FirewallRefreshUnit() string { return brand.Firewall() + "-refresh.path" }
+
+// firewallDropIn 是 path 单元的附加配置：列出具名实例的配置目录（默认实例的目录写在单元本身）。
+func firewallDropIn() string {
+	return "/etc/systemd/system/" + FirewallRefreshUnit() + ".d/instances.conf"
+}
+
+// syncFirewall 在实例增删后（system 模式）：让防火墙的 path 单元同时监视各实例的配置目录，
+// 并按全部实例的当前配置刷新规则。防火墙未启用时 refresh 什么都不做；任何失败都只提示，不影响实例本身。
+func (e Env) syncFirewall() {
+	insts, err := e.installed()
+	if err != nil {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("# 由 " + brand.ID() + "-instance 生成：发布具名实例的配置后同样刷新防火墙规则\n[Path]\n")
+	for _, in := range insts {
+		if in.Name != "" {
+			b.WriteString("PathChanged=" + layout.System(in.Name).ConfRoot() + "\n")
+		}
+	}
+	dp := e.path(firewallDropIn())
+	if err := os.MkdirAll(filepath.Dir(dp), 0o755); err == nil {
+		_ = writeFile(dp, []byte(b.String()), 0o644)
+	}
+	_ = e.Run("systemctl", "daemon-reload")
+	_ = e.Run("systemctl", "try-restart", FirewallRefreshUnit())
+	fw := "/usr/sbin/" + brand.Firewall()
+	if _, err := os.Stat(e.path(fw)); err != nil {
+		return
+	}
+	if err := e.Run(fw, "refresh"); err != nil {
+		e.say("警告：防火墙规则刷新失败（%v），现有规则保持不变；请检查后执行 %s refresh", err, fw)
+	}
 }
 
 // removeInstanceDir 删除一个属于该实例的目录；路径必须带实例名，防止误删共用目录。

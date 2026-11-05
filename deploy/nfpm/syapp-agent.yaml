@@ -41,6 +41,11 @@ contents:
     file_info: { mode: 0755, owner: root, group: root }
   - src: ${STAGE}/agent/syapp-firewall.service
     dst: /usr/lib/systemd/system/syapp-firewall.service
+  # 发布与实例增删后按实例配置刷新防火墙规则（防火墙未启用时不运行）
+  - src: ${STAGE}/agent/syapp-firewall-refresh.service
+    dst: /usr/lib/systemd/system/syapp-firewall-refresh.service
+  - src: ${STAGE}/agent/syapp-firewall-refresh.path
+    dst: /usr/lib/systemd/system/syapp-firewall-refresh.path
 scripts:
   preinstall: ${STAGE}/scripts/agent-preinstall.sh
   postinstall: ${STAGE}/scripts/agent-postinstall.sh

@@ -344,3 +344,44 @@ func TestReopenAll(t *testing.T) {
 		t.Fatalf("commands = %q", f.cmds)
 	}
 }
+
+// 实例增删后：防火墙 path 单元监视各具名实例的配置目录，并刷新规则（防火墙已安装时）。
+func TestAddRemoveSyncsFirewall(t *testing.T) {
+	f := newFake(t)
+	fw := f.path("/usr/sbin/syapp-firewall")
+	_ = os.MkdirAll(filepath.Dir(fw), 0o755)
+	_ = os.WriteFile(fw, []byte("#!/bin/sh\n"), 0o755)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	green := render.Profile{Instance: "green", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8083}
+	if err := f.Add(AddOptions{Profile: green}); err != nil {
+		t.Fatal(err)
+	}
+	dropIn := f.path("/etc/systemd/system/syapp-firewall-refresh.path.d/instances.conf")
+	b, _ := os.ReadFile(dropIn)
+	for _, want := range []string{"PathChanged=/opt/syapp/instances/blue/conf\n", "PathChanged=/opt/syapp/instances/green/conf\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("drop-in missing %q:\n%s", want, b)
+		}
+	}
+	if !f.ran("/usr/sbin/syapp-firewall refresh") || !f.ran("systemctl try-restart syapp-firewall-refresh.path") {
+		t.Fatalf("firewall not refreshed: %v", f.cmds)
+	}
+	f.cmds = nil
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(dropIn)
+	if strings.Contains(string(b), "/blue/") || !strings.Contains(string(b), "/green/") {
+		t.Fatalf("drop-in after remove:\n%s", b)
+	}
+	if !f.ran("/usr/sbin/syapp-firewall refresh") {
+		t.Fatal("firewall not refreshed after remove")
+	}
+	// 刷新失败只提示，不影响实例操作
+	f.failOn = "syapp-firewall refresh"
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatalf("firewall failure broke add: %v", err)
+	}
+}

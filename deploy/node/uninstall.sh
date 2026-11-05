@@ -53,7 +53,9 @@ rm -f /usr/sbin/syapp /usr/bin/syapp-agent /usr/libexec/syapp/syapp-wrapper /usr
 rm -f /etc/sudoers.d/syapp-agent /etc/logrotate.d/syapp /etc/tmpfiles.d/syapp.conf
 rm -f /etc/systemd/system/syapp.service /etc/systemd/system/syapp@.service \
       /etc/systemd/system/syapp-agent.service /etc/systemd/system/syapp-agent@.service \
-      /etc/systemd/system/syapp-firewall.service
+      /etc/systemd/system/syapp-firewall.service /etc/systemd/system/syapp-firewall-refresh.service \
+      /etc/systemd/system/syapp-firewall-refresh.path
+rm -rf /etc/systemd/system/syapp-firewall-refresh.path.d
 rm -rf /opt/syapp/sbin /opt/syapp/versions /opt/syapp/modules
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then

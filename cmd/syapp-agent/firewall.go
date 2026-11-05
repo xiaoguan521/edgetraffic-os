@@ -12,7 +12,8 @@ import (
 
 // firewallMain 实现离线子命令（不连接控制台，由 syapp-firewall 脚本调用）：
 //
-//	syapp-agent firewall render -ssh-from CIDRS [-ssh-port N] [-allow-tcp L] [-allow-udp L] [-allow-any-ssh]
+//	syapp-agent firewall render -ssh-from CIDRS [-ssh-port N] [-allow-tcp L] [-allow-udp L] [-allow-any-ssh] [-instances]
+//	    -instances：放行本机全部实例当前配置中对外监听的端口（含四层代理），代替默认的 80/443
 //	syapp-agent firewall covers -ssh-from CIDRS -ip IP     退出码 0 表示 IP 在列表中，1 表示不在
 func firewallMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -27,6 +28,7 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 	allowUDP := fs.String("allow-udp", "", "对所有来源开放的 UDP 端口，逗号分隔（如 HTTP/3 用 443）")
 	anySSH := fs.Bool("allow-any-ssh", false, "允许 SSH 来源为 0.0.0.0/0（不建议）")
 	ip := fs.String("ip", "", "要检查的地址（covers）")
+	instances := fs.Bool("instances", false, "按本机全部实例当前配置中的 listen 端口放行（默认只放行 80/443）")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -48,7 +50,13 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
-		out, err := firewall.Render(firewall.Options{SSHFrom: from, SSHPort: *sshPort, AllowTCP: tcp, AllowUDP: udp, AllowAnySSH: *anySSH})
+		o := firewall.Options{SSHFrom: from, SSHPort: *sshPort, AllowTCP: tcp, AllowUDP: udp, AllowAnySSH: *anySSH}
+		if *instances {
+			if p, ok := firewall.ListenPorts(firewall.InstanceConfs()); ok {
+				o.Public = &p
+			}
+		}
+		out, err := firewall.Render(o)
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, err)
 			return 2

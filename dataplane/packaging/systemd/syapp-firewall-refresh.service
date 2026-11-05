@@ -1,0 +1,7 @@
+[Unit]
+Description=syapp firewall: refresh rules from instance configurations
+ConditionPathExists=/etc/syapp/firewall.nft.args
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/syapp-firewall refresh
