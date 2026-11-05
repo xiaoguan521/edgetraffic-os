@@ -35,6 +35,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 // Server 实现 agentv1.AgentGatewayServer。
@@ -53,6 +54,8 @@ type Server struct {
 	Ready func() bool
 	// CheckHost 在注册前检查该主机上是否已有与目标节点组冲突的实例（同机多实例，设计 0001 第 5.2 节）。
 	CheckHost func(groupID uint, hostKey string) error
+	// CheckInstance 核对 agent 上报的本机实例档案（nil 为旧版 agent 未上报）与节点组档案：注册时不一致则拒绝，上线时不一致则告警。
+	CheckInstance func(groupID uint, reported *render.Profile) error
 
 	mu       sync.Mutex
 	sessions map[uint]*session
@@ -190,6 +193,11 @@ func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agent
 		host = host[:64]
 	}
 	hostKey := HostKey(req.MachineFingerprint)
+	if s.CheckInstance != nil {
+		if err := s.CheckInstance(tok.GroupID, ReportedProfile(req.GetInstance())); err != nil {
+			return fail(codes.FailedPrecondition, err.Error())
+		}
+	}
 	if s.CheckHost != nil {
 		if err := s.CheckHost(tok.GroupID, hostKey); err != nil {
 			return fail(codes.FailedPrecondition, err.Error())
@@ -321,6 +329,14 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		if hk := HostKey(b.Hello.MachineFingerprint); hk != "" {
 			// 补齐升级前注册的节点的主机标识
 			_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.HostKey.Value(hk))
+		}
+		if s.CheckInstance != nil {
+			// 节点上线后本机档案与节点组不一致（例如节点组端口改了、节点还没按新端口重建实例）：不断开，只告警
+			if n, err := nd.WithContext(ctx).Select(nd.GroupID).Where(nd.ID.Eq(nodeID)).First(); err == nil {
+				if err := s.CheckInstance(n.GroupID, ReportedProfile(b.Hello.GetInstance())); err != nil {
+					s.Log.Warn("node instance profile differs from its node group", "node", nodeID, "err", err)
+				}
+			}
 		}
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
 		go func() {
@@ -571,4 +587,13 @@ func HostKey(fp string) string {
 		return fp
 	}
 	return ""
+}
+
+// ReportedProfile 把 agent 上报的实例信息转换为档案；旧版 agent 未上报时为 nil。
+func ReportedProfile(i *agentv1.InstanceInfo) *render.Profile {
+	if i == nil {
+		return nil
+	}
+	return &render.Profile{Instance: i.GetName(), Mode: i.GetMode(), Root: i.GetRoot(),
+		HTTPPort: int(i.GetHttpPort()), HTTPSPort: int(i.GetHttpsPort()), StatusPort: int(i.GetStatusPort())}
 }

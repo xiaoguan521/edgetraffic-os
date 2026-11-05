@@ -176,3 +176,34 @@ func TestEnrollHostCheck(t *testing.T) {
 		t.Fatalf("empty host key: %v", err)
 	}
 }
+
+// agent 上报的本机实例必须与节点组档案一致；旧版 agent（不上报）只能加入默认档案的组。
+func TestCheckInstance(t *testing.T) {
+	d, def := newTestService(t)
+	blueG := addGroup(t, d, "blue")
+	if err := d.SetProfile(blueG.ID, blue, "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CheckInstance(def.ID, nil); err != nil {
+		t.Fatalf("old agent into default group: %v", err)
+	}
+	if err := d.CheckInstance(def.ID, &render.Profile{Mode: "system", HTTPPort: 80, HTTPSPort: 443, StatusPort: 8081}); err != nil {
+		t.Fatalf("explicit default profile: %v", err)
+	}
+	if err := d.CheckInstance(blueG.ID, nil); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "升级 agent") {
+		t.Fatalf("old agent into instance group: %v", err)
+	}
+	same := blue
+	same.Mode, same.NoFile = "system", 4096 // nofile 不参与比较
+	if err := d.CheckInstance(blueG.ID, &same); err != nil {
+		t.Fatalf("matching instance rejected: %v", err)
+	}
+	wrong := blue
+	wrong.HTTPSPort = 28443
+	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "syapp-instance add") {
+		t.Fatalf("port mismatch: %v", err)
+	}
+	if err := d.CheckInstance(def.ID, &blue); !errors.Is(err, ErrInstanceMismatch) {
+		t.Fatalf("instance agent into default group: %v", err)
+	}
+}
