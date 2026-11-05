@@ -23,7 +23,7 @@ func main() {
 
 func usage(w io.Writer) {
 	n := brand.ID() + "-instance"
-	fmt.Fprintf(w, `用法：
+	_, _ = fmt.Fprintf(w, `用法：
   %[1]s add <实例名> --http <端口> --https <端口> --status <端口> [--nofile N]
         [--console <控制台 host:port> --token <注册令牌> --ca-fingerprint <指纹>]
   %[1]s remove <实例名> [--purge] [--yes]     不加 --yes 只显示将执行的操作
@@ -57,7 +57,7 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		return 0
 	}
 	if euid != 0 && cmd != "list" && cmd != "check" {
-		fmt.Fprintln(stderr, brand.ID()+"-instance: 请以 root 运行")
+		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: 请以 root 运行")
 		return 1
 	}
 	e := env(stdout)
@@ -72,11 +72,11 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 	case "check":
 		if probs := e.Check(); len(probs) > 0 {
 			for _, p := range probs {
-				fmt.Fprintln(stdout, "问题："+p)
+				_, _ = fmt.Fprintln(stdout, "问题："+p)
 			}
 			return 1
 		}
-		fmt.Fprintln(stdout, "未发现问题")
+		_, _ = fmt.Fprintln(stdout, "未发现问题")
 	case "reopen-all":
 		err = e.ReopenAll()
 	default:
@@ -84,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, brand.ID()+"-instance: "+err.Error())
+		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: "+err.Error())
 		if errors.Is(err, errUsage) {
 			return 2
 		}
@@ -151,7 +151,7 @@ func list(e instance.Env, out io.Writer) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "实例\tHTTP\tHTTPS\t状态页\t数据面")
+	_, _ = fmt.Fprintln(tw, "实例\tHTTP\tHTTPS\t状态页\t数据面")
 	for _, in := range l {
 		name, state := in.Name, "未运行"
 		if name == "" {
@@ -160,7 +160,7 @@ func list(e instance.Env, out io.Writer) error {
 		if in.Running {
 			state = fmt.Sprintf("运行中 pid %d", in.PID)
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%s\n", name, in.Profile.HTTP(), in.Profile.HTTPS(), in.Profile.Status(), state)
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%s\n", name, in.Profile.HTTP(), in.Profile.HTTPS(), in.Profile.Status(), state)
 	}
 	return tw.Flush()
 }
