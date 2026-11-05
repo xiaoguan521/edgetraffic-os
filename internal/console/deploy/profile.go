@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -22,6 +23,8 @@ var (
 	ErrProfileLocked = errors.New("PROFILE_LOCKED: 节点组内已有节点，实例名、安装模式与安装根目录不能修改；如需迁移请新建节点组")
 	// ErrHostConflict 表示与同一主机上的其他实例冲突。
 	ErrHostConflict = errors.New("HOST_CONFLICT")
+	// ErrInstanceMismatch 表示 agent 本机的实例档案与节点组档案不一致。
+	ErrInstanceMismatch = errors.New("INSTANCE_MISMATCH")
 )
 
 // groupProfile 解析节点组的档案；空串为默认实例。
@@ -253,4 +256,33 @@ func dedup(s []string) []string {
 		}
 	}
 	return out
+}
+
+// CheckInstance 核对 agent 上报的本机实例档案与节点组档案（设计 0001 第 5.2 节）。
+// reported 为 nil 表示旧版 agent 未上报：它只能托管默认实例，因此只允许加入默认档案的节点组。
+func (d *Service) CheckInstance(groupID uint, reported *render.Profile) error {
+	gp, err := d.Profile(groupID)
+	if err != nil {
+		return err
+	}
+	if reported == nil {
+		if gp.SameInstance(render.Profile{}) {
+			return nil
+		}
+		return fmt.Errorf("%w: 节点组档案为%s，但该 agent 版本过旧、不支持同机多实例，请先升级 agent", ErrInstanceMismatch, describeProfile(gp))
+	}
+	if !gp.SameInstance(*reported) {
+		return fmt.Errorf("%w: 节点本机为%s，节点组档案为%s；请用与节点组一致的参数执行 %s add，或改用对应的节点组",
+			ErrInstanceMismatch, describeProfile(*reported), describeProfile(gp), brand.ID()+"-instance")
+	}
+	return nil
+}
+
+func describeProfile(p render.Profile) string {
+	e := p.Effective()
+	where := ""
+	if e.Mode == "user" {
+		where = "，安装根目录 " + e.Root
+	}
+	return fmt.Sprintf("%s（%s 模式%s，HTTP %d / HTTPS %d / 状态页 %d）", instanceLabel(e), e.Mode, where, e.HTTPPort, e.HTTPSPort, e.StatusPort)
 }

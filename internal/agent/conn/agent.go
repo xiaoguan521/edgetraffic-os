@@ -47,11 +47,12 @@ import (
 
 // Config 是 agent 的运行参数。
 type Config struct {
-	Server    string // 控制台 gRPC 地址 host:port
-	StateDir  string // /var/lib/syapp-agent
-	SyappBin  string // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
-	StatusURL string // http://127.0.0.1:8081/__syapp_status
-	AccessLog string // /var/log/syapp/access.json
+	Server    string         // 控制台 gRPC 地址 host:port
+	StateDir  string         // /var/lib/syapp-agent
+	SyappBin  string         // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
+	StatusURL string         // http://127.0.0.1:8081/__syapp_status
+	Profile   render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
+	AccessLog string         // /var/log/syapp/access.json
 	Heartbeat time.Duration
 	Apply     apply.Config
 	Modules   string // /opt/syapp/modules（syapp-lua 附加包，只读取版本信息上报）
@@ -149,6 +150,7 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 	resp, err := agentv1.NewAgentGatewayClient(cc).Enroll(cctx, &agentv1.EnrollRequest{
 		EnrollToken: token, CsrDer: csr, Hostname: host,
 		MachineFingerprint: machineFingerprint(), AgentVersion: version.Version,
+		Instance: instanceInfo(a.C.Profile),
 	})
 	if err != nil {
 		return fmt.Errorf("enroll: %w", err)
@@ -346,7 +348,8 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 }
 
 func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
-	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint()}
+	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint(),
+		Instance: instanceInfo(a.C.Profile)}
 	if out, err := exec.CommandContext(ctx, a.C.SyappBin, "-V").CombinedOutput(); err == nil {
 		h.SyappVersionOutput = string(out)
 	}
@@ -690,4 +693,11 @@ func newID() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// instanceInfo 把本机实例档案转换为上报格式（只是数据，不是指令）。
+func instanceInfo(p render.Profile) *agentv1.InstanceInfo {
+	e := p.Effective()
+	return &agentv1.InstanceInfo{Name: e.Instance, Mode: e.Mode, Root: e.Root,
+		HttpPort: uint32(e.HTTPPort), HttpsPort: uint32(e.HTTPSPort), StatusPort: uint32(e.StatusPort)}
 }

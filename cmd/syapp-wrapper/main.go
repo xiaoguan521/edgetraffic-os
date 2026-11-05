@@ -16,6 +16,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(wrapper.ExitUsage)
 	}
+	// 具名实例必须已由 root 创建（实例档案属于 root 且不可被他人写），否则不执行任何操作
+	if err := wrapper.CheckInstance(cmd.Instance); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(wrapper.ExitUsage)
+	}
 	if cmd.Upgrade != "" {
 		var err error
 		paths := wrapper.DefaultPathsForInstance(cmd.Instance)

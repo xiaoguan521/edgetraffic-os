@@ -191,3 +191,9 @@ func StatusPath() string { return "/__" + brand.ID() + "_status" }
 func (l Layout) StatusURL(port int) string {
 	return "http://127.0.0.1:" + strconv.Itoa(port) + StatusPath()
 }
+
+// InstanceFile 是实例前缀下的实例档案文件名（render.Profile 的 JSON），由 <品牌>-instance add 写入。
+const InstanceFile = "instance.json"
+
+// InstanceFile 返回本实例的档案路径。
+func (l Layout) InstanceFile() string { return path.Join(l.Prefix(), InstanceFile) }

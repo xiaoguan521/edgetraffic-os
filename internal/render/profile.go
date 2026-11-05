@@ -179,3 +179,19 @@ func rebase(files map[string][]byte, releases, oldRev, newRev string) map[string
 	}
 	return out
 }
+
+// Effective 返回补齐默认值后的档案（端口与文件数），用于比较两份档案是否等价。
+func (p Profile) Effective() Profile {
+	if p.Mode == "" {
+		p.Mode = "system"
+	}
+	p.HTTPPort, p.HTTPSPort, p.StatusPort, p.NoFile = p.HTTP(), p.HTTPS(), p.Status(), p.Files()
+	return p
+}
+
+// SameInstance 报告两份档案是否描述同一个实例（实例名、模式、根目录、端口一致；nofile 不参与比较，节点可按本机限制调整）。
+func (p Profile) SameInstance(o Profile) bool {
+	a, b := p.Effective(), o.Effective()
+	a.NoFile, b.NoFile = 0, 0
+	return a == b
+}

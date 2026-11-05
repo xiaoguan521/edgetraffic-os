@@ -46,6 +46,9 @@ type Paths struct {
 	Keys     map[string]ed25519.PublicKey
 	Arch     string
 	Timeout  time.Duration
+	// Instance 是本次升级的实例（空串为默认实例）。升级状态按实例分别保存在 root 所有的 Versions 下：
+	// 二进制同机共用，但每个实例的 master 各自经历 start / commit / abort（设计 0001 第 5.6 节）。
+	Instance string
 }
 
 // DefaultPaths 是生产环境的路径。
@@ -57,7 +60,7 @@ func DefaultPaths() Paths {
 func DefaultPathsForInstance(instance string) Paths {
 	l := layout.System(instance)
 	return Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
-		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second}
+		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second, Instance: instance}
 }
 
 const (
@@ -335,12 +338,12 @@ func (p Paths) current() (string, error) {
 func (p Paths) saveState(s State) error {
 	s.At = time.Now().UTC()
 	b, _ := json.Marshal(s)
-	return os.WriteFile(filepath.Join(p.Versions, stateFile), b, 0o644)
+	return os.WriteFile(filepath.Join(p.Versions, p.stateName()), b, 0o644)
 }
 
 func (p Paths) loadState() (State, error) {
 	var s State
-	b, err := os.ReadFile(filepath.Join(p.Versions, stateFile))
+	b, err := os.ReadFile(filepath.Join(p.Versions, p.stateName()))
 	if err != nil {
 		return s, err
 	}
@@ -550,4 +553,12 @@ func UpgradeAbort(p Paths) error {
 	}
 	st.Phase = "aborted"
 	return p.saveState(st)
+}
+
+// stateName 返回本实例的升级状态文件名：默认实例沿用 state.json（与已部署节点兼容），具名实例为 state-<实例>.json。
+func (p Paths) stateName() string {
+	if p.Instance == "" {
+		return stateFile
+	}
+	return "state-" + p.Instance + ".json"
 }
