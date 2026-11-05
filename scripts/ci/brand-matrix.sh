@@ -33,11 +33,11 @@ for c in cmd/*/; do
   echo "  $c OK"
 done
 
-echo "== 3/3 节点发布包（替身数据面）"
+echo "== 3/3 节点发布包与 user 模式节点包（替身数据面）"
 mkdir -p "$W/dp/opt/$ID/sbin" "$W/out"
 printf '#!/bin/sh\necho "%s version: %s/0.0.0"\n' "$PROC" "$PROC" > "$W/dp/opt/$ID/sbin/$ID"
 chmod +x "$W/dp/opt/$ID/sbin/$ID"
 tar -C "$W/dp" -czf "$W/dp.tgz" opt
 printf 'BRAND_ID=%s\nBRAND_PROC=%s\nBRAND_PRODUCT="%s Gateway"\n' "$ID" "$PROC" "$PROC" > "$W/brand.env"
-BRAND_ENV="$W/brand.env" OUT="$W/out" scripts/release/package.sh node amd64 "$W/dp.tgz"
+for t in node node-user; do BRAND_ENV="$W/brand.env" OUT="$W/out" scripts/release/package.sh "$t" amd64 "$W/dp.tgz"; done
 echo "brand-matrix OK ($ID / $PROC)"

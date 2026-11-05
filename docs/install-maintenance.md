@@ -316,6 +316,46 @@ sudo systemctl enable --now syapp
 
 手工组装容易出现用户、权限、systemd 和默认配置不一致，生产环境应优先使用完整节点包或 RPM/DEB。
 
+### 4.5 user 模式：不使用 root 安装
+
+没有 root 权限的服务器使用 user 模式节点包 `edgetraffic-os-node-user-<版本>-linux-<架构>.tar.gz`。所有文件都在一个由当前用户拥有的安装根目录下，不写 `/etc`、`/usr`、`/opt`，也不需要 sudo。设计见 `docs/design/0001-deploy-layout.md` 第 6 节。
+
+```bash
+tar -xzf edgetraffic-os-node-user-<版本>-linux-<架构>.tar.gz
+cd edgetraffic-os-node-user-<版本>-linux-<架构>
+./install-user.sh $HOME/syapp --http 8080 --https 8443 --status 8081 \
+  --console <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>   # 注册参数可省略，稍后再注册
+```
+
+安装后的目录：
+
+| 路径 | 内容 |
+| --- | --- |
+| `R/bin/` | `syapp-agent`、`syapp-wrapper`、`syapp-instance` |
+| `R/sbin/syapp`、`R/modules/` | 数据面与动态模块 |
+| `R/conf/`、`R/logs/`、`R/cache/`、`R/run/`、`R/agent/` | 默认实例的配置、日志、缓存、PID 与 agent 状态 |
+| `R/instances/<实例>/` | 具名实例（目录结构同上） |
+
+**进程守护**：本机有可用的 `systemd --user` 时，安装程序在 `~/.config/systemd/user/` 写入 `syapp.service`、`syapp-agent.service`（具名实例为 `syapp-<实例>.service` 等）并启用；要开机不登录也启动，还需执行 `loginctl enable-linger`（部分发行版需要管理员授权）。没有 `systemd --user` 时，安装程序会打印两行 crontab，加入 `crontab -e` 即可：每分钟执行一次 `syapp-instance --root R ensure`，只拉起未运行的进程，不会重启正在运行的数据面。
+
+**日常管理**（命令都要带 `--root R`）：
+
+```bash
+R=$HOME/syapp
+$R/bin/syapp-instance --root $R list
+$R/bin/syapp-instance --root $R add blue --http 18080 --https 18443 --status 18081
+$R/bin/syapp-instance --root $R remove blue --yes      # 日志移到 R/removed-logs/，加 --purge 一并删除
+$R/bin/syapp-wrapper reload                            # 平滑重载默认实例；具名实例加 --instance blue
+```
+
+**与 system 模式的差别**：
+
+- 只能监听 1024 及以上的端口，80/443 请由前置负载均衡或防火墙端口转发进来；控制台的节点组实例档案也要使用这些端口，模式选择 user。
+- agent 直接调用 `R/bin/syapp-wrapper`（不经过 sudo），wrapper 仍校验参数与升级包签名；wrapper 发现自己以 root 运行时拒绝执行。
+- 不配置本机防火墙，不使用系统 logrotate：agent 每 5 分钟检查一次，按天或超过 256 MiB 轮转 `R/logs` 下的日志并 reopen，保留 14 份（gzip 压缩）。
+- agent 与数据面 worker 是同一个用户，隔离性弱于 system 模式。面向互联网的生产节点仍推荐 system 模式。
+- 卸载：先逐个 `remove` 具名实例，停止默认实例（`$R/bin/syapp-wrapper quit`）与 agent，删除 systemd 用户单元或 crontab 行，再删除整个 `R`。
+
 ## 5. 安装控制台
 
 ### 5.1 控制台二进制包

@@ -50,6 +50,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	instance := fs.String("instance", envOr(brand.Env("INSTANCE"), ""), "托管的实例名（同机多实例；默认实例留空），路径与端口由实例档案决定")
+	root := fs.String("root", envOr(brand.Env("ROOT"), ""), "user 模式的安装根目录（普通用户安装，不需要 root；留空为 system 模式）")
 	server := fs.String("server", envOr(brand.Env("CONSOLE"), ""), "控制台 gRPC 地址 host:port")
 	stateDir := fs.String("state-dir", "", "身份与状态目录（默认按实例计算）")
 	confRoot := fs.String("conf-root", "", "数据面配置根目录（默认按实例计算）")
@@ -60,9 +61,13 @@ func main() {
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	prof, lay, err := loadInstance(*instance)
+	prof, lay, err := loadInstanceAt(*root, *instance)
 	if err != nil {
 		fatal(log, cmd, err)
+	}
+	userMode := *root != ""
+	if userMode && os.Geteuid() == 0 {
+		fatal(log, cmd, fmt.Errorf("user-mode agent (-root) must not run as root"))
 	}
 	if *stateDir == "" {
 		*stateDir = lay.AgentState()
@@ -72,6 +77,9 @@ func main() {
 	}
 	if *wrapper == "" {
 		*wrapper = "sudo -n " + lay.WrapperBin()
+		if userMode {
+			*wrapper = lay.WrapperBin() // 与数据面同一用户：直接调用，校验与验签规则不变
+		}
 		if lay.Instance() != "" {
 			*wrapper += " --instance " + lay.Instance()
 		}
@@ -130,6 +138,9 @@ func main() {
 		if cfg.Server == "" {
 			cfg.Server = serverFromState(*stateDir)
 			a = conn.New(cfg, log)
+		}
+		if userMode {
+			go rotateLogs(ctx, log, lay, strings.Fields(*wrapper))
 		}
 		if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 			fatal(log, "run", err)

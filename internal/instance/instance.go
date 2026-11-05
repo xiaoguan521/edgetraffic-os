@@ -28,6 +28,12 @@ type Env struct {
 	Run       func(name string, args ...string) error // 执行外部命令（参数切片，不经过 shell）
 	Out       io.Writer                               // 面向运维人员的输出
 	Listening func() (map[string]bool, error)         // 本机正在监听的端口（"tcp/80"、"udp/53"）
+
+	// 以下只用于 user 模式（普通用户安装，设计 0001 第 6 节，见 usermode.go）
+	UserRoot    string                                                    // 安装根目录；非空即为 user 模式
+	Home        string                                                    // 当前用户的主目录（写 systemd --user 单元）
+	UserSystemd func() bool                                               // systemd --user 是否可用
+	Spawn       func(pidFile, logFile, name string, args ...string) error // 在后台启动进程（脱离终端）并写 pid 文件
 }
 
 func (e Env) path(p string) string { return filepath.Join(e.Root, filepath.FromSlash(p)) }
@@ -58,6 +64,9 @@ var (
 
 // Add 创建并启动一个具名实例。
 func (e Env) Add(o AddOptions) error {
+	if e.user() {
+		return e.addUser(o)
+	}
 	p := o.Profile
 	if p.Instance == "" {
 		return errors.New("add 只用于具名实例；默认实例由安装包创建")
@@ -185,6 +194,9 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 
 // Remove 删除一个具名实例。yes 为 false 时只打印将执行的操作。
 func (e Env) Remove(name string, purge, yes bool) error {
+	if e.user() {
+		return e.removeUser(name, purge, yes)
+	}
 	if name == "" || !layout.ValidInstance(name) {
 		return errors.New("remove 只用于具名实例，且实例名必须合法；默认实例随安装包卸载")
 	}
@@ -238,9 +250,23 @@ func removeInstanceDir(dir, name string) error {
 // installed 返回本机已安装的实例（默认实例在前，其余按名称排序）。
 func (e Env) installed() ([]Info, error) {
 	var out []Info
-	def := layout.System("")
-	if _, err := os.Stat(e.path(def.ConfRoot())); err == nil {
-		out = append(out, Info{Name: "", Profile: render.Profile{}})
+	def := e.lay("")
+	marker := def.ConfRoot() // system 模式：默认实例随安装包创建；user 模式：默认实例也有档案
+	if e.user() {
+		marker = def.InstanceFile()
+	}
+	if _, err := os.Stat(e.path(marker)); err == nil {
+		var p render.Profile // system 模式的默认实例没有档案，端口为默认值
+		if e.user() {
+			b, err := os.ReadFile(e.path(def.InstanceFile()))
+			if err != nil {
+				return nil, err
+			}
+			if err := json.Unmarshal(b, &p); err != nil {
+				return nil, fmt.Errorf("%s: %w", def.InstanceFile(), err)
+			}
+		}
+		out = append(out, Info{Name: "", Profile: p})
 	}
 	entries, err := os.ReadDir(e.path(def.InstancesDir()))
 	if err != nil && !os.IsNotExist(err) {
@@ -251,7 +277,7 @@ func (e Env) installed() ([]Info, error) {
 		if !de.IsDir() || !layout.ValidInstance(name) || name == "" {
 			continue
 		}
-		b, err := os.ReadFile(e.path(layout.System(name).InstanceFile()))
+		b, err := os.ReadFile(e.path(e.lay(name).InstanceFile()))
 		if err != nil {
 			continue // 半途失败的 add：check 会报告
 		}
@@ -272,7 +298,7 @@ func (e Env) List() ([]Info, error) {
 		return nil, err
 	}
 	for i := range list {
-		l := layout.System(list[i].Name)
+		l := e.lay(list[i].Name)
 		b, err := os.ReadFile(e.path(l.PidFile()))
 		if err != nil {
 			continue
@@ -299,27 +325,30 @@ func (e Env) Check() []string {
 		if in.Name == "" {
 			continue
 		}
-		l := layout.System(in.Name)
+		l := e.lay(in.Name)
 		if in.Profile.Instance != in.Name {
 			probs = append(probs, fmt.Sprintf("实例 %s 的 %s 写的是 %q", in.Name, layout.InstanceFile, in.Profile.Instance))
 		}
 		if err := in.Profile.Validate(); err != nil {
 			probs = append(probs, fmt.Sprintf("实例 %s 的档案不合法：%v", in.Name, err))
 		}
-		for _, f := range []struct{ path, what string }{
-			{l.SudoersFile(), "sudoers"},
+		need := []struct{ path, what string }{
 			{l.CurrentConf(), "当前配置"},
 			{l.AgentState(), "agent 状态目录"},
-		} {
+		}
+		if !e.user() {
+			need = append(need, struct{ path, what string }{l.SudoersFile(), "sudoers"})
+		}
+		for _, f := range need {
 			if _, err := os.Stat(e.path(f.path)); err != nil {
 				probs = append(probs, fmt.Sprintf("实例 %s 缺少 %s（%s）", in.Name, f.what, f.path))
 			}
 		}
 	}
 	// 半途失败的 add：有目录但没有档案
-	entries, _ := os.ReadDir(e.path(layout.System("").InstancesDir()))
+	entries, _ := os.ReadDir(e.path(e.lay("").InstancesDir()))
 	for _, de := range entries {
-		if _, err := os.Stat(e.path(layout.System("").InstancesDir() + "/" + de.Name() + "/" + layout.InstanceFile)); err != nil {
+		if _, err := os.Stat(e.path(e.lay("").InstancesDir() + "/" + de.Name() + "/" + layout.InstanceFile)); err != nil {
 			probs = append(probs, fmt.Sprintf("目录 %s 没有 %s（未完整创建的实例，可执行 remove 清理）", de.Name(), layout.InstanceFile))
 		}
 	}
@@ -439,9 +468,11 @@ func (e Env) ReopenAll() error {
 	}
 	var first error
 	for _, in := range list {
-		l := layout.System(in.Name)
+		l := e.lay(in.Name)
 		args := []string{"-s", "reopen"}
-		if in.Name != "" {
+		if e.user() {
+			args = []string{"-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}
+		} else if in.Name != "" {
 			args = []string{"-c", l.CurrentConf(), "-s", "reopen"}
 		}
 		if err := e.Run(l.Bin(), args...); err != nil && first == nil {

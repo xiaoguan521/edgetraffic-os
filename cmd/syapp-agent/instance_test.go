@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,5 +41,33 @@ func TestBaselineForInstance(t *testing.T) {
 	main := string(b.Files["syapp.conf"])
 	if !strings.Contains(main, "/run/syapp-blue/syapp.pid") || strings.Contains(main, "/run/syapp/syapp.pid") {
 		t.Fatalf("baseline not using the instance profile:\n%s", main)
+	}
+}
+
+// user 模式：默认实例与具名实例都从安装根目录下的档案读取；根目录必须一致、模式必须是 user。
+func TestLoadInstanceUserMode(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "edge")
+	write := func(dir, body string) {
+		t.Helper()
+		_ = os.MkdirAll(dir, 0o755)
+		if err := os.WriteFile(filepath.Join(dir, "instance.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := loadInstanceAt(root, ""); err == nil {
+		t.Fatal("user mode without instance.json accepted")
+	}
+	write(root, `{"mode":"user","root":"`+root+`","http_port":8080,"https_port":8443,"status_port":8082}`)
+	p, lay, err := loadInstanceAt(root, "")
+	if err != nil || p.HTTP() != 8080 || lay.PidFile() != root+"/run/syapp.pid" || lay.WrapperBin() != root+"/bin/syapp-wrapper" {
+		t.Fatalf("user default: %+v %s %v", p, lay.PidFile(), err)
+	}
+	write(filepath.Join(root, "instances", "blue"), `{"instance":"blue","mode":"user","root":"/elsewhere","http_port":18080,"https_port":18443,"status_port":8083}`)
+	if _, _, err := loadInstanceAt(root, "blue"); err == nil || !strings.Contains(err.Error(), "install root") {
+		t.Fatalf("root mismatch: %v", err)
+	}
+	write(filepath.Join(root, "instances", "red"), `{"instance":"red","http_port":18080,"https_port":18443,"status_port":8083}`)
+	if _, _, err := loadInstanceAt(root, "red"); err == nil || !strings.Contains(err.Error(), "system-mode") {
+		t.Fatalf("system instance under a user root: %v", err)
 	}
 }

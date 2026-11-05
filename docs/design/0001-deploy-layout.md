@@ -263,11 +263,11 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 | **A. user 模式**（本需求的主方案） | 不需要 | 没有 | 客户只给普通账号的服务器 |
 | B. system 模式降权运行（可选） | 只在装包时需要一次 | 没有：master 以 `B` 用户运行，由 systemd 的 `AmbientCapabilities=CAP_NET_BIND_SERVICE` 授予绑定 80/443 的能力 | 有管理员可以一次性装包，但要求运行时不出现 root 进程 |
 
-方式 B 只是 system 模式的一个开关，实现成本低，可以放在 P11-C 末尾一并完成。下面主要描述方式 A。
+方式 B 只是 system 模式的一个开关，P11-C 只实现方式 A；方式 B 推迟到有客户需要时再做（要点：`B.service` 以 `User=B` 运行并授予 `CAP_NET_BIND_SERVICE`，pid / 日志 / 缓存目录改归 `B` 用户，wrapper 仍经 sudo 调用但改以 `B` 身份发信号）。下面主要描述方式 A。
 
 ### 6.2 user 模式的安装与运行
 
-- 安装：使用免安装包 `B-node-<版本>-<架构>.tar.gz`，执行 `./install.sh --user --root ~/syedge`，全程不需要 sudo。
+- 安装：使用免安装包 `<前缀>-node-user-<版本>-linux-<架构>.tar.gz`，执行 `./install-user.sh ~/syedge --http 8080 --https 8443 --status 8081`，全程不需要 sudo。它把程序复制到 `R/bin`、`R/sbin`、`R/modules`，再执行 `R/bin/B-instance --root R init …` 创建默认实例。之后所有 `B-instance` 命令都带 `--root R`（带 `--root` 时拒绝以 root 运行；不带时仍要求 root）。
 - 端口：普通用户只能监听 1024 及以上的端口（除非管理员调低了 `net.ipv4.ip_unprivileged_port_start`）。`B-instance add` 在安装时检查这一点；控制台对 user 模式的节点组禁止设置小于 1024 的端口。80/443 通常由前置的负载均衡转发进来。
 - 数据面以安装用户身份运行。模板不输出 `user` 指令（非 root 的 master 会忽略该指令并打印警告）。`worker_rlimit_nofile` 取自档案，`B-instance add` 读取当前用户的硬限制作为上限。
 - agent 与数据面使用同一个用户，**直接调用 wrapper，不经过 sudo**。wrapper 仍然执行同样的参数校验和升级包验签，相当于没有提权的场景下仍保留“受控入口”，控制台被攻破时也无法让节点执行任意命令或安装未签名的二进制。在 user 模式下，wrapper 如果发现自己以 root 身份运行，会拒绝执行，避免两种模式混用。
@@ -275,8 +275,8 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 
 ### 6.3 开机自启与守护
 
-1. 首选 `systemd --user`：`B-instance add` 在 `~/.config/systemd/user/` 下写入 `B@.service` 和 `B-agent@.service`。要做到开机不登录就启动，还需要开启 linger（`loginctl enable-linger`）。很多发行版允许普通用户为自己开启 linger，但也有的需要管理员授权，所以安装程序会检测并提示。
-2. 如果没有 `systemd --user` 或无法开启 linger，则使用 cron 兜底：写入 `@reboot B-instance ensure`，并每分钟执行一次 `B-instance ensure`。`ensure` 只启动未运行的进程，绝不重启正在运行的数据面。
+1. 首选 `systemd --user`：`B-instance add` 在 `~/.config/systemd/user/` 下为每个实例写入 `B[-I].service` 和 `B-agent[-I].service`（不用模板单元，因为一个用户可以有多个安装根目录）。要做到开机不登录就启动，还需要开启 linger（`loginctl enable-linger`）。很多发行版允许普通用户为自己开启 linger，但也有的需要管理员授权，所以安装程序会检测并提示。
+2. 如果没有 `systemd --user` 或无法开启 linger，则使用 cron 兜底：写入 `@reboot B-instance ensure`，并每分钟执行一次 `B-instance ensure`。`ensure` 只启动未运行的进程，绝不重启正在运行的数据面。判断进程是否在运行时核对 `/proc/<pid>/exe`，重启后被复用的 pid 不会被当成数据面，也不会收到信号。
 
 ### 6.4 user 模式下不可用或替代的功能
 
