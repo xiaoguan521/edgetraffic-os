@@ -34,8 +34,13 @@ func TestStaticBundle(t *testing.T) {
 	if sb.Files != 2 {
 		t.Fatalf("files = %d", sb.Files)
 	}
-	if _, err := d.ImportStatic(g.ID, "evil", zipOf(t, map[string]string{"../../etc/passwd": "x", "a;b": "y"}), "alice", ""); err == nil {
-		t.Fatal("bad paths accepted")
+	for _, name := range []string{"../../etc/passwd", "/etc/passwd", `..\etc\passwd`, `C:\evil.conf`} {
+		if _, err := d.ImportStatic(g.ID, "evil", zipOf(t, map[string]string{"index.html": "ok", name: "x"}), "alice", ""); err == nil {
+			t.Fatalf("bad path accepted: %q", name)
+		}
+	}
+	if _, err := d.ImportStatic(g.ID, "no-index", zipOf(t, map[string]string{"dist/js/app.js": "1"}), "alice", ""); err == nil {
+		t.Fatal("bundle without root index.html accepted")
 	}
 	spec, _ := json.Marshal(render.Site{Name: "web", Domains: []string{"web.example.com"},
 		Routes: []render.Route{{Path: "/", Match: "prefix", Mode: "static", Static: &render.StaticSpec{BundleID: sb.ID}}}})

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path"
 	"sort"
 	"strings"
@@ -25,11 +26,30 @@ import (
 
 const maxStaticUpload = 64 << 20
 
+func validateStaticArchiveEntry(name string) error {
+	name = strings.ReplaceAll(name, "\\", "/")
+	driveAbsolute := len(name) >= 2 && name[1] == ':' &&
+		((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z'))
+	if name == "" || strings.HasPrefix(name, "/") || driveAbsolute {
+		return fmt.Errorf("资源包包含绝对路径 %q", name)
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == ".." {
+			return fmt.Errorf("资源包包含越界路径 %q", name)
+		}
+	}
+	return nil
+}
+
 // extractStatic 读取 tar.gz / zip，返回规范化的文件表（去掉单一顶层目录、跳过目录与链接、校验路径与大小）。
 func extractStatic(data []byte) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	total := 0
 	add := func(name string, r io.Reader, size int64) error {
+		if err := validateStaticArchiveEntry(name); err != nil {
+			return err
+		}
+		name = strings.ReplaceAll(name, "\\", "/")
 		name = strings.TrimPrefix(path.Clean("/"+name), "/")
 		if strings.HasPrefix(path.Base(name), ".") || name == "" {
 			return nil // 隐藏文件（.git、.DS_Store 等）不发布
@@ -68,6 +88,9 @@ func extractStatic(data []byte) (map[string][]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+			if h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink {
+				return nil, fmt.Errorf("资源包包含符号链接或硬链接 %q，请打包实际文件", h.Name)
+			}
 			if h.Typeflag != tar.TypeReg {
 				continue
 			}
@@ -81,6 +104,9 @@ func extractStatic(data []byte) (map[string][]byte, error) {
 			return nil, err
 		}
 		for _, f := range zr.File {
+			if f.Mode()&fs.ModeSymlink != 0 {
+				return nil, fmt.Errorf("资源包包含符号链接 %q，请打包实际文件", f.Name)
+			}
 			if f.FileInfo().IsDir() || !f.Mode().IsRegular() {
 				continue
 			}
@@ -115,6 +141,9 @@ func extractStatic(data []byte) (map[string][]byte, error) {
 				files = out
 			}
 		}
+	}
+	if _, ok := files["index.html"]; !ok {
+		return nil, errors.New("资源包必须包含根目录 index.html")
 	}
 	return files, nil
 }
