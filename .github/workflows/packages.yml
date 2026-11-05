@@ -1,15 +1,9 @@
 # 软件包校验（不发布）：静态构建 syapp → 生成 RPM / DEB → 在发行版容器中并行安装冒烟。
-# 改动数据面构建、软件包定义或发布脚本的 PR 自动运行，使用代表性子集（CentOS 7、Rocky 9、Ubuntu 24.04 与两个独立模式场景）；
+# 仅手动触发，可选择代表性子集（CentOS 7、Rocky 9、Ubuntu 24.04 与两个独立模式场景）或全量场景；
 # 合并到 main 与正式发布由 release.yml 运行完整的 9 个发行版，并且总是重新构建 syapp（不使用缓存）。
 name: packages
 
 on:
-  pull_request:
-    paths:
-      - "dataplane/**"
-      - "deploy/**"
-      - "scripts/release/**"
-      - ".github/workflows/packages.yml"
   workflow_dispatch:
     inputs:
       smoke_set:

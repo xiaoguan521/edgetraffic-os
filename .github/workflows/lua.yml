@@ -1,17 +1,8 @@
 name: lua
 
 # P10 验收：syapp-lua 附加包 × 标准版 / 国密版基础包 × amd64 / arm64。
-# 只在数据面、渲染器、wrapper 或验收脚本变化时运行（p10/** 分支用于开发迭代，不触发其他工作流）。
+# 仅通过 GitHub Actions 的 Run workflow 手动触发。
 on:
-  push:
-    branches: [main, "p10/**"]
-    paths:
-      - "dataplane/**"
-      - "internal/render/**"
-      - "internal/wrapper/**"
-      - "scripts/ci/lua-acceptance.sh"
-      - "scripts/ci/jwtgen.py"
-      - ".github/workflows/lua.yml"
   workflow_dispatch:
 
 permissions:

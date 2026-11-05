@@ -25,3 +25,7 @@ web/portal/dist/*
 # 演示环境：签名私钥与签发产物，绝不提交
 demo/keys/
 demo/out/
+
+# 本地测试运行产物：保留目录结构，不提交具体运行记录
+/docs/test-runs/*
+!/docs/test-runs/.gitkeep

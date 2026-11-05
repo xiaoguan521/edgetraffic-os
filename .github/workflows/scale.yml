@@ -1,21 +1,9 @@
 # 50 节点规模验收（规格书 12.1 集成与压测、12.6 统一升级）：真实控制台 + 50 个真实节点容器。
 #   50 节点并行发布 < 60 秒；控制台宕机 30 分钟业务无影响；分 3 批热升级与回退各 < 10 分钟，压测中 0 失败、长连接不断。
-# 约 1 小时，只在发布编排、agent、wrapper 或本测试变化时运行，也可手动触发（可调小宕机时长试跑）。
+# 约 1 小时，仅手动触发（可调小宕机时长试跑）。
 name: scale
 
 on:
-  push:
-    branches: [main, "scale/**"]
-    paths:
-      - "internal/console/deploy/**"
-      - "internal/console/gateway/**"
-      - "internal/agent/**"
-      - "internal/wrapper/**"
-      - "demo/Dockerfile.*"
-      - "demo/node/**"
-      - "scripts/ci/scale-50.sh"
-      - "cmd/etos-loadgen/**"
-      - ".github/workflows/scale.yml"
   workflow_dispatch:
     inputs:
       down_minutes:

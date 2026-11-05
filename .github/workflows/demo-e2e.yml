@@ -2,9 +2,6 @@
 name: demo-e2e
 
 on:
-  push:
-    branches: [main, mvp]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -24,6 +21,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - name: ephemeral license key (CI only)
         run: |
           go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
@@ -45,6 +45,10 @@ jobs:
           LIC_KEY: /tmp/keys/etos-ci-ephemeral.key
           LIC_KID: etos-ci-ephemeral
         run: ./e2e.sh
+      - name: install browser test dependencies
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix /tmp/pw playwright@1.63.0 >/dev/null
+          /tmp/pw/node_modules/.bin/playwright install --with-deps chromium >/dev/null
       - name: UI acceptance (Playwright：角色矩阵、未授权置灰、发布进度实时刷新)
         # 规格书 12.1 P5；playwright（Apache-2.0）只在测试中安装，不进入产品构建
         if: matrix.db == 'sqlite'
@@ -55,9 +59,26 @@ jobs:
           LIC_KID: etos-ci-ephemeral
           NO_PROXY: "*"
         run: |
-          npm install --no-save --no-audit --no-fund --prefix /tmp/pw playwright@1.63.0 >/dev/null
-          /tmp/pw/node_modules/.bin/playwright install --with-deps chromium >/dev/null
           NODE_PATH=/tmp/pw/node_modules node web/e2e/ui-acceptance.cjs
+      - name: import acceptance (browser, permissions, approval, real nodes)
+        env:
+          BASE: http://127.0.0.1:8443
+          LIC_TOOL: /tmp/lic
+          LIC_KEY: /tmp/keys/etos-ci-ephemeral.key
+          LIC_KID: etos-ci-ephemeral
+          NODE_PATH: /tmp/pw/node_modules
+          NO_PROXY: "*"
+          IMPORT_E2E_LIVE: "1"
+          IMPORT_REPORT_DIR: dist/test-reports/import-ui-${{ matrix.db }}
+        run: make test-import-ui
+      - name: upload import acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-acceptance-${{ matrix.db }}
+          path: dist/test-reports/import-ui-${{ matrix.db }}/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
       - name: logs on failure
         if: failure()
         working-directory: demo
