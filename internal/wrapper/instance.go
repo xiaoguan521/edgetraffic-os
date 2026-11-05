@@ -23,8 +23,22 @@ func CheckInstance(instance string) error {
 	return checkInstanceAt(layout.System(instance).Prefix(), instance, 0)
 }
 
+// CheckInstanceUser 是 user 模式下的检查（设计 0001 第 6.2 节）：实例档案属于当前用户、他人不可写，
+// 为 user 模式且根目录与 wrapper 所在的根目录一致。默认实例也必须有档案（端口来自它）。
+func CheckInstanceUser(root, instance string, uid int) error {
+	l, err := layout.User(root, instance)
+	if err != nil {
+		return err
+	}
+	return checkAt(l.Prefix(), instance, uid, string(layout.ModeUser), root)
+}
+
 // checkInstanceAt 是 CheckInstance 的实现；owner 为要求的属主 uid（生产固定为 0，测试使用当前用户）。
 func checkInstanceAt(prefix, instance string, owner int) error {
+	return checkAt(prefix, instance, owner, string(layout.ModeSystem), "")
+}
+
+func checkAt(prefix, instance string, owner int, mode, root string) error {
 	if err := ownedNotShared(prefix, owner, true); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("instance %s is not installed", instance)
@@ -46,6 +60,7 @@ func checkInstanceAt(prefix, instance string, owner int) error {
 	var p struct {
 		Instance string `json:"instance"`
 		Mode     string `json:"mode"`
+		Root     string `json:"root"`
 	}
 	if err := json.Unmarshal(b, &p); err != nil {
 		return fmt.Errorf("%s: %w", InstanceFile, err)
@@ -53,8 +68,15 @@ func checkInstanceAt(prefix, instance string, owner int) error {
 	if p.Instance != instance {
 		return fmt.Errorf("%s names instance %q, which does not match %q", InstanceFile, p.Instance, instance)
 	}
-	if p.Mode != "" && p.Mode != string(layout.ModeSystem) {
-		return fmt.Errorf("instance %s is a %s-mode install; this wrapper only manages system-mode instances", instance, p.Mode)
+	got := p.Mode
+	if got == "" {
+		got = string(layout.ModeSystem)
+	}
+	if got != mode {
+		return fmt.Errorf("instance %s is a %s-mode install; this wrapper manages %s-mode instances", instance, got, mode)
+	}
+	if mode == string(layout.ModeUser) && p.Root != root {
+		return fmt.Errorf("%s names install root %q, but this wrapper belongs to %q", InstanceFile, p.Root, root)
 	}
 	return nil
 }

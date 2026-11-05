@@ -49,6 +49,8 @@ type Paths struct {
 	// Instance 是本次升级的实例（空串为默认实例）。升级状态按实例分别保存在 root 所有的 Versions 下：
 	// 二进制同机共用，但每个实例的 master 各自经历 start / commit / abort（设计 0001 第 5.6 节）。
 	Instance string
+	// ErrorLog 非空时（user 模式）作为 -e 传给数据面，使启动早期的日志写到实例目录而不是编译期的 /var/log。
+	ErrorLog string
 }
 
 // DefaultPaths 是生产环境的路径。
@@ -56,11 +58,28 @@ func DefaultPaths() Paths {
 	return DefaultPathsForInstance("")
 }
 
-// DefaultPathsForInstance 返回指定实例（空串表示默认单实例）的热升级路径。
+// DefaultPathsForInstance 返回 system 模式下指定实例（空串表示默认单实例）的热升级路径。
 func DefaultPathsForInstance(instance string) Paths {
-	l := layout.System(instance)
-	return Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
+	return pathsFor(layout.System(instance))
+}
+
+// DefaultPathsAt 返回热升级路径：root 为空时为 system 模式，否则为 user 模式的安装根目录。
+func DefaultPathsAt(root, instance string) (Paths, error) {
+	l, err := layoutAt(root, instance)
+	if err != nil {
+		return Paths{}, err
+	}
+	return pathsFor(l), nil
+}
+
+func pathsFor(l layout.Layout) Paths {
+	instance := l.Instance()
+	p := Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
 		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second, Instance: instance}
+	if l.Mode() == layout.ModeUser {
+		p.ErrorLog = l.ErrorLog()
+	}
+	return p
 }
 
 const (
@@ -418,7 +437,11 @@ func UpgradeStart(p Paths, ver string) error {
 			_ = p.swapLua(prevLua)
 		}
 	}
-	if out, err := exec.Command(newBin, "-t", "-q", "-c", p.Conf).CombinedOutput(); err != nil {
+	args := []string{"-t", "-q", "-c", p.Conf}
+	if p.ErrorLog != "" {
+		args = []string{"-t", "-q", "-e", p.ErrorLog, "-c", p.Conf} // user 模式：启动早期日志写到实例目录
+	}
+	if out, err := exec.Command(newBin, args...).CombinedOutput(); err != nil {
 		restoreLua()
 		return fail("new binary rejects the current configuration: %s", strings.TrimSpace(string(out)))
 	}

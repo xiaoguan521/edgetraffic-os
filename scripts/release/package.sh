@@ -9,6 +9,10 @@
 #       节点包（仅 Linux）：syapp 数据面 + syapp-agent + syapp-wrapper + systemd 单元 + install.sh
 #       产物 edgetraffic-os-node-<ver>-linux-<goarch>.tar.gz
 #
+#   scripts/release/package.sh node-user <goarch> <syapp tarball>
+#       user 模式节点包（不需要 root，设计 0001 第 6 节）：bin/ + sbin/ + modules/ + install-user.sh
+#       产物 edgetraffic-os-node-user-<ver>-linux-<goarch>.tar.gz
+#
 #   scripts/release/package.sh pkg <goarch> <syapp tarball>
 #       RPM / DEB 软件包（需要 nfpm）：syapp、syapp-agent、syapp-console（控制台须先构建 web/dist）
 #
@@ -200,6 +204,24 @@ case "${1:-}" in
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
     echo "$OUT/$name.tar.gz"
     ;;
+  node-user)
+    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    name="$SLUG-node-user-$VERSION-linux-$arch"
+    d="$WORK/$name"; x="$WORK/node-user-src"
+    mkdir -p "$d/bin" "$d/sbin" "$d/modules" "$x"
+    tar -C "$x" -xzf "$syapp_tgz"
+    [[ -x "$x/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    cp -p "$x/opt/$B/sbin/$B" "$d/sbin/$B"
+    if compgen -G "$x/opt/$B/modules/*" >/dev/null; then cp -p "$x/opt/$B/modules/"* "$d/modules/"; fi
+    gobuild linux "$arch" "$d/bin" ./cmd/syapp-agent ./cmd/syapp-wrapper ./cmd/syapp-instance
+    cp deploy/node/install-user.sh "$d/install-user.sh"
+    cp docs/NOTICE "$d/NOTICE"
+    cp scripts/release/README-node-user.txt "$d/README.txt"
+    chmod 0755 "$d/install-user.sh"
+    rebrand "$d"; brand_scan "$d"
+    tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
+    echo "$OUT/$name.tar.gz"
+    ;;
   pkg)
     arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
     command -v nfpm >/dev/null || { echo "需要 nfpm：go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0" >&2; exit 2; }
@@ -250,5 +272,5 @@ case "${1:-}" in
     echo "$OUT/backend-linux-$arch/demo-backend"
     ;;
   *)
-    sed -n '2,19p' "$0"; exit 2 ;;
+    sed -n '2,23p' "$0"; exit 2 ;;
 esac
