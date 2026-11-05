@@ -114,6 +114,10 @@ http {
         location = {{ .P.StatusPath }} {
             stub_status;
         }
+        location = {{ .P.VersionPath }} {
+            default_type  text/plain;
+            return  200  "{{ .P.VersionVar }}\n";
+        }
         location / {
             return 404;
         }

@@ -187,6 +187,15 @@ func (l Layout) AgentBin() string {
 // StatusPath 返回本机状态页的路径（渲染器与 agent 必须一致）。
 func StatusPath() string { return "/__" + brand.ID() + "_status" }
 
+// VersionPath 返回本机状态服务上报运行版本的路径：由 worker 返回编译时的版本号，
+// 即本实例实际运行的二进制版本（同机多实例共用软链时可能与软链指向的版本不同，设计 0001 第 5.6 节）。
+func VersionPath() string { return "/__" + brand.ID() + "_version" }
+
+// VersionURL 返回本机运行版本的地址。
+func (l Layout) VersionURL(port int) string {
+	return "http://127.0.0.1:" + strconv.Itoa(port) + VersionPath()
+}
+
 // StatusURL 返回本机状态页地址。
 func (l Layout) StatusURL(port int) string {
 	return "http://127.0.0.1:" + strconv.Itoa(port) + StatusPath()

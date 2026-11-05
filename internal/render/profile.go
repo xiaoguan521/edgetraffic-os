@@ -138,6 +138,8 @@ type profileView struct {
 	HTTPS       int
 	Status      int
 	StatusPath  string
+	VersionPath string // 运行版本（worker 返回 $<品牌>_version）
+	VersionVar  string
 	SitesDir    string // 当前版本静态站点目录（带结尾斜杠）
 	ReleasesDir string // 版本目录的父目录（带结尾斜杠）
 	ModulesDir  string // load_module 的路径前缀：system 模式相对编译期前缀（modules/），user 模式为绝对路径
@@ -155,6 +157,7 @@ func (p Profile) view() profileView {
 		PidFile: l.PidFile(), ErrorLog: l.ErrorLog(), AccessLog: l.AccessLog(), StreamLog: l.LogDir() + "/stream.log",
 		CustomTemp: l.CacheDir() != layout.System("").CacheDir(), TempDir: l.CacheDir(),
 		HTTP: p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
+		VersionPath: layout.VersionPath(), VersionVar: "$" + brand.ID() + "_version",
 		SitesDir: l.ConfRoot() + "/current/sites/", ReleasesDir: p.ReleasesDir(),
 		ModulesDir: mods, LuaDir: l.Modules() + "/lua",
 	}

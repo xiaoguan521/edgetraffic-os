@@ -32,6 +32,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610310001_gm_tls", Migrate: migrateGMTLS},
 		{ID: "202610310002_rules_lua", Migrate: migrateRulesLua},
 		{ID: "202611050001_instance_profile", Migrate: migrateInstanceProfile},
+		{ID: "202611050002_running_version", Migrate: migrateRunningVersion},
 	}
 }
 
@@ -569,6 +570,15 @@ func migrateInstanceProfile(tx *gorm.DB) error {
 	}
 	if err := tx.AutoMigrate(&NodeGroup{}); err != nil {
 		return err
+	}
+	return tx.AutoMigrate(&Node{})
+}
+
+// ---- 202611050002_running_version：实例实际运行的数据面版本（设计 0001 第 5.6 节）----
+
+func migrateRunningVersion(tx *gorm.DB) error {
+	type Node struct {
+		RunningVersion string `gorm:"size:32"`
 	}
 	return tx.AutoMigrate(&Node{})
 }

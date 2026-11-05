@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,26 @@ func ReadStub(ctx context.Context, url string) (Stub, error) {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return ParseStub(string(b))
+}
+
+var runningVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ReadVersion 读取本实例 worker 实际运行的数据面版本（状态服务的版本路径，见 layout.VersionPath）。
+// 旧配置没有该路径时返回错误，调用方上报空串。
+func ReadVersion(ctx context.Context, url string) (string, error) {
+	cl := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := cl.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+	v := strings.TrimSpace(string(b))
+	if resp.StatusCode != http.StatusOK || !runningVersionRe.MatchString(v) {
+		return "", fmt.Errorf("collect: no running version (%d)", resp.StatusCode)
+	}
+	return v, nil
 }
 
 // ParseStub 解析 stub_status 文本：

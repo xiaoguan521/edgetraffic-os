@@ -86,7 +86,7 @@ func main() {
 	}
 	cfg := conn.Config{
 		Server: *server, StateDir: *stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
-		StatusURL: lay.StatusURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
+		StatusURL: lay.StatusURL(prof.Status()), VersionURL: lay.VersionURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
 			ConfRoot: *confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
 			LockFile: lay.AgentLock(), Wrapper: strings.Fields(*wrapper),

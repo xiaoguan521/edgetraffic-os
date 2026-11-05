@@ -1,6 +1,9 @@
 package collect
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,5 +55,27 @@ func TestAccessLog(t *testing.T) {
 	got = a.Collect(later)
 	if len(got) != 1 || got[0].Requests != 2 || got[0].S3xx != 1 {
 		t.Fatalf("second collect: %+v", got)
+	}
+}
+
+func TestReadVersion(t *testing.T) {
+	for _, c := range []struct {
+		code int
+		body string
+		want string
+	}{
+		{200, "1.30.6\n", "1.30.6"},
+		{404, "<html>404</html>", ""},   // 旧配置没有版本路径
+		{200, "1.30.6; rm -rf /\n", ""}, // 只接受版本号
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(c.code)
+			_, _ = w.Write([]byte(c.body))
+		}))
+		got, err := ReadVersion(context.Background(), srv.URL)
+		srv.Close()
+		if got != c.want || (c.want == "") != (err != nil) {
+			t.Errorf("%d %q: got %q, %v", c.code, c.body, got, err)
+		}
 	}
 }

@@ -38,6 +38,7 @@ func newNode(db *gorm.DB, opts ...gen.DOOption) node {
 	_node.AgentVersion = field.NewString(tableName, "agent_version")
 	_node.Arch = field.NewString(tableName, "arch")
 	_node.SyappVersion = field.NewString(tableName, "syapp_version")
+	_node.RunningVersion = field.NewString(tableName, "running_version")
 	_node.SyappSHA256 = field.NewString(tableName, "syapp_sha256")
 	_node.TLSLib = field.NewString(tableName, "tls_lib")
 	_node.LuaAddon = field.NewString(tableName, "lua_addon")
@@ -71,6 +72,7 @@ type node struct {
 	AgentVersion    field.String
 	Arch            field.String
 	SyappVersion    field.String
+	RunningVersion  field.String
 	SyappSHA256     field.String
 	TLSLib          field.String
 	LuaAddon        field.String
@@ -110,6 +112,7 @@ func (n *node) updateTableName(table string) *node {
 	n.AgentVersion = field.NewString(table, "agent_version")
 	n.Arch = field.NewString(table, "arch")
 	n.SyappVersion = field.NewString(table, "syapp_version")
+	n.RunningVersion = field.NewString(table, "running_version")
 	n.SyappSHA256 = field.NewString(table, "syapp_sha256")
 	n.TLSLib = field.NewString(table, "tls_lib")
 	n.LuaAddon = field.NewString(table, "lua_addon")
@@ -146,7 +149,7 @@ func (n *node) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (n *node) fillFieldMap() {
-	n.fieldMap = make(map[string]field.Expr, 23)
+	n.fieldMap = make(map[string]field.Expr, 24)
 	n.fieldMap["id"] = n.ID
 	n.fieldMap["group_id"] = n.GroupID
 	n.fieldMap["name"] = n.Name
@@ -158,6 +161,7 @@ func (n *node) fillFieldMap() {
 	n.fieldMap["agent_version"] = n.AgentVersion
 	n.fieldMap["arch"] = n.Arch
 	n.fieldMap["syapp_version"] = n.SyappVersion
+	n.fieldMap["running_version"] = n.RunningVersion
 	n.fieldMap["syapp_sha256"] = n.SyappSHA256
 	n.fieldMap["tls_lib"] = n.TLSLib
 	n.fieldMap["lua_addon"] = n.LuaAddon
