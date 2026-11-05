@@ -580,11 +580,11 @@
 | 范围 | 结果与边界 |
 | --- | --- |
 | 统一发布门禁 (`scripts/ci/release-gate.sh`) | `make lint`（`gofmt` + `golangci-lint`）0 问题；`make brand` 通过；`make gen-check` 通过；Web `eslint` 0 问题；Web Console + Portal 构建通过；`make build` 与 `-tags release` 构建通过；`go test -race -count=1 ./...` 全部 35 个测试包通过 |
-| 静态资源包归档安全 (`STATIC-04`) | `TestStaticBundleAPI` 与 `TestValidateStaticArchive` 通过：拒绝绝对路径、`..` 路径穿越、符号链接、超限与缺失根 `index.html` |
+| 静态资源包归档安全 (`STATIC-04`) | `TestStaticHTTPRejectsUnsafeBundles`、`TestStaticHTTPHiddenWellKnownAndNoIndex`、`TestExtractStaticHiddenAndIndex` 通过：拒绝绝对路径、`..` 路径穿越、符号链接与硬链接、超限；缺失根 `index.html` 默认拒绝（`STATIC_NO_INDEX`），确认为纯资源包（`allow_no_index=1`）后可上传；隐藏内容跳过不发布，根目录 `.well-known/` 保留（`acme-challenge/` 除外） |
 | 告警 SSRF 与重定向防护 (`ALERT-04`) | `TestRejectsPrivateAlertTargets`、`TestBlockedAlertAddr`、`TestAlertRedirectLimit`、`TestSMTPTargetGuard` 通过：拦截 loopback、RFC1918、RFC6598、链路本地、云元数据（169.254.169.254 / 100.100.100.200 / fd00:ec2::254）、NAT64/6to4/Teredo 及重定向链 |
-| 备份全模型覆盖与校验 (`BKP-07`) | `backup.tables()` 补齐全部 29 个持久化模型（含 `static_bundles` 等 14 张新增表），`TestTablesCoverAllStoreModels` 自动守卫 `store.Models()`，`TestBackupRestoreAllModels` 验证引用静态资源包的站点在恢复后可正常预览与发布；新增 `verify-backup`、`restore -dry-run`、`backup-prune`；跨 PostgreSQL 17 实例迁移待在 PG 环境复跑确认 |
+| 备份全模型覆盖与校验 (`BKP-07`) | `backup.tables()` 补齐全部 29 个持久化模型（含 `static_bundles` 等 14 张新增表），`TestTablesCoverAllStoreModels` 自动守卫 `store.Models()`，`TestBackupRestoreRoundTrip` 验证静态资源包等数据在恢复后完整保留（恢复后站点的预览与发布暂无自动化用例，需按 BKP-07 手工执行）；新增 `verify-backup`、`restore -dry-run`、`backup-prune`；跨 PostgreSQL 17 实例迁移待在 PG 环境复跑确认 |
 | 过期授权应急通道 (`CERT-05`、`DRF-03`、`LIC-07`) | Agent 持久化受控版本基线与文件清单（`.approved/`），`TestExpiredLicenseEmergencyOperations` 与 `TestRestoreClearsDriftStateImmediately` 验证过期授权下回滚、手动/国密证书续期与漂移恢复（含 `MANIFEST.json` 被篡改场景）均被允许且立即清除漂移状态，普通配置变更仍被拒绝 |
-| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]` 与 `syapp-wrapper --instance <name>` 多实例支持 |
+| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]`。**同机多实例未达到发布要求，v0.2 不提供**：`--instance` 通配 sudoers 与 `syapp@` / `syapp-agent@` 单元已从安装包移除（`TestSudoersContract` 守卫），按 `docs/design/0001-deploy-layout.md` 在 v0.3 重做 |
 
 ### 2026-11-02 本聊天实际执行记录
 

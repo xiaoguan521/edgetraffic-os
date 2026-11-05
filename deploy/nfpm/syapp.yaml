@@ -21,8 +21,6 @@ contents:
     type: symlink
   - src: ${STAGE}/syapp/syapp.service
     dst: /usr/lib/systemd/system/syapp.service
-  - src: ${STAGE}/syapp/syapp@.service
-    dst: /usr/lib/systemd/system/syapp@.service
   - src: ${STAGE}/syapp/tmpfiles.conf
     dst: /usr/lib/tmpfiles.d/syapp.conf
   - src: ${STAGE}/syapp/logrotate
