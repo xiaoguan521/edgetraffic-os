@@ -12,6 +12,12 @@
 - 参数写成 `\ddd` 转义的字面量；
 - 密钥只写进版本目录的 `lua/*.key` 文件（0640，预览中不显示）。
 
+### 独立模式手工 Lua（仅数据面）
+
+独立模式不接入控制台时，管理员可以在手工维护的 `conf.d/*.conf` 中直接使用已安装 Lua 模块的原生阶段指令，例如 `access_by_lua_block`、`rewrite_by_lua_block`、`header_filter_by_lua_block` 和 `body_filter_by_lua_block`。这属于受信任运维人员维护的数据面配置，不会被控制台渲染、预览或纳入控制台脚本编辑入口；节点注册并由控制台接管后，手工配置会按独立模式接管规则处理。
+
+独立模式验收夹具：`scripts/ci/standalone-lua-response-filter.conf`。它验证请求阶段的放行/拒绝、响应头新增与 `Content-Length` 清除，以及响应体改写；实际运行仍须在已安装匹配 `syapp-lua` 的独立节点上先执行 `syapp -t`。
+
 ## 原生规则积木
 
 每条规则由 1–8 个条件（同时满足）和 1 个动作组成，每个站点最多 32 条。

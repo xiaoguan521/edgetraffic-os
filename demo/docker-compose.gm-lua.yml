@@ -1,0 +1,90 @@
+# 隔离的国密 + Lua 验收环境。
+# 用法：在 demo/ 目录执行
+#   docker compose -f docker-compose.gm-lua.yml up -d --build
+#
+# 不复用标准演示环境的项目名、网络、数据卷或宿主机端口。
+name: edgetraffic-gm-lua
+
+networks:
+  edge-gm-lua:
+    name: edgetraffic-gm-lua_edge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+volumes:
+  gm-lua-console-data: {}
+
+services:
+  console:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.console
+      args:
+        EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}"
+        EXTRA_PKG_KEY: "${EXTRA_PKG_KEY:-}"
+    image: edgetraffic-gm-lua/console:local
+    environment:
+      ETOS_GRPC_HOSTS: "console,172.31.0.10"
+      ETOS_GRPC_ADVERTISE: "console:9443"
+      ETOS_DATA: /var/lib/syapp-console
+    volumes:
+      - gm-lua-console-data:/var/lib/syapp-console
+      - ${GM_LUA_KEYS_DIR:-./keys-gm-lua}:/keys:ro
+    ports:
+      - "${GM_LUA_CONSOLE_PORT:-8543}:8443"
+    networks:
+      edge-gm-lua: { ipv4_address: 172.31.0.10 }
+    restart: unless-stopped
+
+  node1:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.node.gm-lua
+      args:
+        EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}"
+    image: edgetraffic-gm-lua/node-gm-lua:1.30.6
+    hostname: gm-lua-edge-01
+    ulimits: { nofile: { soft: 65535, hard: 65535 } }
+    ports:
+      - "${GM_LUA_NODE1_PORT:-8101}:80"
+      - "${GM_LUA_NODE1_TLS_PORT:-8444}:443"
+    networks:
+      edge-gm-lua: { ipv4_address: 172.31.0.21 }
+    restart: unless-stopped
+
+  node2:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.node.gm-lua
+      args:
+        EXTRA_LICENSE_KEY: "${EXTRA_LICENSE_KEY:-}"
+    image: edgetraffic-gm-lua/node-gm-lua:1.30.6
+    hostname: gm-lua-edge-02
+    ulimits: { nofile: { soft: 65535, hard: 65535 } }
+    ports:
+      - "${GM_LUA_NODE2_PORT:-8102}:80"
+      - "${GM_LUA_NODE2_TLS_PORT:-8445}:443"
+    networks:
+      edge-gm-lua: { ipv4_address: 172.31.0.22 }
+    restart: unless-stopped
+
+  backend1:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.backend
+    image: edgetraffic-gm-lua/demo-backend:local
+    environment: { INSTANCE: gm-lua-api-1 }
+    networks:
+      edge-gm-lua: { ipv4_address: 172.31.0.31 }
+    restart: unless-stopped
+
+  backend2:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.backend
+    image: edgetraffic-gm-lua/demo-backend:local
+    environment: { INSTANCE: gm-lua-api-2 }
+    networks:
+      edge-gm-lua: { ipv4_address: 172.31.0.32 }
+    restart: unless-stopped
