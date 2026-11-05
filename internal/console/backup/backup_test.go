@@ -48,16 +48,35 @@ func TestProductionKDF(t *testing.T) {
 func seed(t *testing.T, st *store.Store, dir string) {
 	t.Helper()
 	db := st.DB
+	now := time.Now().UTC().Truncate(time.Second)
 	db.Create(&store.User{Username: "admin", PasswordHash: "h", Role: store.RoleAdmin})
+	db.Create(&store.APIToken{Name: "ci-tok", Username: "admin", Role: store.RoleAdmin, TokenHash: "th_1", Prefix: "etos_1234567"})
+	db.Create(&store.LicenseStore{Raw: "LIC-RAW", ImportedBy: "admin", ImportedAt: now})
+	db.Create(&store.Certificate{Name: "shop", Domains: `["shop.example.com"]`, CertPEM: "CERT", KeyEnc: "v1:sealed", NotBefore: now, NotAfter: now.Add(time.Hour), Source: "acme", AutoRenew: true})
+	db.Create(&store.AcmeOrder{Name: "shop", CertID: 1, Domains: `["shop.example.com"]`, Status: "valid", Step: "完成", CreatedBy: "admin"})
+	db.Create(&store.AlertChannel{Name: "ops-hook", Type: "webhook", URL: "https://hooks.example.com/1", SecretEnc: "v1:sec", Enabled: true, CreatedBy: "admin"})
+	db.Create(&store.AlertRule{Kind: "node_offline", Enabled: true, Threshold: 5, ChannelIDs: "1", UpdatedBy: "admin"})
+	db.Create(&store.AlertEvent{Kind: "node_offline", ObjectKey: "node:1", Message: "offline", Status: "firing", FiredAt: now})
+	db.Create(&store.DataplanePackage{Name: "syapp", Version: "1.30.6", Arch: "amd64", Variant: "standard", SHA256: "pkgsha", Size: 4, KID: "k1", Sig: "sig", Data: []byte("DATA"), UploadedBy: "admin"})
 	db.Create(&store.NodeGroup{Name: "default", CurrentRevisionID: "r000002"})
 	db.Create(&store.Node{GroupID: 1, Name: "edge-1", Status: "online", AppliedRevision: "r000002", Drifted: true})
+	db.Create(&store.NodeDrift{NodeID: 1, RevisionID: "r000002", TreeHash: "sha256:drift", Files: `[{"path":"syapp.conf"}]`, ReportedAt: now})
+	db.Create(&store.EnrollToken{TokenHash: "enroll_h1", GroupID: 1, ExpiresAt: now.Add(time.Hour), CreatedBy: "admin"})
+	db.Create(&store.StaticBundle{GroupID: 1, Name: "web-v1", SHA256: "sbsha", Size: 6, Files: 1, Data: []byte("TARGZ!"), UploadedBy: "admin"})
+	db.Create(&store.IPSet{GroupID: 1, Name: "office", Label: "Office", Source: "manual", CIDRs: `["10.0.0.0/8"]`, Count: 1, UpdatedBy: "admin"})
+	db.Create(&store.Upstream{GroupID: 1, Name: "backend", Spec: `{"name":"backend","servers":[{"addr":"10.0.0.1:8080"}]}`, UpdatedBy: "admin"})
+	db.Create(&store.StreamService{GroupID: 1, Name: "tcp-9000", Spec: `{"listen_port":9000}`, Enabled: true, UpdatedBy: "admin"})
 	db.Create(&store.Site{GroupID: 1, Name: "shop", Spec: `{"domains":["shop.example.com"]}`, Enabled: true, Version: 3})
+	db.Create(&store.Snippet{GroupID: 1, SiteID: 1, Scope: "server", Content: "add_header X-Test 1;", ContentSHA256: "snipsha", Origin: "manual", CreatedBy: "admin", ApprovedBy: "ops"})
+	db.Create(&store.ConfigImport{GroupID: 1, Source: "dump", FileName: "syapp.conf", Report: `{}`, ReportSHA256: "impsha", Sites: 1, Full: 1, CreatedBy: "admin"})
 	db.Create(&store.Revision{ID: "r000001", GroupID: 1, Bundle: []byte{0x1f, 0x8b, 0, 1, 2, 255}, Digest: "sha256:a"})
 	db.Create(&store.Revision{ID: "r000002", GroupID: 1, ParentID: "r000001", Bundle: bytes.Repeat([]byte{7}, 5000), Digest: "sha256:b"})
-	dep := &store.Deployment{GroupID: 1, RevisionID: "r000002", Kind: "publish", Status: "APPLIED", StartedAt: time.Now()}
+	dep := &store.Deployment{GroupID: 1, RevisionID: "r000002", Kind: "publish", Status: "APPLIED", StartedAt: now}
 	dep.Nodes = []store.DeploymentNode{{NodeID: 1, NodeName: "edge-1", Status: "APPLIED"}}
 	db.Create(dep)
-	db.Create(&store.Certificate{Name: "shop", Domains: `["shop.example.com"]`, CertPEM: "CERT", KeyEnc: "v1:sealed", NotAfter: time.Now().Add(time.Hour), Source: "acme", AutoRenew: true})
+	db.Create(&store.ReleaseRequest{GroupID: 1, RevisionID: "r000002", BaseRevisionID: "r000001", Digest: "sha256:b", Status: "approved", RequestedBy: "ops", RequestedAt: now, DeploymentID: dep.ID})
+	db.Create(&store.CanaryRelease{GroupID: 1, RevisionID: "r000002", BaseRevisionID: "r000001", Status: "done", Options: `{}`, Batches: `[]`, CreatedBy: "admin"})
+	db.Create(&store.DataplaneUpgrade{GroupID: 1, Version: "1.30.6", Variant: "standard", Status: "done", Nodes: `[]`, CreatedBy: "admin"})
 	db.Create(&store.MetricMinute{NodeID: 1, Site: "shop", Minute: 1, Requests: 9})
 	_ = st.SetKV("command_key", "secret-ed25519")
 	al := &audit.Logger{DB: db}
@@ -69,6 +88,49 @@ func seed(t *testing.T, st *store.Store, dir string) {
 	_ = os.WriteFile(filepath.Join(dir, "pki", "ca.crt"), []byte("CA-CRT"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, "secret.key"), bytes.Repeat([]byte{9}, 32), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "installation.json"), []byte(`{"installation_id":"inst_abc"}`), 0o600)
+}
+
+// 守卫测试：store.Models() 中除明确排除的临时表外，每一张持久化表都必须纳入 backup.tables()，
+// 且表名与 GORM 解析的模型表名完全一致，防止新增模型漏入备份（BKP-07）。
+func TestTablesCoverAllStoreModels(t *testing.T) {
+	st := storetest.Open(t)
+	excluded := map[string]bool{
+		"acme_challenges": true, // 进行中的 HTTP-01 临时挑战，不随备份持久化
+	}
+	want := map[string]bool{}
+	for _, m := range store.Models() {
+		stmt := &gorm.Statement{DB: st.DB}
+		if err := stmt.Parse(m); err != nil {
+			t.Fatalf("parse model %T: %v", m, err)
+		}
+		name := stmt.Schema.Table
+		if excluded[name] {
+			continue
+		}
+		want[name] = true
+	}
+	got := map[string]bool{}
+	for _, tb := range tables() {
+		stmt := &gorm.Statement{DB: st.DB}
+		if err := stmt.Parse(tb.model); err != nil {
+			t.Fatalf("parse table %s: %v", tb.name, err)
+		}
+		if stmt.Schema.Table != tb.name {
+			t.Fatalf("table name mismatch: registered %q, schema %q", tb.name, stmt.Schema.Table)
+		}
+		if got[tb.name] {
+			t.Fatalf("duplicate table %q in backup list", tb.name)
+		}
+		if !want[tb.name] {
+			t.Fatalf("table %q in backup list is not a persistent store.Models() entry", tb.name)
+		}
+		got[tb.name] = true
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("persistent model table %q is missing from backup.tables()", name)
+		}
+	}
 }
 
 func TestBackupRestoreRoundTrip(t *testing.T) {
@@ -121,6 +183,23 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	dst.DB.Model(&store.DeploymentNode{}).Count(&dn)
 	if dn != 1 {
 		t.Fatalf("deployment nodes: %d", dn)
+	}
+	var sb store.StaticBundle
+	if err := dst.DB.First(&sb).Error; err != nil || sb.Name != "web-v1" || !bytes.Equal(sb.Data, []byte("TARGZ!")) {
+		t.Fatalf("static bundle lost: %v %+v", err, sb)
+	}
+	var pkg store.DataplanePackage
+	if err := dst.DB.First(&pkg).Error; err != nil || !bytes.Equal(pkg.Data, []byte("DATA")) {
+		t.Fatalf("dataplane package lost: %v %+v", err, pkg)
+	}
+	for _, tb := range tables() {
+		if tb.name == "metric_minutes" {
+			continue
+		}
+		var n int64
+		if err := dst.DB.Model(tb.model).Count(&n).Error; err != nil || n == 0 {
+			t.Fatalf("table %s count after restore = %d (%v)", tb.name, n, err)
+		}
 	}
 	if v, _ := dst.GetKV("command_key"); v != "secret-ed25519" {
 		t.Fatal("system kv not restored")
@@ -186,8 +265,8 @@ func TestMigrateSQLiteToPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := storetest.Open(t) // PostgreSQL
-	if dst.DB.Dialector.Name() != "postgres" {
-		t.Fatalf("destination is %s", dst.DB.Dialector.Name())
+	if dst.DB.Name() != "postgres" {
+		t.Fatalf("destination is %s", dst.DB.Name())
 	}
 	if _, err := Restore(bytes.NewReader(buf.Bytes()), dst, t.TempDir(), pass, false); err != nil {
 		t.Fatal(err)

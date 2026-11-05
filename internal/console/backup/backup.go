@@ -100,23 +100,37 @@ func tbl[T any](name string) table {
 
 const clauseAssociations = "*.*" // gorm: Omit 所有关联
 
-// tables 按依赖顺序列出；AcmeChallenge 是进行中的临时数据，不备份。
+// tables 按依赖顺序列出；AcmeChallenge 是进行中的临时数据，不备份（见 TestTablesCoverAllStoreModels）。
 func tables() []table {
 	return []table{
 		tbl[store.SystemKV]("system_kvs"),
 		tbl[store.User]("users"),
+		tbl[store.APIToken]("api_tokens"),
+		tbl[store.LicenseStore]("license_stores"),
+		tbl[store.Certificate]("certificates"),
+		tbl[store.AcmeOrder]("acme_orders"),
+		tbl[store.AlertChannel]("alert_channels"),
+		tbl[store.AlertRule]("alert_rules"),
+		tbl[store.AlertEvent]("alert_events"),
+		tbl[store.DataplanePackage]("dataplane_packages"),
 		tbl[store.NodeGroup]("node_groups"),
 		tbl[store.Node]("nodes"),
+		tbl[store.NodeDrift]("node_drifts"),
 		tbl[store.EnrollToken]("enroll_tokens"),
-		tbl[store.Site]("sites"),
+		tbl[store.StaticBundle]("static_bundles"),
+		tbl[store.IPSet]("ip_sets"),
 		tbl[store.Upstream]("upstreams"),
-		tbl[store.Certificate]("certificates"),
+		tbl[store.StreamService]("stream_services"),
+		tbl[store.Site]("sites"),
+		tbl[store.Snippet]("snippets"),
+		tbl[store.ConfigImport]("config_imports"),
 		tbl[store.Revision]("revisions"),
 		tbl[store.Deployment]("deployments"),
 		tbl[store.DeploymentNode]("deployment_nodes"),
+		tbl[store.ReleaseRequest]("release_requests"),
+		tbl[store.CanaryRelease]("canary_releases"),
+		tbl[store.DataplaneUpgrade]("dataplane_upgrades"),
 		tbl[store.AuditLog]("audit_logs"),
-		tbl[store.LicenseStore]("license_stores"),
-		tbl[store.AcmeOrder]("acme_orders"),
 		tbl[store.MetricMinute]("metric_minutes"),
 	}
 }
@@ -148,7 +162,7 @@ func Create(w io.Writer, st *store.Store, dataDir string, pass []byte, opt Optio
 	// 所有表在同一个只读事务里读取，得到一致的快照（不会出现版本已写入、发布记录还没有的半截状态）。
 	// PostgreSQL 默认 READ COMMITTED 每条语句各看一次，需要 REPEATABLE READ。
 	txOpt := &sql.TxOptions{}
-	if st.DB.Dialector.Name() == "postgres" {
+	if st.DB.Name() == "postgres" {
 		txOpt = &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
 	}
 	err := st.DB.Transaction(func(tx *gorm.DB) error {
@@ -338,7 +352,7 @@ func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bo
 
 // resetSequences：PostgreSQL 的自增序列不会因为显式写入主键而前进，恢复后需要对齐到最大值。
 func resetSequences(tx *gorm.DB) error {
-	if tx.Dialector.Name() != "postgres" {
+	if tx.Name() != "postgres" {
 		return nil
 	}
 	for _, t := range tables() {
