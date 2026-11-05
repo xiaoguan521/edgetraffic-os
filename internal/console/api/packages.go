@@ -38,7 +38,7 @@ func readForm(c *gin.Context, field string, limit int64) ([]byte, bool) {
 		failErr(c, err)
 		return nil, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(io.LimitReader(f, limit))
 	if err != nil {
 		failErr(c, err)

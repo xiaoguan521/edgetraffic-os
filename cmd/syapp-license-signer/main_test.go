@@ -71,7 +71,9 @@ func writeRequest(t *testing.T, path, kid, batch string) {
 func TestCLIFlow(t *testing.T) {
 	h := newHarness(t)
 	pf := h.path("pass")
-	os.WriteFile(pf, []byte("correct horse battery staple\n"), 0o600)
+	if err := os.WriteFile(pf, []byte("correct horse battery staple\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	keys := h.path("usb")
 
 	if rc := h.run("", "keygen", "-kid", "etos-prod-2027", "-out", keys, "-passphrase-file", pf); rc != 0 {
@@ -119,7 +121,9 @@ func TestCLIFlow(t *testing.T) {
 	}
 	// 口令错误
 	bad := h.path("bad")
-	os.WriteFile(bad, []byte("this is not the passphrase"), 0o600)
+	if err := os.WriteFile(bad, []byte("this is not the passphrase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	req2 := h.path("sign-request-B0013.json")
 	writeRequest(t, req2, "etos-prod-2027", "B0013")
 	if rc := h.run("", "sign", "-key", keyPath, "-in", req2, "-log", log, "-passphrase-file", bad, "-yes"); rc == 0 || !strings.Contains(h.err.String(), "口令错误") {
@@ -142,15 +146,25 @@ func TestOfflineCheck(t *testing.T) {
 	}
 	h := newHarness(t)
 	sys := h.path("nonet")
-	os.MkdirAll(filepath.Join(sys, "lo"), 0o755)
-	os.WriteFile(filepath.Join(sys, "lo", "operstate"), []byte("unknown\n"), 0o644)
-	os.MkdirAll(filepath.Join(sys, "eth0"), 0o755)
-	os.WriteFile(filepath.Join(sys, "eth0", "operstate"), []byte("down\n"), 0o644)
+	if err := os.MkdirAll(filepath.Join(sys, "lo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sys, "lo", "operstate"), []byte("unknown\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sys, "eth0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sys, "eth0", "operstate"), []byte("down\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	a := &app{errw: &h.err, sysNet: sys}
 	if err := a.offlineCheck(true); err != nil {
 		t.Fatalf("down interface reported: %v", err)
 	}
-	os.WriteFile(filepath.Join(sys, "eth0", "operstate"), []byte("up\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(sys, "eth0", "operstate"), []byte("up\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.offlineCheck(true); err == nil || !strings.Contains(err.Error(), "eth0") {
 		t.Fatalf("connected interface not detected: %v", err)
 	}

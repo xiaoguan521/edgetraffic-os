@@ -60,7 +60,7 @@ func freePort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -129,7 +129,7 @@ http {
 		if err != nil {
 			return err
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		b, _ := io.ReadAll(r.Body)
 		if r.StatusCode != 200 || string(b) != "ok\n" {
 			return fmt.Errorf("status %d body %q", r.StatusCode, b)

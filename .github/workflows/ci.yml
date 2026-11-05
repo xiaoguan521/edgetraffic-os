@@ -1,6 +1,9 @@
 name: ci
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,6 +19,12 @@ jobs:
           go-version: "1.27"
       - name: generated queries up to date (gorm/gen)
         run: make gen-check
+      - name: gofmt and golangci-lint
+        run: |
+          unfmt="$(gofmt -l cmd internal dataplane)"
+          if [ -n "$unfmt" ]; then echo "gofmt needed:"; echo "$unfmt"; exit 1; fi
+          GOFLAGS= go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
       - name: vet and test
         run: make test
       - name: release-tag build (no demo signing key)
@@ -162,16 +171,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: check lockfile
-        id: lock
-        run: if [ -f web/pnpm-lock.yaml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "web/pnpm-lock.yaml not committed yet, skipping"; fi
-      - if: steps.lock.outputs.present == 'true'
-        uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 9
-      - if: steps.lock.outputs.present == 'true'
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - if: steps.lock.outputs.present == 'true'
-        run: cd web && pnpm install --frozen-lockfile && pnpm build
+      - name: lint and build web
+        run: cd web && pnpm install --frozen-lockfile && pnpm lint && pnpm build

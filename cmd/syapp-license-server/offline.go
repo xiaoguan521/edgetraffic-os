@@ -89,7 +89,7 @@ func cmdRequest(args []string, out io.Writer) error {
 	if err := writeRequest(*outPath, sr, now); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "已加入 %s：%s %s %s，节点 %d，到期 %s（批次共 %d 条）\n", *outPath, p.LicenseID, p.Customer.Name, p.Edition,
+	_, _ = fmt.Fprintf(out, "已加入 %s：%s %s %s，节点 %d，到期 %s（批次共 %d 条）\n", *outPath, p.LicenseID, p.Customer.Name, p.Edition,
 		p.Limits.Nodes, p.ExpiresAt.Format("2006-01-02"), len(sr.Licenses))
 	return nil
 }
@@ -145,7 +145,7 @@ func cmdCRLRequest(args []string, out io.Writer, keys license.KeyRing) error {
 	if err := writeRequest(*outPath, sr, now); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "吊销列表序号 %d，共吊销 %d 个 License → %s\n", c.Serial, len(c.RevokedLicenses), *outPath)
+	_, _ = fmt.Fprintf(out, "吊销列表序号 %d，共吊销 %d 个 License → %s\n", c.Serial, len(c.RevokedLicenses), *outPath)
 	return nil
 }
 
@@ -185,16 +185,16 @@ func cmdImport(args []string, out io.Writer, keys license.KeyRing) error {
 		if err := os.WriteFile(p, []byte(l.Raw+"\n"), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "%s\n", p)
+		_, _ = fmt.Fprintf(out, "%s\n", p)
 	}
 	if s.CRL != "" {
 		p := filepath.Join(*outDir, fmt.Sprintf("crl-%d.crl", req.CRL.Serial))
 		if err := os.WriteFile(p, []byte(s.CRL+"\n"), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "%s\n", p)
+		_, _ = fmt.Fprintf(out, "%s\n", p)
 	}
-	fmt.Fprintf(out, "核对通过：批次 %s，%d 个 License\n", s.Batch, len(s.Licenses))
+	_, _ = fmt.Fprintf(out, "核对通过：批次 %s，%d 个 License\n", s.Batch, len(s.Licenses))
 	return nil
 }
 

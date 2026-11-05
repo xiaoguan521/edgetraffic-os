@@ -20,7 +20,7 @@ import (
 // 口令只从文件或环境变量 ETOS_BACKUP_PASSPHRASE 读取，不接受命令行参数（会出现在 ps 与 shell 历史中）。
 func backupMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "用法：syapp-console backup|restore [参数]")
+		_, _ = fmt.Fprintln(stderr, "用法：syapp-console backup|restore [参数]")
 		return 2
 	}
 	var err error
@@ -30,11 +30,11 @@ func backupMain(args []string, stdout, stderr io.Writer) int {
 	case "restore":
 		err = cmdRestore(args[1:], stdout)
 	default:
-		fmt.Fprintf(stderr, "未知子命令 %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "未知子命令 %q\n", args[0])
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "错误：", err)
+		_, _ = fmt.Fprintln(stderr, "错误：", err)
 		return 1
 	}
 	return 0
@@ -112,7 +112,7 @@ func cmdBackup(args []string, stdout io.Writer) error {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, *out); err != nil {
@@ -120,7 +120,7 @@ func cmdBackup(args []string, stdout io.Writer) error {
 	}
 	_ = (&audit.Logger{DB: st.DB}).Write(audit.Entry{Username: "cli", Action: "system.backup", ObjectType: "backup",
 		ObjectID: filepath.Base(*out), Result: "ok", Detail: sum.Tables})
-	fmt.Fprintf(stdout, "备份完成：%s\n%s", *out, describe(sum))
+	_, _ = fmt.Fprintf(stdout, "备份完成：%s\n%s", *out, describe(sum))
 	return nil
 }
 
@@ -150,15 +150,15 @@ func cmdRestore(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sum, err := backup.Restore(f, st, *c.dataDir, pass, *force)
 	if err != nil {
 		return err
 	}
 	_ = (&audit.Logger{DB: st.DB}).Write(audit.Entry{Username: "cli", Action: "system.restore", ObjectType: "backup",
 		ObjectID: filepath.Base(*in), Result: "ok", Detail: map[string]any{"from_version": sum.Version, "created_at": sum.CreatedAt}})
-	fmt.Fprintf(stdout, "恢复完成（备份于 %s，版本 %s）\n%s", sum.CreatedAt.Format("2006-01-02 15:04:05Z"), sum.Version, describe(sum))
-	fmt.Fprintln(stdout, "提示：启动控制台后节点会自动重连；控制台地址变化时需同步 -grpc-hosts。")
+	_, _ = fmt.Fprintf(stdout, "恢复完成（备份于 %s，版本 %s）\n%s", sum.CreatedAt.Format("2006-01-02 15:04:05Z"), sum.Version, describe(sum))
+	_, _ = fmt.Fprintln(stdout, "提示：启动控制台后节点会自动重连；控制台地址变化时需同步 -grpc-hosts。")
 	return nil
 }
 

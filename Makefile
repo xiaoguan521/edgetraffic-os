@@ -6,7 +6,7 @@ DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
 
-.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint brand web proto clean gen gen-check
+.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint lint-web brand web proto clean gen gen-check
 
 all: test build
 
@@ -43,7 +43,11 @@ gen-check: gen
 	test -z "$$(git status --porcelain -- $(GEN_DIRS))" || { echo "有未提交的生成文件：执行 make gen 并提交"; exit 1; }
 
 lint:
+	@unfmt="$$(gofmt -l cmd internal dataplane)"; if [ -n "$$unfmt" ]; then echo "gofmt needed:"; echo "$$unfmt"; exit 1; fi
 	golangci-lint run ./...
+
+lint-web:
+	cd web && pnpm lint
 
 brand:
 	./scripts/brand-check.sh

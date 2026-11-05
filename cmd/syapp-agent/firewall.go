@@ -15,7 +15,7 @@ import (
 //	syapp-agent firewall covers -ssh-from CIDRS -ip IP     退出码 0 表示 IP 在列表中，1 表示不在
 func firewallMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "用法：syapp-agent firewall render|covers ...")
+		_, _ = fmt.Fprintln(stderr, "用法：syapp-agent firewall render|covers ...")
 		return 2
 	}
 	fs := flag.NewFlagSet("firewall "+args[0], flag.ContinueOnError)
@@ -39,25 +39,25 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 	case "render":
 		tcp, err := firewall.ParsePorts(*allowTCP)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
 		udp, err := firewall.ParsePorts(*allowUDP)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
 		out, err := firewall.Render(firewall.Options{SSHFrom: from, SSHPort: *sshPort, AllowTCP: tcp, AllowUDP: udp, AllowAnySSH: *anySSH})
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
-		fmt.Fprint(stdout, out)
+		_, _ = fmt.Fprint(stdout, out)
 		return 0
 	case "covers":
 		ok, err := firewall.Covers(from, *ip)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
 		if ok {
@@ -65,6 +65,6 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stderr, "未知子命令 %q\n", args[0])
+	_, _ = fmt.Fprintf(stderr, "未知子命令 %q\n", args[0])
 	return 2
 }

@@ -65,7 +65,7 @@ func validateJWT(j *JWTAction) error {
 	case "header":
 	case "cookie":
 		if !cookieRe.MatchString(j.Cookie) {
-			return errors.New("Cookie 名只能使用字母、数字和下划线")
+			return errors.New("cookie 名只能使用字母、数字和下划线")
 		}
 	default:
 		return errors.New("令牌来源只能是 header 或 cookie")

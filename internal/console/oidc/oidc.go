@@ -65,7 +65,7 @@ func (c *Client) getJSON(ctx context.Context, u string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 	}
@@ -136,7 +136,17 @@ func (c *Client) jwks(ctx context.Context, u string, refresh bool) (map[string]a
 			default:
 				continue
 			}
-			ks[k.Kid] = &ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(b64(k.X)), Y: new(big.Int).SetBytes(b64(k.Y))}
+			size := (curve.Params().BitSize + 7) / 8
+			xb, yb := b64(k.X), b64(k.Y)
+			if len(xb) <= size && len(yb) <= size {
+				raw := make([]byte, 1+2*size)
+				raw[0] = 0x04
+				copy(raw[1+size-len(xb):1+size], xb)
+				copy(raw[1+2*size-len(yb):], yb)
+				if pub, err := ecdsa.ParseUncompressedPublicKey(curve, raw); err == nil {
+					ks[k.Kid] = pub
+				}
+			}
 		}
 	}
 	c.mu.Lock()
@@ -197,7 +207,7 @@ func (c *Client) Finish(ctx context.Context, cfg Config, f Flow, state, code str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var tr struct {
 		IDToken string `json:"id_token"`
 		Error   string `json:"error"`

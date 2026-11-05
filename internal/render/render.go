@@ -196,7 +196,7 @@ func Repack(rev string, src map[string][]byte) *Bundle {
 	for _, n := range names {
 		sum := sha256.Sum256(files[n])
 		m.Files[n] = hex.EncodeToString(sum[:])
-		fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
+		_, _ = fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
 	}
 	m.Digest = "sha256:" + hex.EncodeToString(all.Sum(nil))
 	mj, _ := json.MarshalIndent(m, "", "  ")

@@ -92,7 +92,7 @@ func (s *Server) ldapDial(cfg LDAPConfig) (*ldap.Conn, error) {
 	conn.SetTimeout(time.Duration(cfg.TimeoutSeconds) * time.Second)
 	if u.Scheme == "ldap" {
 		if err := conn.StartTLS(tc); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("StartTLS 失败（拒绝明文传输口令）：%w", err)
 		}
 	}
@@ -108,7 +108,7 @@ func (s *Server) ldapAuth(cfg LDAPConfig, username, password string) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if cfg.BindDN != "" {
 		pass := ""
 		if cfg.BindPassEnc != "" {

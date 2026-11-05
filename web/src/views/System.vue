@@ -9,7 +9,6 @@ import LicenseImport from '../components/LicenseImport.vue'
 const session = useSession()
 const lic = computed(() => session.license)
 const users = ref<any[]>([])
-const version = ref<any>({})
 
 const approval = ref<{ enabled: boolean; licensed: boolean }>({ enabled: false, licensed: false })
 onMounted(async () => {

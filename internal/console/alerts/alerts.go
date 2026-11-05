@@ -456,7 +456,7 @@ func (s *Service) post(u string, body any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -536,10 +536,10 @@ func (s *Service) mail(ch *store.AlertChannel, pass string, m Message) error {
 	}
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if u.Scheme == "smtp" {
 		if ok, _ := c.Extension("STARTTLS"); !ok {
 			return errors.New("邮件服务器不支持 STARTTLS，拒绝明文发送")

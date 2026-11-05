@@ -30,7 +30,7 @@ func ReadStub(ctx context.Context, url string) (Stub, error) {
 	if err != nil {
 		return Stub{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return ParseStub(string(b))
 }
@@ -158,7 +158,7 @@ func (a *AccessLog) Collect(now time.Time) []Minute {
 				}
 			}
 		}
-		f.Close()
+		_ = f.Close()
 	}
 	cur := now.Truncate(time.Minute).Unix()
 	var out []Minute

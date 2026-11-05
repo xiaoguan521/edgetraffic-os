@@ -17,10 +17,16 @@ func TestBackupRestoreCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.DB.Create(&store.NodeGroup{Name: "default"})
-	os.MkdirAll(filepath.Join(src, "pki"), 0o700)
-	os.WriteFile(filepath.Join(src, "pki", "ca.key"), []byte("K"), 0o600)
+	if err := os.MkdirAll(filepath.Join(src, "pki"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "pki", "ca.key"), []byte("K"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	pf := filepath.Join(t.TempDir(), "pass")
-	os.WriteFile(pf, []byte("long enough passphrase\n"), 0o600)
+	if err := os.WriteFile(pf, []byte("long enough passphrase\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out := filepath.Join(t.TempDir(), "b.etosbk")
 	var so, se bytes.Buffer
 
@@ -28,7 +34,9 @@ func TestBackupRestoreCLI(t *testing.T) {
 		t.Fatalf("backup without passphrase: rc=%d %s", rc, se.String())
 	}
 	short := filepath.Join(t.TempDir(), "short")
-	os.WriteFile(short, []byte("short"), 0o600)
+	if err := os.WriteFile(short, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	se.Reset()
 	if rc := backupMain([]string{"backup", "-data", src, "-out", out, "-passphrase-file", short}, &so, &se); rc == 0 {
 		t.Fatal("short passphrase accepted")

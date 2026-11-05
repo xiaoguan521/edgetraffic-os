@@ -48,9 +48,9 @@ func Summary(req *license.SignRequest) string {
 	fmt.Fprintf(&b, "批次 %s　密钥 %s　导出人 %s　导出时间 %s\n\n", req.Batch, req.KID, req.CreatedBy, req.CreatedAt.Local().Format("2006-01-02 15:04"))
 	if len(req.Licenses) > 0 {
 		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "#\tLicense 编号\t客户\t版本\t节点\t站点\t生效\t到期\t绑定\t安装 ID")
+		_, _ = fmt.Fprintln(tw, "#\tLicense 编号\t客户\t版本\t节点\t站点\t生效\t到期\t绑定\t安装 ID")
 		for i, p := range req.Licenses {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", i+1, p.LicenseID, p.Customer.Name, p.Edition,
+			_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", i+1, p.LicenseID, p.Customer.Name, p.Edition,
 				limit(p.Limits.Nodes), limit(p.Limits.Sites), p.NotBefore.Format("2006-01-02"), p.ExpiresAt.Format("2006-01-02"),
 				p.Binding.Type, p.Binding.InstallationID)
 		}
@@ -103,7 +103,7 @@ func AppendLog(path string, req *license.SignRequest, out *license.SignedBatch) 
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		return err
 	}

@@ -34,7 +34,7 @@ func (s *Server) listStatic(c *gin.Context) {
 // uploadStatic：multipart 字段 group_id、name、file（.tar.gz 或 .zip）。
 func (s *Server) uploadStatic(c *gin.Context) {
 	var gid uint
-	fmt.Sscan(c.PostForm("group_id"), &gid)
+	_, _ = fmt.Sscan(c.PostForm("group_id"), &gid)
 	data, ok := readForm(c, "file", 64<<20)
 	if !ok {
 		return

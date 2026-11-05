@@ -35,7 +35,7 @@ func nextSeq(ctx context.Context, tx *query.Query, key string) (int, error) {
 	row, err := kv.WithContext(ctx).Where(kv.Key.Eq(key)).First()
 	n := 0
 	if err == nil {
-		fmt.Sscanf(row.Value, "%d", &n)
+		_, _ = fmt.Sscanf(row.Value, "%d", &n)
 	}
 	n++
 	if err == nil {

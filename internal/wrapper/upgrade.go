@@ -84,7 +84,7 @@ func readNoFollow(path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() || st.Size() > limit {
 		return nil, fail("%s is not a regular file within the size limit", filepath.Base(path))

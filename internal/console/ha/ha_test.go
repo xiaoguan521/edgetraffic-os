@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +22,7 @@ func pg(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -125,7 +125,7 @@ func TestLockSessionDetectsDeadPeer(t *testing.T) {
 	}
 	defer func() {
 		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", LockKey)
-		conn.Close()
+		_ = conn.Close()
 	}()
 	for name, max := range map[string]int{"tcp_keepalives_idle": 5, "tcp_keepalives_interval": 2, "tcp_keepalives_count": 3, "tcp_user_timeout": 10000} {
 		var v string
@@ -134,7 +134,7 @@ func TestLockSessionDetectsDeadPeer(t *testing.T) {
 		}
 		// 本机 Unix 套接字连接时 PostgreSQL 把这些值报告为 0（不适用）；TCP 连接上必须不大于上限
 		var n int
-		fmt.Sscan(strings.TrimSuffix(v, "ms"), &n)
+		_, _ = fmt.Sscan(strings.TrimSuffix(v, "ms"), &n)
 		if n > max || (n == 0 && !strings.Contains(os.Getenv("ETOS_TEST_DB"), "host=/")) {
 			t.Errorf("%s = %s, want 1..%d", name, v, max)
 		}

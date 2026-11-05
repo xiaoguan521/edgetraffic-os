@@ -55,7 +55,7 @@ func TestWebCAIssuesBrowserCompatibleCerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 }
 
 // 自动续期：剩余不足 30 天时 GetCertificate 换发新证书。

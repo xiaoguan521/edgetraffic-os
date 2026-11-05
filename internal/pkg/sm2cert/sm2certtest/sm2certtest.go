@@ -75,7 +75,7 @@ func NewValid(t testing.TB, cn, usage string, dns []string, notBefore, notAfter 
 		t.Fatal(err)
 	}
 	d.Add(d, big.NewInt(1))
-	x, y := c.ScalarBaseMult(d.FillBytes(make([]byte, 32)))
+	x, y := c.ScalarBaseMult(d.FillBytes(make([]byte, 32))) //nolint:staticcheck // SA1019: crypto/ecdh does not support custom SM2 CurveParams
 	point := append([]byte{4}, append(x.FillBytes(make([]byte, 32)), y.FillBytes(make([]byte, 32))...)...)
 
 	curve, _ := asn1.Marshal(sm2cert.OIDSM2)

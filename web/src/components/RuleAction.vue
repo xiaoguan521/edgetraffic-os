@@ -2,7 +2,8 @@
 // 规则动作编辑（RulesEditor 的一部分）：action 对象由父组件持有，这里原地修改字段。
 import { computed } from 'vue'
 
-const props = defineProps<{ action: any; upstreams: any[]; luaLicensed: boolean }>()
+const action = defineModel<any>('action', { required: true })
+const props = defineProps<{ upstreams: any[]; luaLicensed: boolean }>()
 const emit = defineEmits<{ type: [string] }>()
 
 const actions = computed(() => [
