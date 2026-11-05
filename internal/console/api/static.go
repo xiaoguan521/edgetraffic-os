@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
@@ -44,9 +45,15 @@ func (s *Server) uploadStatic(c *gin.Context) {
 		fh, _ := c.FormFile("file")
 		name = fh.Filename
 	}
-	row, err := s.Deploy.ImportStatic(gid, name, data, c.GetString("user"), c.ClientIP())
+	// allow_no_index=1：没有根目录 index.html 的纯资源包（下载目录、图片 / 脚本等）
+	opt := deploy.StaticImportOptions{AllowNoIndex: c.PostForm("allow_no_index") == "1"}
+	row, err := s.Deploy.ImportStaticWith(gid, name, data, opt, c.GetString("user"), c.ClientIP())
 	if err != nil {
-		fail(c, http.StatusBadRequest, "STATIC_REJECTED", err.Error())
+		code := "STATIC_REJECTED"
+		if deploy.IsStaticNoIndex(err) {
+			code = "STATIC_NO_INDEX"
+		}
+		fail(c, http.StatusBadRequest, code, err.Error())
 		return
 	}
 	row.Data = nil

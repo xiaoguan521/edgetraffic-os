@@ -78,12 +78,15 @@ func staticTarGz(t *testing.T, entries ...staticEntry) []byte {
 	return b.Bytes()
 }
 
-func (f *importHTTP) uploadStatic(t *testing.T, role, file string, data []byte) *httptest.ResponseRecorder {
+func (f *importHTTP) uploadStatic(t *testing.T, role, file string, data []byte, extra ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	var b bytes.Buffer
 	mw := multipart.NewWriter(&b)
 	_ = mw.WriteField("group_id", fmt.Sprint(f.group))
 	_ = mw.WriteField("name", "bundle")
+	for i := 0; i+1 < len(extra); i += 2 {
+		_ = mw.WriteField(extra[i], extra[i+1])
+	}
 	p, err := mw.CreateFormFile("file", file)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +110,7 @@ func TestStaticHTTPRejectsUnsafeBundles(t *testing.T) {
 		name, file string
 		data       []byte
 		msg        string
+		code       string
 	}{
 		{"dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "../escape.conf", body: "x"}), "越界"},
 		{"nested dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "js/../../escape.conf", body: "x"}), "越界"},
@@ -116,12 +120,28 @@ func TestStaticHTTPRejectsUnsafeBundles(t *testing.T) {
 		{"tar symlink", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接"},
 		{"tar hard link", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd", hard: true}), "链接"},
 		{"zip symlink", "a.zip", staticZip(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接"},
-		{"missing index", "a.zip", staticZip(t, staticEntry{name: "dist/js/app.js", body: "1"}), "index.html"},
-		{"index only in subdir", "a.zip", staticZip(t, staticEntry{name: "a/index.html", body: "x"}, staticEntry{name: "b/app.js", body: "1"}), "index.html"},
+		{"missing index", "a.zip", staticZip(t, staticEntry{name: "dist/js/app.js", body: "1"}), "index.html", "STATIC_NO_INDEX"},
+		{"index only in subdir", "a.zip", staticZip(t, staticEntry{name: "a/index.html", body: "x"}, staticEntry{name: "b/app.js", body: "1"}), "index.html", "STATIC_NO_INDEX"},
+		{"only hidden files", "a.zip", staticZip(t, staticEntry{name: ".git/config", body: "x"}, staticEntry{name: ".DS_Store", body: "x"}), "没有文件", ""},
+		{"nested well-known", "a.zip", staticZip(t, idx, staticEntry{name: "js/.well-known/x", body: "x"}, staticEntry{name: "js/app.js", body: "1"}), "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := f.uploadStatic(t, "operator", tc.file, tc.data)
-			requireStatus(t, w, http.StatusBadRequest, "STATIC_REJECTED")
+			if tc.msg == "" {
+				// 不是拒绝用例：嵌套的 .well-known/ 只是被跳过
+				requireStatus(t, w, http.StatusOK, "")
+				var row store.StaticBundle
+				if err := json.Unmarshal(w.Body.Bytes(), &row); err != nil || row.Files != 2 {
+					t.Fatalf("nested .well-known must be skipped: %v %s", err, w.Body)
+				}
+				f.request("operator", http.MethodDelete, fmt.Sprintf("/static-bundles/%d", row.ID), nil, "", true)
+				return
+			}
+			code := tc.code
+			if code == "" {
+				code = "STATIC_REJECTED"
+			}
+			requireStatus(t, w, http.StatusBadRequest, code)
 			if !strings.Contains(w.Body.String(), tc.msg) {
 				t.Fatalf("error does not mention %q: %s", tc.msg, w.Body)
 			}
@@ -147,4 +167,43 @@ func TestStaticHTTPRejectsUnsafeBundles(t *testing.T) {
 	if err := json.Unmarshal(lw.Body.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].ID != row.ID {
 		t.Fatalf("stored bundles = %s", lw.Body)
 	}
+}
+
+// 隐藏内容（.git/、.DS_Store、__MACOSX/）跳过而不是整包拒绝；根目录 .well-known/ 保留，
+// 其中 acme-challenge/ 跳过；allow_no_index=1 允许没有入口页的纯资源包。
+func TestStaticHTTPHiddenWellKnownAndNoIndex(t *testing.T) {
+	f := newImportHTTP(t)
+
+	w := f.uploadStatic(t, "operator", "site.zip", staticZip(t,
+		staticEntry{name: "dist/index.html", body: "<h1>ok</h1>"},
+		staticEntry{name: "dist/.git/config", body: "[core]"},
+		staticEntry{name: "dist/.git/HEAD", body: "ref: refs/heads/main"},
+		staticEntry{name: "dist/.env", body: "SECRET=1"},
+		staticEntry{name: "dist/.well-known/security.txt", body: "Contact: mailto:sec@example.com"},
+		staticEntry{name: "dist/.well-known/acme-challenge/token", body: "x"},
+		staticEntry{name: "__MACOSX/dist/._index.html", body: "x"},
+		staticEntry{name: ".DS_Store", body: "x"},
+	))
+	requireStatus(t, w, http.StatusOK, "")
+	var row store.StaticBundle
+	if err := json.Unmarshal(w.Body.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	// 只剩 index.html 与 .well-known/security.txt（dist/ 顶层被去掉）
+	if row.Files != 2 {
+		t.Fatalf("files = %d, want 2: %s", row.Files, w.Body)
+	}
+
+	// 没有入口页：默认拒绝（专用错误码，前端据此询问），勾选后接受
+	assets := staticTarGz(t, staticEntry{name: "files/a.pdf", body: "%PDF"}, staticEntry{name: "files/img/b.png", body: "png"})
+	requireStatus(t, f.uploadStatic(t, "operator", "assets.tar.gz", assets), http.StatusBadRequest, "STATIC_NO_INDEX")
+	w = f.uploadStatic(t, "operator", "assets.tar.gz", assets, "allow_no_index", "1")
+	requireStatus(t, w, http.StatusOK, "")
+	if err := json.Unmarshal(w.Body.Bytes(), &row); err != nil || row.Files != 2 {
+		t.Fatalf("asset-only bundle: %v %s", err, w.Body)
+	}
+
+	// 勾选不放宽任何安全检查
+	requireStatus(t, f.uploadStatic(t, "operator", "evil.zip",
+		staticZip(t, staticEntry{name: "../escape.conf", body: "x"}), "allow_no_index", "1"), http.StatusBadRequest, "STATIC_REJECTED")
 }

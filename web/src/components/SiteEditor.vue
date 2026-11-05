@@ -46,12 +46,25 @@ function uploadBundle(r: Route) {
   el.onchange = async () => {
     const file = el.files?.[0]
     if (!file) return
-    const fd = new FormData()
-    fd.append('group_id', String(props.groupId))
-    fd.append('name', file.name)
-    fd.append('file', file)
+    const send = (allowNoIndex: boolean) => {
+      const fd = new FormData()
+      fd.append('group_id', String(props.groupId))
+      fd.append('name', file.name)
+      if (allowNoIndex) fd.append('allow_no_index', '1')
+      fd.append('file', file)
+      return http.post('/static-bundles', fd)
+    }
     try {
-      const b = (await http.post('/static-bundles', fd)).data
+      let b
+      try {
+        b = (await send(false)).data
+      } catch (e: any) {
+        // 缺少根目录 index.html：多半是打包多了一层目录；确认是纯资源包（下载目录、图片 / 脚本）后再上传
+        if (e?.response?.data?.code !== 'STATIC_NO_INDEX') throw e
+        const ok = window.confirm('资源包根目录没有 index.html。\n\n如果这是网站，请检查是否多打包了一层目录；\n如果这是纯资源包（下载文件、图片、脚本等），点击“确定”继续上传，访问该路由的根路径将返回 403。')
+        if (!ok) return
+        b = (await send(true)).data
+      }
       await loadBundles()
       r.static!.bundle_id = b.id
       message.success(`已上传 ${b.files} 个文件，保存站点并发布后生效`)

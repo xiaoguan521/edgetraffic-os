@@ -219,11 +219,28 @@ func TestStaticBundle(t *testing.T) {
 	if string(b.Files[path.Join(dir, "css/app.css")]) != "body{}" || string(b.Files[path.Join(dir, "index.html")]) != "<h1>docs</h1>" {
 		t.Fatalf("static files missing: %v", b.Manifest.Files)
 	}
-	for _, bad := range []string{"../etc/passwd", "/abs", ".git/config", "a/../b", "a b", "a;b"} {
+	for _, bad := range []string{"../etc/passwd", "/abs", ".git/config", "a/../b", "a b", "a;b",
+		"a/.well-known/x", ".well-known/.hidden", ".well-known/../x", ".well-knownx/a"} {
 		in := sampleInput(t)
 		in.Sites[1].Routes[0].Static.Files = map[string][]byte{bad: []byte("x")}
 		if _, err := Render(in); err == nil {
 			t.Errorf("path %q accepted", bad)
 		}
+	}
+	// 根目录 .well-known/ 是唯一允许的点开头目录
+	for _, ok := range []string{".well-known/security.txt", ".well-known/apple-app-site-association"} {
+		if err := ValidateStaticPath(ok); err != nil {
+			t.Errorf("path %q rejected: %v", ok, err)
+		}
+	}
+	// 纯资源包（没有 index.html、也没有内联页面）也能渲染
+	in = sampleInput(t)
+	in.Sites[1].Routes[0].Static = &StaticSpec{Files: map[string][]byte{"files/a.pdf": []byte("%PDF")}}
+	b, err = Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Files[path.Join(dir, "index.html")]; ok {
+		t.Fatal("asset-only bundle must not get a generated index.html")
 	}
 }

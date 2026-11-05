@@ -41,8 +41,47 @@ func validateStaticArchiveEntry(name string) error {
 	return nil
 }
 
-// extractStatic 读取 tar.gz / zip，返回规范化的文件表（去掉单一顶层目录、跳过目录与链接、校验路径与大小）。
-func extractStatic(data []byte) (map[string][]byte, error) {
+// StaticImportOptions 是上传资源包时的可选项。
+type StaticImportOptions struct {
+	// AllowNoIndex 允许没有根目录 index.html 的纯资源包（下载目录、图片 / 脚本等资源路由）。
+	// 默认 false：缺少入口页通常是打包错误（例如多打了一层目录），上传时直接拒绝。
+	AllowNoIndex bool
+}
+
+// errStaticNoIndex 由 extractStatic 在缺少根目录 index.html 时返回；前端据错误码提示“作为纯资源包上传”。
+var errStaticNoIndex = errors.New("资源包必须包含根目录 index.html（纯资源包请以 allow_no_index=1 上传，控制台会在上传时询问）")
+
+// IsStaticNoIndex 判断错误是否为“缺少根目录 index.html”。
+func IsStaticNoIndex(err error) bool { return errors.Is(err, errStaticNoIndex) }
+
+// staticMacOSX 是 macOS 压缩工具在 zip 根目录附带的元数据目录，不发布。
+const staticMacOSX = "__MACOSX"
+
+// staticHidden 判断规范化后的路径是否属于不发布的隐藏内容（.git/、.DS_Store、.env 等，任意一级以点开头）。
+// 根目录的 .well-known/ 是公开约定目录（security.txt、App 关联文件等），予以保留；
+// 其中 acme-challenge/ 由证书签发专用 location 接管，资源包里的同名文件永远不会被访问，一并跳过。
+func staticHidden(name string) bool {
+	segs := strings.Split(name, "/")
+	if segs[0] == staticMacOSX {
+		return true
+	}
+	start := 0
+	if segs[0] == render.StaticWellKnown {
+		if len(segs) > 1 && segs[1] == "acme-challenge" {
+			return true
+		}
+		start = 1
+	}
+	for _, seg := range segs[start:] {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractStatic 读取 tar.gz / zip，返回规范化的文件表（去掉单一顶层目录、跳过目录与隐藏内容、拒绝链接、校验路径与大小）。
+func extractStatic(data []byte, opt StaticImportOptions) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	total := 0
 	add := func(name string, r io.Reader, size int64) error {
@@ -51,11 +90,8 @@ func extractStatic(data []byte) (map[string][]byte, error) {
 		}
 		name = strings.ReplaceAll(name, "\\", "/")
 		name = strings.TrimPrefix(path.Clean("/"+name), "/")
-		if strings.HasPrefix(path.Base(name), ".") || name == "" {
-			return nil // 隐藏文件（.git、.DS_Store 等）不发布
-		}
-		if err := render.ValidateStaticPath(name); err != nil {
-			return err
+		if name == "" {
+			return nil
 		}
 		if len(files) >= render.MaxStaticFiles {
 			return fmt.Errorf("资源包超过 %d 个文件", render.MaxStaticFiles)
@@ -123,27 +159,45 @@ func extractStatic(data []byte) (map[string][]byte, error) {
 	} else {
 		return nil, errors.New("只支持 .tar.gz 与 .zip")
 	}
-	if len(files) == 0 {
-		return nil, errors.New("资源包中没有文件")
-	}
-	// 只有一个顶层目录时去掉它（常见的 dist/ 打包方式）
+	// 只有一个顶层目录时去掉它（常见的 dist/ 打包方式）。
+	// 统计顶层时不计会被跳过的根目录内容（.DS_Store、macOS 压缩工具带出的 __MACOSX/ 等），
+	// 否则 dist/ + .DS_Store 会被当成两个顶层而不去掉 dist/。
 	tops := map[string]bool{}
 	for n := range files {
-		tops[strings.SplitN(n, "/", 2)[0]] = true
+		top := strings.SplitN(n, "/", 2)[0]
+		if staticHidden(top) {
+			continue
+		}
+		tops[top] = true
 	}
 	if len(tops) == 1 {
 		for top := range tops {
-			if _, isFile := files[top]; !isFile {
+			if _, isFile := files[top]; !isFile && top != render.StaticWellKnown {
 				out := map[string][]byte{}
 				for n, b := range files {
-					out[strings.TrimPrefix(n, top+"/")] = b
+					if rest, ok := strings.CutPrefix(n, top+"/"); ok {
+						out[rest] = b
+					}
 				}
 				files = out
 			}
 		}
 	}
-	if _, ok := files["index.html"]; !ok {
-		return nil, errors.New("资源包必须包含根目录 index.html")
+	// 隐藏内容统一跳过（而不是整包拒绝），其余路径必须通过渲染器同一套校验。
+	for n := range files {
+		if staticHidden(n) {
+			delete(files, n)
+			continue
+		}
+		if err := render.ValidateStaticPath(n); err != nil {
+			return nil, err
+		}
+	}
+	if len(files) == 0 {
+		return nil, errors.New("资源包中没有文件")
+	}
+	if _, ok := files["index.html"]; !ok && !opt.AllowNoIndex {
+		return nil, errStaticNoIndex
 	}
 	return files, nil
 }
@@ -175,15 +229,20 @@ func packStatic(files map[string][]byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ImportStatic 上传一个静态资源包。
+// ImportStatic 上传一个静态资源包（要求根目录 index.html）。
 func (d *Service) ImportStatic(groupID uint, name string, data []byte, user, ip string) (*store.StaticBundle, error) {
+	return d.ImportStaticWith(groupID, name, data, StaticImportOptions{}, user, ip)
+}
+
+// ImportStaticWith 按选项上传一个静态资源包。
+func (d *Service) ImportStaticWith(groupID uint, name string, data []byte, opt StaticImportOptions, user, ip string) (*store.StaticBundle, error) {
 	if len(data) > maxStaticUpload {
 		return nil, errors.New("上传文件过大")
 	}
 	if _, err := store.First[store.NodeGroup](d.Store, groupID); err != nil {
 		return nil, err
 	}
-	files, err := extractStatic(data)
+	files, err := extractStatic(data, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +260,7 @@ func (d *Service) ImportStatic(groupID uint, name string, data []byte, user, ip 
 		return nil, err
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "static.upload", ObjectType: "static_bundle", ObjectID: fmt.Sprint(row.ID),
-		Detail: map[string]any{"group": groupID, "name": name, "sha256": row.SHA256, "files": row.Files, "size": total}})
+		Detail: map[string]any{"group": groupID, "name": name, "sha256": row.SHA256, "files": row.Files, "size": total, "allow_no_index": opt.AllowNoIndex}})
 	return row, nil
 }
 
