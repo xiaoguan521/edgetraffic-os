@@ -51,6 +51,8 @@ type Server struct {
 	OnOnline func(nodeID uint)
 	// Ready 为 false 时（高可用备控制台）拒绝所有节点请求，节点会重连到 VIP 上的主控制台。
 	Ready func() bool
+	// CheckHost 在注册前检查该主机上是否已有与目标节点组冲突的实例（同机多实例，设计 0001 第 5.2 节）。
+	CheckHost func(groupID uint, hostKey string) error
 
 	mu       sync.Mutex
 	sessions map[uint]*session
@@ -187,7 +189,13 @@ func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agent
 	if len(host) > 64 {
 		host = host[:64]
 	}
-	node := &store.Node{GroupID: tok.GroupID, Name: host, Hostname: host, RemoteAddr: ip, Status: "offline", AgentVersion: req.AgentVersion}
+	hostKey := HostKey(req.MachineFingerprint)
+	if s.CheckHost != nil {
+		if err := s.CheckHost(tok.GroupID, hostKey); err != nil {
+			return fail(codes.FailedPrecondition, err.Error())
+		}
+	}
+	node := &store.Node{GroupID: tok.GroupID, Name: host, Hostname: host, HostKey: hostKey, RemoteAddr: ip, Status: "offline", AgentVersion: req.AgentVersion}
 	var certDER []byte
 	if err := nd.WithContext(ctx).Create(node); err != nil {
 		return nil, status.Error(codes.Internal, "create node")
@@ -310,6 +318,10 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(agentVer), nd.Arch.Value(arch),
 			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.TLSLib.Value(TLSLib(b.Hello.SyappVersionOutput)), nd.LuaAddon.Value(LuaAddon(b.Hello.LuaAddon)), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
 			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
+		if hk := HostKey(b.Hello.MachineFingerprint); hk != "" {
+			// 补齐升级前注册的节点的主机标识
+			_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.HostKey.Value(hk))
+		}
 		s.Log.Info("node online", "node", nodeID, "revision", b.Hello.AppliedRevisionId)
 		go func() {
 			s.PushLicense(nodeID)
@@ -549,4 +561,14 @@ func (s *Server) FetchPackage(req *agentv1.FetchPackageRequest, stream agentv1.A
 			return nil
 		}
 	}
+}
+
+var hostKeyRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// HostKey 返回 agent 上报的机器指纹（/etc/machine-id 的 sha256）；格式不符时为空（视为未知主机，不参与同机检查）。
+func HostKey(fp string) string {
+	if hostKeyRe.MatchString(fp) {
+		return fp
+	}
+	return ""
 }

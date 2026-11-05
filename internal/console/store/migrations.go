@@ -31,6 +31,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610300011_static_bundles", Migrate: migrateStaticBundles},
 		{ID: "202610310001_gm_tls", Migrate: migrateGMTLS},
 		{ID: "202610310002_rules_lua", Migrate: migrateRulesLua},
+		{ID: "202611050001_instance_profile", Migrate: migrateInstanceProfile},
 	}
 }
 
@@ -552,6 +553,21 @@ func migrateRulesLua(tx *gorm.DB) error {
 		LuaAddon string `gorm:"size:40"`
 	}
 	if err := tx.AutoMigrate(&IPSet{}); err != nil {
+		return err
+	}
+	return tx.AutoMigrate(&Node{})
+}
+
+// ---- 202611050001_instance_profile：节点组实例档案与节点主机标识（设计 0001，P11-B）----
+
+func migrateInstanceProfile(tx *gorm.DB) error {
+	type NodeGroup struct {
+		InstanceProfile string
+	}
+	type Node struct {
+		HostKey string `gorm:"index;size:64"`
+	}
+	if err := tx.AutoMigrate(&NodeGroup{}); err != nil {
 		return err
 	}
 	return tx.AutoMigrate(&Node{})
