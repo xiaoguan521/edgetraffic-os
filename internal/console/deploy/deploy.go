@@ -660,7 +660,12 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			}
 			st := res.Status.String()
 			if res.Status == agentv1.CommandResult_APPLIED {
-				_, _ = q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).Update(q.Node.AppliedRevision, rev.ID)
+				set := []field.AssignExpr{q.Node.AppliedRevision.Value(rev.ID)}
+				if dep.Kind == "restore" || dep.Kind == "rollback" {
+					set = append(set, q.Node.Drifted.Value(false), q.Node.TreeHash.Value(rev.Digest))
+					_, _ = q.NodeDrift.WithContext(bg).Where(q.NodeDrift.NodeID.Eq(n.ID)).Delete()
+				}
+				_, _ = q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).UpdateSimple(set...)
 			}
 			upd(st, res.Message, res.Stderr, true)
 		}(i)

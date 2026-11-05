@@ -60,14 +60,15 @@ type PostCheck struct {
 
 // Config 描述节点上的路径与提权方式。
 type Config struct {
-	ConfRoot    string        // /opt/syapp/conf
-	PidFile     string        // /run/syapp/syapp.pid
-	ErrorLog    string        // /var/log/syapp/error.log
-	LockFile    string        // /run/syapp-agent/apply.lock
-	Wrapper     []string      // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
-	KeepRelease int           // 保留的版本数，默认 20
-	ConfirmWait time.Duration // reload 后等待 worker 更换的上限，默认 10s
-	HTTPPort    int           // 后置探活端口，默认 80 / 443
+	ConfRoot    string          // /opt/syapp/conf
+	PidFile     string          // /run/syapp/syapp.pid
+	ErrorLog    string          // /var/log/syapp/error.log
+	LockFile    string          // /run/syapp-agent/apply.lock
+	Wrapper     []string        // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
+	KeepRelease int             // 保留的版本数，默认 20
+	ConfirmWait time.Duration   // reload 后等待 worker 更换的上限，默认 10s
+	Workers     func(int) []int // 测试可注入 worker PID 查询（默认读取 /proc）
+	HTTPPort    int             // 后置探活端口，默认 80 / 443
 	HTTPSPort   int
 }
 
@@ -259,10 +260,10 @@ func (a *Applier) lock() (func(), error) {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
-	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
 }
 
 // setLink 原子地把 name 指向 target（先建临时软链再 rename）。
@@ -362,7 +363,9 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 			return err
 		}
 		_, err = io.Copy(f, io.LimitReader(tr, maxBundle))
-		f.Close()
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
 		if err != nil {
 			return err
 		}
@@ -436,7 +439,7 @@ func verifyDir(dir string, m *manifest) error {
 	sort.Strings(names)
 	all := sha256.New()
 	for _, n := range names {
-		fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
+		_, _ = fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
 	}
 	if "sha256:"+hex.EncodeToString(all.Sum(nil)) != m.Digest {
 		return errors.New("manifest digest does not match file list")
@@ -477,7 +480,7 @@ func (a *Applier) TreeDigest() (string, error) {
 	}
 	m, err := readManifest(dir)
 	if err != nil {
-		return "", err
+		return "drifted:" + err.Error(), nil
 	}
 	if err := verifyDir(dir, m); err != nil {
 		return "drifted:" + err.Error(), nil
@@ -503,11 +506,22 @@ func (a *Applier) snapshot() (procSnapshot, error) {
 	if err := syscall.Kill(pid, 0); err != nil && !errors.Is(err, syscall.EPERM) {
 		return procSnapshot{}, fmt.Errorf("master %d: %w", pid, err)
 	}
-	s := procSnapshot{master: pid, workers: childPIDs(pid)}
+	s := procSnapshot{master: pid, workers: a.workersOf(pid)}
 	if fi, err := os.Stat(a.C.ErrorLog); err == nil {
 		s.logOff = fi.Size()
 	}
 	return s, nil
+}
+
+func (a *Applier) workersOf(parent int) map[int]bool {
+	if a.C.Workers != nil {
+		res := map[int]bool{}
+		for _, pid := range a.C.Workers(parent) {
+			res[pid] = true
+		}
+		return res
+	}
+	return childPIDs(parent)
 }
 
 // childPIDs 从 /proc 读取某进程的直接子进程。
@@ -608,7 +622,7 @@ func (a *Applier) newErrors(off int64) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return ""
 	}
@@ -648,7 +662,7 @@ func (a *Applier) postChecks(ctx context.Context, checks []PostCheck) error {
 		if err != nil {
 			return fmt.Errorf("%s %s%s: %v", scheme, c.Host, c.Path, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		okStatus := len(c.ExpectStatus) == 0 && resp.StatusCode < 500
 		for _, s := range c.ExpectStatus {
 			if s == resp.StatusCode {

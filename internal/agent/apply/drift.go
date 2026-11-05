@@ -54,7 +54,13 @@ func (a *Applier) Drift() (*DriftReport, error) {
 	}
 	m, err := readManifest(dir)
 	if err != nil {
-		return nil, err
+		// MANIFEST.json 本身被删除或改坏时，仍上报为漂移，以便控制台触发恢复。
+		h := sha256.Sum256([]byte("corrupt-manifest:" + err.Error()))
+		return &DriftReport{
+			Revision: rel,
+			TreeHash: "drifted:" + hex.EncodeToString(h[:16]),
+			Files:    []DriftFile{{Path: manifestName, Change: "modified", Omitted: true}},
+		}, nil
 	}
 	rep := &DriftReport{Revision: rel}
 	state := sha256.New()

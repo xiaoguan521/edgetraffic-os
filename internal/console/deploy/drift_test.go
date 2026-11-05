@@ -103,3 +103,41 @@ func TestAdoptDriftRejectsRemovals(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+// DRF-03：节点恢复成功后立即清除节点的 Drifted 标记与 NodeDrift 记录。
+func TestRestoreClearsDriftStateImmediately(t *testing.T) {
+	d, g := newTestService(t)
+	addProxySite(t, d, g)
+	dep, err := d.Publish(g.ID, "v1", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, d, dep)
+
+	q := query.Use(d.Store.DB)
+	ctx := context.Background()
+	node := &store.Node{GroupID: g.ID, Name: "edge-1", Status: "online", Drifted: true, TreeHash: "drifted:manual", AppliedRevision: dep.RevisionID}
+	if err := q.Node.WithContext(ctx).Create(node); err != nil {
+		t.Fatal(err)
+	}
+	_ = q.NodeDrift.WithContext(ctx).Create(&store.NodeDrift{NodeID: node.ID, RevisionID: dep.RevisionID, TreeHash: "drifted:manual", Files: `[{"path":"syapp.conf"}]`})
+
+	d.Agents = &applyAgents{d: d}
+	rdep, err := d.Restore(node.ID, "alice", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := waitDone(t, d, rdep); got.Status != "APPLIED" {
+		t.Fatalf("restore status = %s", got.Status)
+	}
+	after, err := store.First[store.Node](d.Store, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Drifted || strings.HasPrefix(after.TreeHash, "drifted") {
+		t.Fatalf("node still marked drifted after restore: %+v", after)
+	}
+	if cnt, _ := q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(node.ID)).Count(); cnt != 0 {
+		t.Fatalf("node_drifts rows remaining = %d", cnt)
+	}
+}
