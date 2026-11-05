@@ -1,6 +1,6 @@
 # 四层代理（渲染器生成，禁止手改）
 log_format  edge_stream  '$remote_addr [$time_iso8601] $protocol $server_port $status $bytes_sent $bytes_received $session_time "$upstream_addr"';
-access_log  /var/log/syapp/stream.log  edge_stream;
+access_log  {{ .P.StreamLog }}  edge_stream;
 {{- range $s := .Streams }}
 
 upstream st_{{ $s.Name }} {

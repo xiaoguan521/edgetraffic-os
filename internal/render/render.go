@@ -31,7 +31,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"indent":   indentSnippet,
 	"ident":    func(s string) string { return strings.ReplaceAll(s, "-", "_") }, // 变量名不能含 -
 	"luaHTTP":  renderLuaHTTP,
-	"luaLoad":  func() string { return luaLoadModules },
+	"luaLoad":  luaLoad,
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
 // routeDir 为静态路由生成稳定的目录名，与路由在列表中的位置无关。
@@ -148,7 +148,8 @@ func Render(in Input) (*Bundle, error) {
 			RulesHTTP   string
 			RulesServer string
 			AuthLoc     string
-		}{in.Revision, s, routes, renderRulesHTTP(s), renderRulesServer(s), renderAuthLocation(s)}); err != nil {
+			P           profileView
+		}{in.Revision, s, routes, renderRulesHTTP(s), renderRulesServer(s), renderAuthLocation(s), in.P()}); err != nil {
 			return nil, err
 		}
 		if s.HTTPS != nil {
@@ -237,18 +238,10 @@ func GMFiles(g *GMPair) map[string]string {
 // ReleasesDir 是节点上版本目录的父目录。国密 ssl_conf_command 的文件路径不按配置目录解析，只能写本版本目录的绝对路径。
 var ReleasesDir = layout.System("").ReleasesDir() + "/"
 
-// RebaseRevision 把配置文件中指向 oldRev 版本目录的绝对路径改写为 newRev（证书续期在线上版本基础上重打包时使用）。
-// 只改写 .conf 文件；证书、私钥与静态文件原样保留。
+// RebaseRevision 把配置文件中指向默认实例 oldRev 版本目录的绝对路径改写为 newRev（证书续期在线上版本基础上重打包时使用）。
+// 只改写 .conf 文件；证书、私钥与静态文件原样保留。具名实例使用 RebaseRevisionFor。
 func RebaseRevision(files map[string][]byte, oldRev, newRev string) map[string][]byte {
-	out := make(map[string][]byte, len(files))
-	from, to := []byte(ReleasesDir+oldRev+"/"), []byte(ReleasesDir+newRev+"/")
-	for n, b := range files {
-		if strings.HasSuffix(n, ".conf") && revisionRe.MatchString(oldRev) && revisionRe.MatchString(newRev) {
-			b = bytes.ReplaceAll(b, from, to)
-		}
-		out[n] = b
-	}
-	return out
+	return rebase(files, ReleasesDir, oldRev, newRev)
 }
 
 func manifestRevision(files map[string][]byte) string {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // 四层代理（规格书 7.3 / P9，授权功能 stream）：TCP / UDP 端口转发，可选按 TLS SNI 分流（ssl_preread，不解密）。
@@ -28,14 +30,12 @@ type SNIRoute struct {
 	Servers []UpstreamServer `json:"servers"`
 }
 
-// 这些端口由平台使用，四层代理不能占用。
-var reservedPorts = map[int]bool{80: true, 443: true, 8081: true, 22: true}
-
 var ErrStream = errors.New("invalid stream proxy")
 
 func (in *Input) validateStreams() error {
 	names := map[string]bool{}
 	ports := map[string]bool{}
+	reserved := in.Profile.reservedPorts() // 平台使用的端口（SSH 与本实例档案中的端口），四层代理不能占用
 	for i := range in.Streams {
 		s := &in.Streams[i]
 		if err := ValidateName(s.Name); err != nil {
@@ -51,8 +51,12 @@ func (in *Input) validateStreams() error {
 		if s.Protocol != "tcp" && s.Protocol != "udp" {
 			return fmt.Errorf("%w: %s: protocol must be tcp or udp", ErrStream, s.Name)
 		}
-		if s.Listen < 1 || s.Listen > 65535 || reservedPorts[s.Listen] {
-			return fmt.Errorf("%w: %s: port %d not allowed (1–65535, not 22/80/443/8081)", ErrStream, s.Name, s.Listen)
+		if s.Listen < 1 || s.Listen > 65535 || reserved[s.Listen] {
+			return fmt.Errorf("%w: %s: port %d not allowed (1–65535, not 22/%d/%d/%d)", ErrStream, s.Name, s.Listen,
+				in.Profile.HTTP(), in.Profile.HTTPS(), in.Profile.Status())
+		}
+		if in.Profile.mode() == layout.ModeUser && s.Listen < minUserPort {
+			return fmt.Errorf("%w: %s: user mode cannot listen on port %d (< %d)", ErrStream, s.Name, s.Listen, minUserPort)
 		}
 		key := fmt.Sprintf("%s/%d", s.Protocol, s.Listen)
 		if ports[key] {
