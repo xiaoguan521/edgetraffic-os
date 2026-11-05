@@ -61,7 +61,7 @@ func (s *Server) createImport(c *gin.Context) {
 	sweepCerts()
 	gid := queryGroup(c)
 	if gid == 0 {
-		fmt.Sscan(c.PostForm("group_id"), &gid)
+		_, _ = fmt.Sscan(c.PostForm("group_id"), &gid)
 	}
 	g, err := store.First[store.NodeGroup](s.Store, gid)
 	if err != nil {
@@ -82,7 +82,7 @@ func (s *Server) createImport(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxImportUpload+1))
 	if err != nil {
 		failErr(c, err)

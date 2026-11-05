@@ -112,14 +112,14 @@ func TestStaticHTTPRejectsUnsafeBundles(t *testing.T) {
 		msg        string
 		code       string
 	}{
-		{"dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "../escape.conf", body: "x"}), "越界"},
-		{"nested dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "js/../../escape.conf", body: "x"}), "越界"},
-		{"backslash dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: `..\escape.conf`, body: "x"}), "越界"},
-		{"absolute", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "/etc/escape.conf", body: "x"}), "绝对路径"},
-		{"drive letter", "a.zip", staticZip(t, idx, staticEntry{name: `C:\escape.conf`, body: "x"}), "绝对路径"},
-		{"tar symlink", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接"},
-		{"tar hard link", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd", hard: true}), "链接"},
-		{"zip symlink", "a.zip", staticZip(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接"},
+		{"dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "../escape.conf", body: "x"}), "越界", ""},
+		{"nested dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: "js/../../escape.conf", body: "x"}), "越界", ""},
+		{"backslash dot-dot", "a.zip", staticZip(t, idx, staticEntry{name: `..\escape.conf`, body: "x"}), "越界", ""},
+		{"absolute", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "/etc/escape.conf", body: "x"}), "绝对路径", ""},
+		{"drive letter", "a.zip", staticZip(t, idx, staticEntry{name: `C:\escape.conf`, body: "x"}), "绝对路径", ""},
+		{"tar symlink", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接", ""},
+		{"tar hard link", "a.tar.gz", staticTarGz(t, idx, staticEntry{name: "passwd", link: "/etc/passwd", hard: true}), "链接", ""},
+		{"zip symlink", "a.zip", staticZip(t, idx, staticEntry{name: "passwd", link: "/etc/passwd"}), "链接", ""},
 		{"missing index", "a.zip", staticZip(t, staticEntry{name: "dist/js/app.js", body: "1"}), "index.html", "STATIC_NO_INDEX"},
 		{"index only in subdir", "a.zip", staticZip(t, staticEntry{name: "a/index.html", body: "x"}, staticEntry{name: "b/app.js", body: "1"}), "index.html", "STATIC_NO_INDEX"},
 		{"only hidden files", "a.zip", staticZip(t, staticEntry{name: ".git/config", body: "x"}, staticEntry{name: ".DS_Store", body: "x"}), "没有文件", ""},

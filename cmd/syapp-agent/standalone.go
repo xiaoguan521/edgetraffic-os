@@ -43,7 +43,7 @@ func localConfigCheck(ap *apply.Applier, replace bool, backupDir string, now tim
 	}
 	out := filepath.Join(backupDir, "standalone-"+now.UTC().Format("20060102T150405Z")+".tar.gz")
 	if err := tarDir(dir, out); err != nil {
-		os.Remove(out)
+		_ = os.Remove(out)
 		return "", fmt.Errorf("备份本机配置失败：%w", err)
 	}
 	return out, nil
@@ -54,7 +54,7 @@ func tarDir(dir, out string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -87,7 +87,7 @@ func tarDir(dir, out string) error {
 		if err != nil {
 			return err
 		}
-		defer src.Close()
+		defer func() { _ = src.Close() }()
 		_, err = io.Copy(tw, src)
 		return err
 	})

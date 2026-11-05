@@ -42,8 +42,12 @@ func TestLocalConfigCheck(t *testing.T) {
 	}
 	// 独立模式下加了站点：默认拒绝
 	site := filepath.Join(ap.C.ConfRoot, "current", "conf.d", "www.conf")
-	os.MkdirAll(filepath.Dir(site), 0o755)
-	os.WriteFile(site, []byte("server { listen 80; server_name www.example.com; }\n"), 0o644)
+	if err := os.MkdirAll(filepath.Dir(site), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(site, []byte("server { listen 80; server_name www.example.com; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := localConfigCheck(ap, false, bk, now); err == nil || !strings.Contains(err.Error(), "-replace-local-config") {
 		t.Fatalf("customised node accepted: %v", err)
 	}
@@ -58,8 +62,11 @@ func TestLocalConfigCheck(t *testing.T) {
 	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("backup %s: %v %v", p, fi, err)
 	}
-	f, _ := os.Open(p)
-	defer f.Close()
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		t.Fatal(err)

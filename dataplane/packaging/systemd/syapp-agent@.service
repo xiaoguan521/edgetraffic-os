@@ -1,0 +1,22 @@
+[Unit]
+Description=EdgeTraffic OS edge agent (syapp-agent instance %i)
+After=network-online.target syapp@%i.service
+Wants=network-online.target
+
+[Service]
+User=syapp-agent
+Group=syapp
+EnvironmentFile=-/etc/syapp-agent/agent-%i.env
+ExecStart=/usr/bin/syapp-agent run -data /var/lib/syapp-agent-%i -conf-root /opt/syapp/instances/%i/conf -pid-file /run/syapp-%i/syapp.pid -lock /run/syapp-agent-%i/apply.lock -wrapper "/usr/bin/sudo -n /usr/libexec/syapp/syapp-wrapper --instance %i"
+Restart=always
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/syapp/instances/%i/conf /var/lib/syapp-agent-%i /run/syapp-agent-%i -/run/syapp-%i /var/log/syapp /var/cache/syapp -/run/sudo -/opt/syapp/versions /opt/syapp/sbin
+RuntimeDirectory=syapp-agent-%i
+StateDirectory=syapp-agent-%i
+
+[Install]
+WantedBy=multi-user.target
+

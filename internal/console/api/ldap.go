@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,15 +85,19 @@ func (cfg *LDAPConfig) validate() error {
 
 func (s *Server) ldapDial(cfg LDAPConfig) (*ldap.Conn, error) {
 	u, _ := url.Parse(cfg.URL)
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
 	tc := &tls.Config{ServerName: u.Hostname(), InsecureSkipVerify: cfg.SkipTLSVerify, MinVersion: tls.VersionTLS12} //nolint:gosec // 管理员显式选择（内网自签证书）
-	conn, err := ldap.DialURL(cfg.URL, ldap.DialWithTLSConfig(tc))
+	conn, err := ldap.DialURL(cfg.URL, ldap.DialWithDialer(&net.Dialer{Timeout: timeout}), ldap.DialWithTLSConfig(tc))
 	if err != nil {
 		return nil, err
 	}
-	conn.SetTimeout(time.Duration(cfg.TimeoutSeconds) * time.Second)
+	conn.SetTimeout(timeout)
 	if u.Scheme == "ldap" {
 		if err := conn.StartTLS(tc); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("StartTLS 失败（拒绝明文传输口令）：%w", err)
 		}
 	}
@@ -108,7 +113,7 @@ func (s *Server) ldapAuth(cfg LDAPConfig, username, password string) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if cfg.BindDN != "" {
 		pass := ""
 		if cfg.BindPassEnc != "" {

@@ -154,7 +154,7 @@ func (s *Server) updateIPSet(c *gin.Context) {
 // 同名 IP 集存在时整体替换（用于定期更新地域库）。
 func (s *Server) importIPSet(c *gin.Context) {
 	var gid uint
-	fmt.Sscan(c.PostForm("group_id"), &gid)
+	_, _ = fmt.Sscan(c.PostForm("group_id"), &gid)
 	data, ok := readForm(c, "file", 64<<20)
 	if !ok {
 		return

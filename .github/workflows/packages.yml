@@ -4,6 +4,23 @@
 name: packages
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "dataplane/**"
+      - "scripts/release/**"
+      - "cmd/syapp-wrapper/**"
+      - "internal/wrapper/**"
+      - ".github/workflows/packages.yml"
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "dataplane/**"
+      - "scripts/release/**"
+      - "cmd/syapp-wrapper/**"
+      - "internal/wrapper/**"
+      - ".github/workflows/packages.yml"
   workflow_dispatch:
     inputs:
       smoke_set:

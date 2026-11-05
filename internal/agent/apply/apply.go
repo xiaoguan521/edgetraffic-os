@@ -60,15 +60,18 @@ type PostCheck struct {
 
 // Config 描述节点上的路径与提权方式。
 type Config struct {
-	ConfRoot    string        // /opt/syapp/conf
-	PidFile     string        // /run/syapp/syapp.pid
-	ErrorLog    string        // /var/log/syapp/error.log
-	LockFile    string        // /run/syapp-agent/apply.lock
-	Wrapper     []string      // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
-	KeepRelease int           // 保留的版本数，默认 20
-	ConfirmWait time.Duration // reload 后等待 worker 更换的上限，默认 10s
-	HTTPPort    int           // 后置探活端口，默认 80 / 443
-	HTTPSPort   int
+	ConfRoot     string          // /opt/syapp/conf
+	PidFile      string          // /run/syapp/syapp.pid
+	ErrorLog     string          // /var/log/syapp/error.log
+	LockFile     string          // /run/syapp-agent/apply.lock
+	Wrapper      []string        // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
+	KeepRelease  int             // 保留的版本数，默认 20
+	ConfirmWait  time.Duration   // reload 后等待 worker 更换的上限，默认 10s
+	Workers      func(int) []int // 测试可注入 worker PID 查询（默认读取 /proc）
+	HTTPPort     int             // 后置探活端口，默认 80 / 443
+	HTTPSPort    int
+	MinFreeBytes uint64                       // 解包前要求的最少可用磁盘字节（默认至少 16 MiB 或 2 倍包体积）
+	FreeBytes    func(string) (uint64, error) // 测试可注入可用磁盘空间查询（默认 syscall.Statfs）
 }
 
 // Applier 执行发布。
@@ -259,10 +262,10 @@ func (a *Applier) lock() (func(), error) {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
-	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
 }
 
 // setLink 原子地把 name 指向 target（先建临时软链再 rename）。
@@ -314,6 +317,9 @@ func (a *Applier) unpack(rev string, bundle []byte, digest string) error {
 
 // extractTo 把包解到 tmp 并按清单逐文件校验；失败时清理 tmp。
 func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error {
+	if err := a.checkFreeSpace(filepath.Dir(tmp), uint64(len(bundle))); err != nil {
+		return err
+	}
 	_ = os.RemoveAll(tmp)
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return err
@@ -362,7 +368,9 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 			return err
 		}
 		_, err = io.Copy(f, io.LimitReader(tr, maxBundle))
-		f.Close()
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
 		if err != nil {
 			return err
 		}
@@ -381,6 +389,38 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 		return err
 	}
 	ok = true
+	return nil
+}
+
+func (a *Applier) checkFreeSpace(dir string, bundleBytes uint64) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	need := a.C.MinFreeBytes
+	if need == 0 {
+		need = 16 << 20
+		if two := 2 * bundleBytes; two > need {
+			need = two
+		}
+	}
+	var avail uint64
+	if a.C.FreeBytes != nil {
+		var err error
+		avail, err = a.C.FreeBytes(dir)
+		if err != nil {
+			return err
+		}
+	} else {
+		var st syscall.Statfs_t
+		if err := syscall.Statfs(dir, &st); err != nil {
+			return err
+		}
+		//nolint:gosec // Bsize is always positive for mounted filesystems
+		avail = st.Bavail * uint64(st.Bsize)
+	}
+	if avail < need {
+		return fmt.Errorf("insufficient disk space: %d bytes available, need at least %d bytes", avail, need)
+	}
 	return nil
 }
 
@@ -436,7 +476,7 @@ func verifyDir(dir string, m *manifest) error {
 	sort.Strings(names)
 	all := sha256.New()
 	for _, n := range names {
-		fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
+		_, _ = fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
 	}
 	if "sha256:"+hex.EncodeToString(all.Sum(nil)) != m.Digest {
 		return errors.New("manifest digest does not match file list")
@@ -477,7 +517,7 @@ func (a *Applier) TreeDigest() (string, error) {
 	}
 	m, err := readManifest(dir)
 	if err != nil {
-		return "", err
+		return "drifted:" + err.Error(), nil
 	}
 	if err := verifyDir(dir, m); err != nil {
 		return "drifted:" + err.Error(), nil
@@ -503,11 +543,22 @@ func (a *Applier) snapshot() (procSnapshot, error) {
 	if err := syscall.Kill(pid, 0); err != nil && !errors.Is(err, syscall.EPERM) {
 		return procSnapshot{}, fmt.Errorf("master %d: %w", pid, err)
 	}
-	s := procSnapshot{master: pid, workers: childPIDs(pid)}
+	s := procSnapshot{master: pid, workers: a.workersOf(pid)}
 	if fi, err := os.Stat(a.C.ErrorLog); err == nil {
 		s.logOff = fi.Size()
 	}
 	return s, nil
+}
+
+func (a *Applier) workersOf(parent int) map[int]bool {
+	if a.C.Workers != nil {
+		res := map[int]bool{}
+		for _, pid := range a.C.Workers(parent) {
+			res[pid] = true
+		}
+		return res
+	}
+	return childPIDs(parent)
 }
 
 // childPIDs 从 /proc 读取某进程的直接子进程。
@@ -608,7 +659,7 @@ func (a *Applier) newErrors(off int64) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return ""
 	}
@@ -648,7 +699,7 @@ func (a *Applier) postChecks(ctx context.Context, checks []PostCheck) error {
 		if err != nil {
 			return fmt.Errorf("%s %s%s: %v", scheme, c.Host, c.Path, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		okStatus := len(c.ExpectStatus) == 0 && resp.StatusCode < 500
 		for _, s := range c.ExpectStatus {
 			if s == resp.StatusCode {

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,10 +56,11 @@ type Summary struct {
 
 // table 把一张表的导出 / 导入绑定到具体的模型类型（gob 需要具体类型）。
 type table struct {
-	name  string
-	model any
-	dump  func(db *gorm.DB, w io.Writer) (int64, error)
-	load  func(db *gorm.DB, r io.Reader) (int64, error)
+	name   string
+	model  any
+	dump   func(db *gorm.DB, w io.Writer) (int64, error)
+	load   func(db *gorm.DB, r io.Reader) (int64, error)
+	verify func(r io.Reader) (int64, error)
 }
 
 func tbl[T any](name string) table {
@@ -95,28 +97,55 @@ func tbl[T any](name string) table {
 				n += int64(len(batch))
 			}
 		},
+		verify: func(r io.Reader) (int64, error) {
+			dec := gob.NewDecoder(r)
+			var n int64
+			for {
+				var batch []T
+				if err := dec.Decode(&batch); err == io.EOF {
+					return n, nil
+				} else if err != nil {
+					return n, err
+				}
+				n += int64(len(batch))
+			}
+		},
 	}
 }
 
 const clauseAssociations = "*.*" // gorm: Omit 所有关联
 
-// tables 按依赖顺序列出；AcmeChallenge 是进行中的临时数据，不备份。
+// tables 按依赖顺序列出；AcmeChallenge 是进行中的临时数据，不备份（见 TestTablesCoverAllStoreModels）。
 func tables() []table {
 	return []table{
 		tbl[store.SystemKV]("system_kvs"),
 		tbl[store.User]("users"),
+		tbl[store.APIToken]("api_tokens"),
+		tbl[store.LicenseStore]("license_stores"),
+		tbl[store.Certificate]("certificates"),
+		tbl[store.AcmeOrder]("acme_orders"),
+		tbl[store.AlertChannel]("alert_channels"),
+		tbl[store.AlertRule]("alert_rules"),
+		tbl[store.AlertEvent]("alert_events"),
+		tbl[store.DataplanePackage]("dataplane_packages"),
 		tbl[store.NodeGroup]("node_groups"),
 		tbl[store.Node]("nodes"),
+		tbl[store.NodeDrift]("node_drifts"),
 		tbl[store.EnrollToken]("enroll_tokens"),
-		tbl[store.Site]("sites"),
+		tbl[store.StaticBundle]("static_bundles"),
+		tbl[store.IPSet]("ip_sets"),
 		tbl[store.Upstream]("upstreams"),
-		tbl[store.Certificate]("certificates"),
+		tbl[store.StreamService]("stream_services"),
+		tbl[store.Site]("sites"),
+		tbl[store.Snippet]("snippets"),
+		tbl[store.ConfigImport]("config_imports"),
 		tbl[store.Revision]("revisions"),
 		tbl[store.Deployment]("deployments"),
 		tbl[store.DeploymentNode]("deployment_nodes"),
+		tbl[store.ReleaseRequest]("release_requests"),
+		tbl[store.CanaryRelease]("canary_releases"),
+		tbl[store.DataplaneUpgrade]("dataplane_upgrades"),
 		tbl[store.AuditLog]("audit_logs"),
-		tbl[store.LicenseStore]("license_stores"),
-		tbl[store.AcmeOrder]("acme_orders"),
 		tbl[store.MetricMinute]("metric_minutes"),
 	}
 }
@@ -148,7 +177,7 @@ func Create(w io.Writer, st *store.Store, dataDir string, pass []byte, opt Optio
 	// 所有表在同一个只读事务里读取，得到一致的快照（不会出现版本已写入、发布记录还没有的半截状态）。
 	// PostgreSQL 默认 READ COMMITTED 每条语句各看一次，需要 REPEATABLE READ。
 	txOpt := &sql.TxOptions{}
-	if st.DB.Dialector.Name() == "postgres" {
+	if st.DB.Name() == "postgres" {
 		txOpt = &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
 	}
 	err := st.DB.Transaction(func(tx *gorm.DB) error {
@@ -217,35 +246,35 @@ func Create(w io.Writer, st *store.Store, dataDir string, pass []byte, opt Optio
 	if _, err := w.Write(aead.Seal(nil, nonce, plain.Bytes(), header)); err != nil {
 		return nil, err
 	}
+	_ = st.SetKV("last_backup_at", sum.CreatedAt.Format(time.RFC3339))
 	return sum, nil
 }
 
-// Restore 把备份恢复到空库与数据目录。force 为 true 时覆盖数据目录中已有的密钥文件。
-func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bool) (*Summary, error) {
+func unpackArchive(r io.Reader, pass []byte) (map[string][]byte, *Summary, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, 8<<30))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(raw) < len(magic)+28 || string(raw[:len(magic)]) != magic {
-		return nil, errors.New("不是 EdgeTraffic OS 备份文件")
+		return nil, nil, errors.New("不是 EdgeTraffic OS 备份文件")
 	}
 	header := raw[:len(magic)+28]
 	salt, nonce := header[len(magic):len(magic)+16], header[len(magic)+16:]
 	blk, err := aes.NewCipher(deriveKey(pass, salt))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	aead, err := cipher.NewGCM(blk)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	plain, err := aead.Open(nil, nonce, raw[len(header):], header)
 	if err != nil {
-		return nil, errors.New("无法解密：口令错误或备份文件已损坏")
+		return nil, nil, errors.New("无法解密：口令错误或备份文件已损坏")
 	}
 	gz, err := gzip.NewReader(bytes.NewReader(plain))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	entries := map[string][]byte{}
 	tr := tar.NewReader(gz)
@@ -255,22 +284,106 @@ func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bo
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		clean := path.Clean(h.Name)
 		if h.Typeflag != tar.TypeReg || clean != h.Name || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") {
-			return nil, fmt.Errorf("备份中有不安全的路径：%s", h.Name)
+			return nil, nil, fmt.Errorf("备份中有不安全的路径：%s", h.Name)
 		}
 		b, err := io.ReadAll(tr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		entries[clean] = b
 	}
 	var sum Summary
 	if err := json.Unmarshal(entries["manifest.json"], &sum); err != nil {
-		return nil, errors.New("备份缺少清单")
+		return nil, nil, errors.New("备份缺少清单")
 	}
+	return entries, &sum, nil
+}
+
+// Verify 校验备份文件完整性：解密、校验清单、逐表反序列化 gob 并核对行数，不修改任何数据库或磁盘文件。
+func Verify(r io.Reader, pass []byte) (*Summary, error) {
+	entries, sum, err := unpackArchive(r, pass)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tables() {
+		b, ok := entries["db/"+t.name+".gob"]
+		if !ok {
+			if sum.Tables[t.name] > 0 {
+				return nil, fmt.Errorf("备份缺少表 %s 的数据文件（清单记录 %d 行）", t.name, sum.Tables[t.name])
+			}
+			continue
+		}
+		n, err := t.verify(bytes.NewReader(b))
+		if err != nil {
+			return nil, fmt.Errorf("verify %s: %w", t.name, err)
+		}
+		if want, ok := sum.Tables[t.name]; ok && n != want {
+			return nil, fmt.Errorf("表 %s 行数与清单不一致：解码 %d 行，清单 %d 行", t.name, n, want)
+		}
+	}
+	for _, f := range sum.Files {
+		if _, ok := entries["files/"+f]; !ok {
+			return nil, fmt.Errorf("备份缺少文件 files/%s", f)
+		}
+	}
+	return sum, nil
+}
+
+// Prune 清理备份目录中的旧备份（*.etosbk）：保留最新的 keepLast 份，并保留 keepDays 天内的备份。
+// 返回被删除的文件路径列表。
+func Prune(dir string, keepLast, keepDays int, now time.Time) ([]string, error) {
+	if keepLast <= 0 && keepDays <= 0 {
+		return nil, errors.New("至少指定 keepLast 或 keepDays 之一")
+	}
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	type item struct {
+		path    string
+		modTime time.Time
+	}
+	var items []item
+	for _, de := range des {
+		if de.IsDir() || !strings.HasSuffix(de.Name(), ".etosbk") {
+			continue
+		}
+		fi, err := de.Info()
+		if err != nil {
+			continue
+		}
+		items = append(items, item{path: filepath.Join(dir, de.Name()), modTime: fi.ModTime()})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].modTime.After(items[j].modTime)
+	})
+	var removed []string
+	for idx, it := range items {
+		if keepLast > 0 && idx < keepLast {
+			continue
+		}
+		if keepDays > 0 && now.Sub(it.modTime) < time.Duration(keepDays)*24*time.Hour {
+			continue
+		}
+		if err := os.Remove(it.path); err != nil {
+			return removed, err
+		}
+		removed = append(removed, it.path)
+	}
+	return removed, nil
+}
+
+// Restore 把备份恢复到空库与数据目录。force 为 true 时覆盖数据目录中已有的密钥文件。
+func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bool) (*Summary, error) {
+	entries, sumPtr, err := unpackArchive(r, pass)
+	if err != nil {
+		return nil, err
+	}
+	sum := *sumPtr
 
 	// 目标必须是空库：恢复会保留原有主键，不能与已有数据混在一起
 	// 只启动过、未初始化的控制台会在 system_kvs 里生成启动密钥，恢复时以备份为准覆盖。
@@ -338,7 +451,7 @@ func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bo
 
 // resetSequences：PostgreSQL 的自增序列不会因为显式写入主键而前进，恢复后需要对齐到最大值。
 func resetSequences(tx *gorm.DB) error {
-	if tx.Dialector.Name() != "postgres" {
+	if tx.Name() != "postgres" {
 		return nil
 	}
 	for _, t := range tables() {

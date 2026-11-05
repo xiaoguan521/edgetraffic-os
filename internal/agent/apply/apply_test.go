@@ -85,7 +85,7 @@ func tamper(t *testing.T, tgz []byte, rev string, extra map[string]string) ([]by
 	for _, n := range names {
 		s := sha256.Sum256(files[n])
 		m.Files[n] = hex.EncodeToString(s[:])
-		fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
+		_, _ = fmt.Fprintf(all, "%s %s\n", m.Files[n], n)
 	}
 	m.Digest = "sha256:" + hex.EncodeToString(all.Sum(nil))
 	mj, _ := json.Marshal(m)
@@ -98,8 +98,8 @@ func tamper(t *testing.T, tgz []byte, rev string, extra map[string]string) ([]by
 		_ = tw.WriteHeader(&tar.Header{Name: n, Mode: 0o644, Size: int64(len(files[n])), Typeflag: tar.TypeReg})
 		_, _ = tw.Write(files[n])
 	}
-	tw.Close()
-	gw.Close()
+	_ = tw.Close()
+	_ = gw.Close()
 	return buf.Bytes(), m.Digest
 }
 
@@ -112,7 +112,7 @@ func get(t *testing.T) string {
 	if err != nil {
 		return "ERR " + err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return string(b)
 }
@@ -154,9 +154,9 @@ func TestLiveLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
-	busy, dgx := tamper(t, tgz2, rev(3), map[string]string{"conf.d/zz-busy.conf": "server { listen 127.0.0.1:18099; return 200; }\n"})
-	busy, dgx = retagRevision(t, busy, rev(3))
+	defer func() { _ = ln.Close() }()
+	busy, _ := tamper(t, tgz2, rev(3), map[string]string{"conf.d/zz-busy.conf": "server { listen 127.0.0.1:18099; return 200; }\n"})
+	busy, dgx := retagRevision(t, busy, rev(3))
 	r := a.Apply(ctx, rev(3), rev(1), busy, dgx, check)
 	if r.Status != RolledBack {
 		t.Fatalf("expected rollback on bind failure: %+v", r)
@@ -164,7 +164,7 @@ func TestLiveLifecycle(t *testing.T) {
 	if a.Current() != rev(1) || get(t) != "v1" {
 		t.Fatalf("not rolled back: current=%s body=%q", a.Current(), get(t))
 	}
-	ln.Close()
+	_ = ln.Close()
 
 	// 5. 后置探活失败：自动回滚
 	tgz4, dg4 := bundleOf(t, page(rev(4), "v4"))
@@ -212,8 +212,8 @@ func TestUnpackRejectsUnsafe(t *testing.T) {
 		tw := tar.NewWriter(gw)
 		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: 1, Typeflag: tar.TypeReg})
 		_, _ = tw.Write([]byte("x"))
-		tw.Close()
-		gw.Close()
+		_ = tw.Close()
+		_ = gw.Close()
 		return buf.Bytes()
 	}
 	for _, n := range []string{"../evil", "/etc/passwd", "a/../../evil", "./x"} {
@@ -226,8 +226,8 @@ func TestUnpackRejectsUnsafe(t *testing.T) {
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 	_ = tw.WriteHeader(&tar.Header{Name: "link", Linkname: "/etc/shadow", Typeflag: tar.TypeSymlink})
-	tw.Close()
-	gw.Close()
+	_ = tw.Close()
+	_ = gw.Close()
 	if err := a.unpack("r000124", buf.Bytes(), "sha256:x"); err == nil {
 		t.Error("symlink accepted")
 	}
@@ -239,5 +239,16 @@ func TestUnpackRejectsUnsafe(t *testing.T) {
 	}
 	if a.Apply(context.Background(), "r1/../x", "", nil, "", nil).Status != Rejected {
 		t.Error("bad revision accepted")
+	}
+	// 磁盘空间不足预检
+	aLowDisk := &Applier{C: Config{
+		ConfRoot:     dir,
+		LockFile:     dir + "/lock",
+		MinFreeBytes: 64 << 20,
+		FreeBytes:    func(string) (uint64, error) { return 1 << 20, nil },
+	}}
+	res := aLowDisk.Apply(context.Background(), "r000125", "", tgz, "sha256:x", nil)
+	if res.Status != Rejected || !strings.Contains(res.Message, "insufficient disk space") {
+		t.Fatalf("expected insufficient disk space rejection, got %+v", res)
 	}
 }

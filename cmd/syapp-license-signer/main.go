@@ -75,20 +75,20 @@ func (a *app) run(args []string) int {
 	case "sign-package":
 		err = a.signPackage(args[1:])
 	case "version", "-version":
-		fmt.Fprintln(a.out, version.String("license-signer"))
+		_, _ = fmt.Fprintln(a.out, version.String("license-signer"))
 	default:
 		a.usage()
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(a.errw, "错误：", err)
+		_, _ = fmt.Fprintln(a.errw, "错误：", err)
 		return 1
 	}
 	return 0
 }
 
 func (a *app) usage() {
-	fmt.Fprintln(a.errw, `用法：syapp-license-signer keygen|pubkey|inspect|sign|verify|sign-package [参数]   （-h 查看各子命令参数）`)
+	_, _ = fmt.Fprintln(a.errw, `用法：syapp-license-signer keygen|pubkey|inspect|sign|verify|sign-package [参数]   （-h 查看各子命令参数）`)
 }
 
 // offlineCheck 在 Linux 上检查是否有处于连接状态的网卡（只读 /sys，不使用网络库）。
@@ -117,7 +117,7 @@ func (a *app) offlineCheck(require bool) error {
 	if require {
 		return errors.New(msg)
 	}
-	fmt.Fprintln(a.errw, "警告："+msg)
+	_, _ = fmt.Fprintln(a.errw, "警告："+msg)
 	return nil
 }
 
@@ -201,10 +201,10 @@ func (a *app) keygen(args []string) error {
 	if err := writeNew(pubPath, []byte(pubTxt), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "加密私钥：%s（复制到两个 U 盘分开保管；口令与 U 盘分开保管）\n", keyPath)
-	fmt.Fprintf(a.out, "公钥信息：%s（可以带出离线机）\n\n", pubPath)
-	fmt.Fprintf(a.out, "公钥指纹（两人分别核对并签字）：\n    %s\n\n", fp)
-	fmt.Fprintf(a.out, "写入 internal/license/keys.go 的 builtinKeys：\n    %q: %q,\n", kf.KID, kf.PublicKey)
+	_, _ = fmt.Fprintf(a.out, "加密私钥：%s（复制到两个 U 盘分开保管；口令与 U 盘分开保管）\n", keyPath)
+	_, _ = fmt.Fprintf(a.out, "公钥信息：%s（可以带出离线机）\n\n", pubPath)
+	_, _ = fmt.Fprintf(a.out, "公钥指纹（两人分别核对并签字）：\n    %s\n\n", fp)
+	_, _ = fmt.Fprintf(a.out, "写入 internal/license/keys.go 的 builtinKeys：\n    %q: %q,\n", kf.KID, kf.PublicKey)
 	return nil
 }
 
@@ -227,7 +227,7 @@ func (a *app) pubkey(args []string) error {
 		return err
 	}
 	pub, _ := kf.Public()
-	fmt.Fprintf(a.out, "kid: %s\npublic_key: %s\nfingerprint: %s\n", kf.KID, kf.PublicKey, signer.Fingerprint(pub))
+	_, _ = fmt.Fprintf(a.out, "kid: %s\npublic_key: %s\nfingerprint: %s\n", kf.KID, kf.PublicKey, signer.Fingerprint(pub))
 	return nil
 }
 
@@ -253,8 +253,8 @@ func (a *app) inspect(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(a.out, signer.Summary(req))
-	fmt.Fprintf(a.out, "\n请求 SHA-256：%s\n", license.Digest(raw))
+	_, _ = fmt.Fprint(a.out, signer.Summary(req))
+	_, _ = fmt.Fprintf(a.out, "\n请求 SHA-256：%s\n", license.Digest(raw))
 	return nil
 }
 
@@ -289,10 +289,10 @@ func (a *app) sign(args []string) error {
 	if signer.Signed(*logPath, sha) {
 		return fmt.Errorf("这份请求（SHA-256 %s…）已经签过，见 %s", sha[:12], *logPath)
 	}
-	fmt.Fprint(a.out, signer.Summary(req))
-	fmt.Fprintf(a.out, "\n请求 SHA-256：%s\n", sha)
+	_, _ = fmt.Fprint(a.out, signer.Summary(req))
+	_, _ = fmt.Fprintf(a.out, "\n请求 SHA-256：%s\n", sha)
 	if !*yes {
-		fmt.Fprintf(a.out, "\n逐条核对无误后，输入批次号 %s 确认签名：", req.Batch)
+		_, _ = fmt.Fprintf(a.out, "\n逐条核对无误后，输入批次号 %s 确认签名：", req.Batch)
 		line, _ := a.in.ReadString('\n')
 		if strings.TrimSpace(line) != req.Batch {
 			return errors.New("未确认，已取消")
@@ -321,11 +321,11 @@ func (a *app) sign(args []string) error {
 	if err := signer.AppendLog(*logPath, req, res); err != nil {
 		return fmt.Errorf("签名结果已写入 %s，但签发日志写入失败：%w", *out, err)
 	}
-	fmt.Fprintf(a.out, "\n已签名 %d 个 License", len(res.Licenses))
+	_, _ = fmt.Fprintf(a.out, "\n已签名 %d 个 License", len(res.Licenses))
 	if res.CRL != "" {
-		fmt.Fprintf(a.out, "、1 份吊销列表")
+		_, _ = fmt.Fprintf(a.out, "、1 份吊销列表")
 	}
-	fmt.Fprintf(a.out, " → %s\n签发日志：%s\n", *out, *logPath)
+	_, _ = fmt.Fprintf(a.out, " → %s\n签发日志：%s\n", *out, *logPath)
 	return nil
 }
 
@@ -357,7 +357,7 @@ func (a *app) verify(args []string) error {
 	if err := license.VerifySignedBatch(req, raw, &s, license.KeyRing{kf.KID: pub}); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "核对通过：批次 %s，%d 个 License\n", s.Batch, len(s.Licenses))
+	_, _ = fmt.Fprintf(a.out, "核对通过：批次 %s，%d 个 License\n", s.Batch, len(s.Licenses))
 	return nil
 }
 
@@ -368,11 +368,11 @@ func writeNew(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	if _, err := f.Write(b); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
@@ -408,9 +408,9 @@ func (a *app) signPackage(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "升级包：%s\n名称：%s  版本：%s  架构：%s  变体：%s\n大小：%d 字节\n", filepath.Base(*in), *name, *ver, *arch, *variant, len(data))
+	_, _ = fmt.Fprintf(a.out, "升级包：%s\n名称：%s  版本：%s  架构：%s  变体：%s\n大小：%d 字节\n", filepath.Base(*in), *name, *ver, *arch, *variant, len(data))
 	if !*yes {
-		fmt.Fprintf(a.out, "\n核对构建记录（版本与 SHA-256 见 inspect 输出）后，输入版本号 %s 确认签名：", *ver)
+		_, _ = fmt.Fprintf(a.out, "\n核对构建记录（版本与 SHA-256 见 inspect 输出）后，输入版本号 %s 确认签名：", *ver)
 		line, _ := a.in.ReadString('\n')
 		if strings.TrimSpace(line) != *ver {
 			return errors.New("未确认，已取消")
@@ -437,6 +437,6 @@ func (a *app) signPackage(args []string) error {
 	if err := writeNew(*in+".sig", append(b, '\n'), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "SHA-256：%s\n签名 → %s.sig\n", sig.SHA256, *in)
+	_, _ = fmt.Fprintf(a.out, "SHA-256：%s\n签名 → %s.sig\n", sig.SHA256, *in)
 	return nil
 }

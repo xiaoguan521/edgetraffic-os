@@ -286,3 +286,49 @@ func unescape(u string) string {
 	r := strings.NewReplacer("%2B", "+", "%2F", "/", "%3D", "=")
 	return r.Replace(u)
 }
+
+func TestEvaluateOperationalRules(t *testing.T) {
+	s, now := newSvc(t, true)
+	diskPct := 92.0
+	s.DiskUsage = func(string) (float64, float64, error) {
+		return diskPct, 10.0, nil
+	}
+	for _, k := range []string{KindDeployRollback, KindBackupStale, KindDiskUsage} {
+		if err := s.SaveRule(k, true, Defaults[k], nil, "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Store.DB.Create(&store.Deployment{
+		GroupID:    1,
+		RevisionID: "r00001",
+		Kind:       "publish",
+		Status:     "FAILED",
+		StartedAt:  now.Add(-2 * time.Minute),
+	})
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	var firing []store.AlertEvent
+	s.Store.DB.Where("status = ?", "firing").Find(&firing)
+	gotKinds := map[string]bool{}
+	for _, ev := range firing {
+		gotKinds[ev.Kind] = true
+	}
+	for _, want := range []string{KindDeployRollback, KindBackupStale, KindDiskUsage} {
+		if !gotKinds[want] {
+			t.Fatalf("expected firing alert for %s, got %+v", want, firing)
+		}
+	}
+
+	// 记录近期备份并降低磁盘使用率后，backup_stale 与 disk_usage 自动恢复
+	_ = s.Store.SetKV("last_backup_at", now.Add(-1*time.Hour).Format(time.RFC3339))
+	diskPct = 40.0
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	firing = nil
+	s.Store.DB.Where("status = ?", "firing").Find(&firing)
+	if len(firing) != 1 || firing[0].Kind != KindDeployRollback {
+		t.Fatalf("expected only deployment_rolled_back firing after recovery, got %+v", firing)
+	}
+}

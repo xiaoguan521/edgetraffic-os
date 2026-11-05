@@ -143,7 +143,7 @@ func ParseCertificate(der []byte) (*Cert, error) {
 		return nil, errors.New("证书公钥格式不支持（需要未压缩的 SM2 点）")
 	}
 	out := &Cert{Raw: der, x: new(big.Int).SetBytes(pt[1:33]), y: new(big.Int).SetBytes(pt[33:])}
-	if !Curve().IsOnCurve(out.x, out.y) {
+	if !Curve().IsOnCurve(out.x, out.y) { //nolint:staticcheck // SA1019: crypto/ecdh does not support custom SM2 CurveParams
 		return nil, errors.New("证书公钥不在 SM2 曲线上")
 	}
 	sub, err := name(t.Subject)
@@ -214,7 +214,7 @@ func (c *Cert) Fingerprint() string {
 
 // MatchesKey 报告私钥 d 是否对应证书公钥。
 func (c *Cert) MatchesKey(d *big.Int) bool {
-	x, y := Curve().ScalarBaseMult(d.FillBytes(make([]byte, 32)))
+	x, y := Curve().ScalarBaseMult(d.FillBytes(make([]byte, 32))) //nolint:staticcheck // SA1019: crypto/ecdh does not support custom SM2 CurveParams
 	return x.Cmp(c.x) == 0 && y.Cmp(c.y) == 0
 }
 

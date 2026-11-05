@@ -52,7 +52,7 @@ func (c *client) do(method, path string, body any, csrf bool) (int, []byte) {
 	if err != nil {
 		c.t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, out
 }

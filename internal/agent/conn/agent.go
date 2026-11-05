@@ -72,6 +72,7 @@ type Agent struct {
 	st       state
 	verifier *cmdsig.Verifier
 	licRaw   string
+	licKeys  license.KeyRing // 为空时使用 license.BuiltinKeyRing()
 
 	lastDrift string
 	exit      func(code int) // 自升级后退出（测试可替换），默认 os.Exit // 最近一次上报的漂移文件状态指纹（heartbeat goroutine 独占）
@@ -140,7 +141,7 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer func() { _ = cc.Close() }()
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	resp, err := agentv1.NewAgentGatewayClient(cc).Enroll(cctx, &agentv1.EnrollRequest{
@@ -290,7 +291,7 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer func() { _ = cc.Close() }()
 	client := agentv1.NewAgentGatewayClient(cc)
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -321,6 +322,11 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 		}
 	}
 	send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Hello{Hello: a.hello(sctx)}})
+	if cur := a.applier.Current(); cur != "" {
+		if d, err := a.applier.TreeDigest(); err == nil && !strings.HasPrefix(d, "drifted") {
+			a.recordApproved(cur, d)
+		}
+	}
 	a.log.Info("connected to console", "server", a.C.Server)
 
 	go a.heartbeat(sctx, send)
@@ -447,7 +453,7 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		a.mu.Lock()
 		a.licRaw = b.License.Raw
 		a.mu.Unlock()
-		ok, why := license.AgentCheck(b.License.Raw, license.BuiltinKeyRing(), time.Now())
+		ok, why := a.licenseWritable()
 		a.log.Info("license updated", "writable", ok, "reason", why)
 		reply(agentv1.CommandResult_APPLIED, "license received", "")
 	case *agentv1.ServerMessage_Apply:
@@ -461,7 +467,7 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 			// 授权只读时只放行两类操作，均由 agent 自己核对，不信任控制台的任何标记（规格书 8.6）：
 			// 证书续期（只有证书文件变化），以及漂移恢复（内容与线上版本已批准的清单完全一致）。
 			switch {
-			case restore && a.sameAsApproved(bundle):
+			case restore && a.sameAsApproved(b.Apply.RevisionId, bundle):
 				a.log.Info("license is read-only; allowing drift restore", "revision", b.Apply.RevisionId)
 			case !restore && a.certOnly(bundle):
 				a.log.Info("license is read-only; allowing certificate-only release", "revision", b.Apply.RevisionId)
@@ -473,16 +479,27 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		if restore {
 			a.log.Info("restoring drifted release", "revision", b.Apply.RevisionId)
 			r := a.applier.Restore(ctx, b.Apply.RevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
+			if r.Status == apply.Applied {
+				a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256)
+			}
 			a.log.Info("restore result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
 			reply(status(r.Status), r.Message, r.Stderr)
 			return
 		}
 		a.log.Info("applying", "revision", b.Apply.RevisionId, "parent", b.Apply.ParentRevisionId)
 		r := a.applier.Apply(ctx, b.Apply.RevisionId, b.Apply.ParentRevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
+		if r.Status == apply.Applied {
+			a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256)
+		}
 		a.log.Info("apply result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
 	case *agentv1.ServerMessage_Rollback:
 		r := a.applier.Rollback(ctx, b.Rollback.ToRevisionId, nil)
+		if r.Status == apply.Applied {
+			if d := a.approvedDigest(b.Rollback.ToRevisionId); d != "" {
+				a.recordApproved(b.Rollback.ToRevisionId, d)
+			}
+		}
 		a.log.Info("rollback result", "revision", b.Rollback.ToRevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
 	case *agentv1.ServerMessage_Probe:
@@ -529,34 +546,83 @@ func (a *Agent) certOnly(bundle []byte) bool {
 	return render.CertOnlyChange(cur, next)
 }
 
-// sameAsApproved 判断包的清单摘要是否与当前版本目录中记录的清单摘要一致（即恢复为已批准的内容）。
-func (a *Agent) sameAsApproved(bundle []byte) bool {
+// sameAsApproved 判断包的清单摘要是否与当前版本已批准的清单摘要一致（即恢复为已批准的内容）。
+// 优先使用 StateDir/approved.json 中记录的不可变摘要（防版本目录内 MANIFEST.json 被手工改删后无法恢复），
+// 若尚未记录则回退到当前版本目录中的 MANIFEST.json。
+func (a *Agent) sameAsApproved(rev string, bundle []byte) bool {
 	next, err := render.ReadTarGz(bundle)
 	if err != nil {
 		return false
+	}
+	var nm struct {
+		Revision string `json:"revision"`
+		Digest   string `json:"digest"`
+	}
+	if json.Unmarshal(next[render.ManifestName], &nm) != nil || nm.Digest == "" || (rev != "" && nm.Revision != rev) {
+		return false
+	}
+	if render.Repack(nm.Revision, next).Manifest.Digest != nm.Digest {
+		return false
+	}
+	if want := a.approvedDigest(rev); want != "" {
+		return nm.Digest == want
 	}
 	cur, err := a.applier.CurrentFiles()
 	if err != nil {
 		return false
 	}
-	var nm, cm struct {
+	var cm struct {
 		Digest string `json:"digest"`
 	}
-	if json.Unmarshal(next[render.ManifestName], &nm) != nil || json.Unmarshal(cur[render.ManifestName], &cm) != nil {
+	if json.Unmarshal(cur[render.ManifestName], &cm) != nil {
 		return false
 	}
-	return nm.Digest != "" && nm.Digest == cm.Digest && render.Repack("", next).Manifest.Digest == nm.Digest
+	return cm.Digest != "" && nm.Digest == cm.Digest
+}
+
+// recordApproved 在 StateDir/approved.json 中记录已成功生效的 (revision -> manifest digest)。
+func (a *Agent) recordApproved(rev, digest string) {
+	if a.C.StateDir == "" || rev == "" || digest == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	m := map[string]string{}
+	if b, err := os.ReadFile(a.path("approved.json")); err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	m[rev] = digest
+	if b, err := json.Marshal(m); err == nil {
+		_ = os.WriteFile(a.path("approved.json"), b, 0o600)
+	}
+}
+
+func (a *Agent) approvedDigest(rev string) string {
+	if a.C.StateDir == "" || rev == "" {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var m map[string]string
+	if b, err := os.ReadFile(a.path("approved.json")); err == nil && json.Unmarshal(b, &m) == nil {
+		return m[rev]
+	}
+	return ""
 }
 
 // licenseWritable：尚未收到 License 时由控制台负责拦截；收到后按 agent 侧独立校验结果执行。
 func (a *Agent) licenseWritable() (bool, string) {
 	a.mu.Lock()
 	raw := a.licRaw
+	kr := a.licKeys
 	a.mu.Unlock()
 	if raw == "" {
 		return true, ""
 	}
-	return license.AgentCheck(raw, license.BuiltinKeyRing(), time.Now())
+	if kr == nil {
+		kr = license.BuiltinKeyRing()
+	}
+	return license.AgentCheck(raw, kr, time.Now())
 }
 
 func fetch(ctx context.Context, client agentv1.AgentGatewayClient, rev string) ([]byte, error) {

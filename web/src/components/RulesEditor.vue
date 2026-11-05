@@ -148,7 +148,7 @@ const valueNeeded = (c: Condition) => c.op !== 'exists'
       <a v-if="rule.conditions.length < 8" class="add-cond" @click="rule.conditions.push(newCondition())">+ 条件</a>
       <span v-if="!rule.conditions.length" class="sub">（没有条件：对所有请求生效）</span>
 
-      <RuleAction :action="rule.action" :upstreams="upstreams" :lua-licensed="luaLicensed" @type="(t: string) => setAction(rule, t)" />
+      <RuleAction v-model:action="rule.action" :upstreams="upstreams" :lua-licensed="luaLicensed" @type="(t: string) => setAction(rule, t)" />
     </div>
     <a-empty v-if="!rules.length" description="没有访问规则" :image="false" />
   </div>

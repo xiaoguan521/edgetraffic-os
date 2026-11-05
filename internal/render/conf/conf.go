@@ -48,20 +48,20 @@ func lex(file string, src []byte) ([]token, error) {
 	i := 0
 	for i < len(src) {
 		c := src[i]
-		switch {
-		case c == '\n':
+		switch c {
+		case '\n':
 			line++
 			i++
-		case c == ' ' || c == '\t' || c == '\r':
+		case ' ', '\t', '\r':
 			i++
-		case c == '#':
+		case '#':
 			for i < len(src) && src[i] != '\n' {
 				i++
 			}
-		case c == ';' || c == '{' || c == '}':
+		case ';', '{', '}':
 			toks = append(toks, token{text: string(c), line: line})
 			i++
-		case c == '"' || c == '\'':
+		case '"', '\'':
 			start := line
 			q := c
 			i++

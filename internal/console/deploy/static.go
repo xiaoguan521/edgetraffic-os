@@ -151,7 +151,7 @@ func extractStatic(data []byte, opt StaticImportOptions) (map[string][]byte, err
 				return nil, err
 			}
 			err = add(f.Name, rc, int64(f.UncompressedSize64))
-			rc.Close()
+			_ = rc.Close()
 			if err != nil {
 				return nil, err
 			}

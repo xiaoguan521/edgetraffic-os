@@ -48,15 +48,28 @@ type Paths struct {
 
 // DefaultPaths 是生产环境的路径。
 func DefaultPaths() Paths {
-	return Paths{Bin: SyappBin, Modules: "/opt/syapp/modules", Versions: "/opt/syapp/versions", Incoming: "/var/lib/syapp-agent/upgrade",
+	return DefaultPathsForInstance("")
+}
+
+// DefaultPathsForInstance 返回指定实例（空串表示默认单实例）的热升级路径。
+func DefaultPathsForInstance(instance string) Paths {
+	p := Paths{Bin: SyappBin, Modules: "/opt/syapp/modules", Versions: "/opt/syapp/versions", Incoming: "/var/lib/syapp-agent/upgrade",
 		PidFile: "/run/syapp/syapp.pid", Conf: "/opt/syapp/conf/current/syapp.conf", Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second}
+	if instance != "" {
+		p.Incoming = "/var/lib/syapp-agent-" + instance + "/upgrade"
+		p.PidFile = "/run/syapp-" + instance + "/syapp.pid"
+		p.Conf = "/opt/syapp/instances/" + instance + "/conf/current/syapp.conf"
+	}
+	return p
 }
 
 const (
-	maxPackage = 128 << 20
-	maxEntry   = 96 << 20
-	shaFile    = ".sha256"
-	stateFile  = "state.json"
+	maxPackage          = 128 << 20
+	maxEntry            = 96 << 20
+	minUpgradeFreeBytes = 64 << 20
+	shaFile             = ".sha256"
+	stateFile           = "state.json"
+	upgradeLockFile     = ".upgrade.lock"
 )
 
 var (
@@ -84,7 +97,7 @@ func readNoFollow(path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() || st.Size() > limit {
 		return nil, fail("%s is not a regular file within the size limit", filepath.Base(path))
@@ -127,6 +140,9 @@ func (p Paths) install(ver string) error {
 		return fail("signature is for %s %s %s, want syapp %s %s", sig.Name, sig.Version, sig.Arch, ver, p.Arch)
 	}
 	if err := pkgsig.Verify(sig, data, p.Keys); err != nil {
+		return err
+	}
+	if err := checkUpgradeDiskSpace(p.Versions); err != nil {
 		return err
 	}
 	tmp := filepath.Join(p.Versions, "."+ver+".tmp")
@@ -332,14 +348,51 @@ func (p Paths) loadState() (State, error) {
 	return s, json.Unmarshal(b, &s)
 }
 
+func checkUpgradeDiskSpace(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return err
+	}
+	//nolint:gosec // Bsize is always positive for mounted filesystems
+	avail := st.Bavail * uint64(st.Bsize)
+	if avail < minUpgradeFreeBytes {
+		return fail("insufficient disk space in %s: %d bytes available, need at least %d bytes", dir, avail, minUpgradeFreeBytes)
+	}
+	return nil
+}
+
+// lockUpgrade 获取宿主机级版本库互斥锁（防止同机多实例同时修改 /opt/syapp/versions 与软链）。
+func (p Paths) lockUpgrade() (func(), error) {
+	if err := os.MkdirAll(p.Versions, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(p.Versions, upgradeLockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fail("another instance is upgrading binaries on this host")
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
 // UpgradeStart 执行到“新旧 master 共存、只剩新 worker 接流量”为止。
 func UpgradeStart(p Paths, ver string) error {
 	if !pkgsig.VersionRe.MatchString(ver) {
 		return ErrUsage
 	}
-	if err := os.MkdirAll(p.Versions, 0o755); err != nil {
+	unlock, err := p.lockUpgrade()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	if _, err := os.Stat(p.PidFile + ".oldbin"); err == nil {
 		return fail("another upgrade is in progress (%s.oldbin exists): commit or abort it first", filepath.Base(p.PidFile))
 	}
@@ -417,6 +470,11 @@ func UpgradeStart(p Paths, ver string) error {
 
 // UpgradeCommit 让旧 master 退出，完成升级。
 func UpgradeCommit(p Paths) error {
+	unlock, err := p.lockUpgrade()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	oldPid, err := readPid(p.PidFile + ".oldbin")
 	if err != nil {
 		return fail("no upgrade in progress")
@@ -432,6 +490,11 @@ func UpgradeCommit(p Paths) error {
 
 // UpgradeAbort 恢复旧版本：旧 master 重新拉起 worker，新 master 退出，软链切回。
 func UpgradeAbort(p Paths) error {
+	unlock, err := p.lockUpgrade()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	oldPid, err := readPid(p.PidFile + ".oldbin")
 	if err != nil {
 		return fail("no upgrade in progress")

@@ -80,6 +80,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	r := gin.New()
 	r.Use(gin.Recovery(), s.securityHeaders)
 	r.GET("/healthz", s.healthz)
+	r.GET("/livez", s.livez)
+	r.GET("/readyz", s.readyz)
+	r.GET("/metrics", s.promMetrics)
 	r.Use(s.standbyGuard)
 
 	if len(s.WebCAPEM) > 0 {

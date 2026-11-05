@@ -28,7 +28,7 @@ func main() {
 	dur := flag.Duration("d", 30*time.Second, "持续时间")
 	flag.Parse()
 	if *url == "" {
-		fmt.Fprintln(os.Stderr, "usage: etos-loadgen -url URL [-host H] [-c N] [-d D]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: etos-loadgen -url URL [-host H] [-c N] [-d D]")
 		os.Exit(2)
 	}
 	var dials atomic.Int64
@@ -71,7 +71,7 @@ func main() {
 					continue
 				}
 				_, err = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				switch {
 				case err != nil:
 					errs.Add(1)

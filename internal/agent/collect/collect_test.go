@@ -40,9 +40,14 @@ func TestAccessLog(t *testing.T) {
 		t.Fatalf("shop minute: %+v", shop)
 	}
 	// 补全最后一行后，下一分钟结束时上报 10:01
-	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
-	f.WriteString(`ple.com","status":200,"bytes":5,"rt":0.003}` + "\n")
-	f.Close()
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`ple.com","status":200,"bytes":5,"rt":0.003}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
 	later, _ := time.Parse(time.RFC3339, "2026-10-27T10:02:10+08:00")
 	got = a.Collect(later)
 	if len(got) != 1 || got[0].Requests != 2 || got[0].S3xx != 1 {

@@ -22,10 +22,10 @@ import (
 
 func TestCurveParams(t *testing.T) {
 	c := Curve()
-	if !c.IsOnCurve(c.Params().Gx, c.Params().Gy) {
+	if !c.IsOnCurve(c.Params().Gx, c.Params().Gy) { //nolint:staticcheck // SA1019: crypto/ecdh does not support custom SM2 CurveParams
 		t.Fatal("base point not on curve")
 	}
-	if x, y := c.ScalarBaseMult(c.Params().N.Bytes()); x.Sign() != 0 || y.Sign() != 0 {
+	if x, y := c.ScalarBaseMult(c.Params().N.Bytes()); x.Sign() != 0 || y.Sign() != 0 { //nolint:staticcheck // SA1019: crypto/ecdh does not support custom SM2 CurveParams
 		t.Fatal("n*G is not the point at infinity")
 	}
 }

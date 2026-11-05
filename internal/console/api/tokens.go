@@ -33,7 +33,7 @@ func (s *Server) tokenAuth(c *gin.Context) {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid token")
 		return
 	}
-	if !s.Lic.Snapshot().Feature(license.FeatureAPIToken) {
+	if s.Lic != nil && !s.Lic.Snapshot().Feature(license.FeatureAPIToken) {
 		fail(c, http.StatusPaymentRequired, "LICENSE_FEATURE_DENIED", "当前授权不包含功能 "+string(license.FeatureAPIToken))
 		return
 	}

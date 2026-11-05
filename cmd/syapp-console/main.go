@@ -43,7 +43,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "backup" || os.Args[1] == "restore") {
+	if len(os.Args) > 1 && isBackupSubcommand(os.Args[1]) {
 		os.Exit(backupMain(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	listen := flag.String("listen", envOr("ETOS_LISTEN", "127.0.0.1:8443"), "Web 控制台监听地址（生产环境只在内网或前置 TLS）")
@@ -134,7 +134,7 @@ func run(log *slog.Logger, o options) error {
 	gw.OnOnline = dep.Align
 	dep.Feature = func(f string) bool { return lic.Snapshot().Feature(license.Feature(f)) }
 	acm := &acme.Service{Store: st, Box: box, Certs: crt, Deploy: dep, Audit: aud, Log: log, CAFile: acmeCA}
-	alr := &alerts.Service{Store: st, Box: box, Log: log, IMAllow: func() bool { return lic.Snapshot().Feature(license.FeatureAlertIM) }}
+	alr := &alerts.Service{Store: st, Box: box, Log: log, DataDir: dataDir, IMAllow: func() bool { return lic.Snapshot().Feature(license.FeatureAlertIM) }}
 	el := &ha.Elector{Licensed: func() bool { return lic.Snapshot().Feature(license.FeatureHA) }, Log: log}
 	if pg { // 共用 PostgreSQL 时总是选主，避免两台控制台同时下发
 		if el.DB, err = st.DB.DB(); err != nil {

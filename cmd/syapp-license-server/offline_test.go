@@ -22,7 +22,9 @@ func TestOfflineIssuanceFlow(t *testing.T) {
 	kf, pub, priv := testKey(t)
 	keys := license.KeyRing{kf.KID: pub}
 	act := filepath.Join(dir, "activation-request.json")
-	os.WriteFile(act, []byte(`{"installation_id":"inst_0123","fp_hashes":["a1","b2","c3","d4","e5"],"product":"EdgeTraffic OS"}`), 0o644)
+	if err := os.WriteFile(act, []byte(`{"installation_id":"inst_0123","fp_hashes":["a1","b2","c3","d4","e5"],"product":"EdgeTraffic OS"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	reqPath := filepath.Join(dir, "sign-request-B0001.json")
 	var out bytes.Buffer
 
@@ -58,7 +60,9 @@ func TestOfflineIssuanceFlow(t *testing.T) {
 	}
 	signedPath := filepath.Join(dir, "signed-B0001.json")
 	sb, _ := json.Marshal(signed)
-	os.WriteFile(signedPath, sb, 0o644)
+	if err := os.WriteFile(signedPath, sb, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// 在线侧导入
 	licDir := filepath.Join(dir, "licenses")
@@ -75,11 +79,15 @@ func TestOfflineIssuanceFlow(t *testing.T) {
 	}
 	// 被改动的签名结果、未内置的密钥：导入失败
 	tampered := bytes.Replace(sb, []byte("LIC-20261102-0002\",\"raw\":\"ey"), []byte("LIC-20261102-0002\",\"raw\":\"ez"), 1)
-	os.WriteFile(signedPath, tampered, 0o644)
+	if err := os.WriteFile(signedPath, tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := cmdImport([]string{"-request", reqPath, "-signed", signedPath, "-out", licDir}, &out, keys); err == nil {
 		t.Fatal("tampered signed batch imported")
 	}
-	os.WriteFile(signedPath, sb, 0o644)
+	if err := os.WriteFile(signedPath, sb, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := cmdImport([]string{"-request", reqPath, "-signed", signedPath, "-out", licDir}, &out, license.KeyRing{}); err == nil {
 		t.Fatal("imported without a trusted public key")
 	}
@@ -114,7 +122,9 @@ func TestCRLRequestIsCumulative(t *testing.T) {
 	keys := license.KeyRing{kf.KID: pub}
 	prev, _ := license.SignCRL(&license.CRL{V: 1, KID: kf.KID, Serial: 7, RevokedLicenses: []license.RevokedLicense{{LicenseID: "LIC-OLD-1"}}}, priv)
 	base := filepath.Join(dir, "crl-7.crl")
-	os.WriteFile(base, []byte(prev), 0o644)
+	if err := os.WriteFile(base, []byte(prev), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	reqPath := filepath.Join(dir, "sign-request-B0003.json")
 	var out bytes.Buffer
 	if err := cmdCRLRequest([]string{"-batch", "B0003", "-kid", kf.KID, "-base", base, "-revoke", "LIC-NEW-2", "-out", reqPath}, &out, keys); err != nil {
