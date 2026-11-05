@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# 本地推送前检查：GitHub Actions 已改为手动触发（免费账号额度有限），合并前的回归由这里兜底。
+#
+# 安装（每个克隆执行一次）：make hooks
+#
+# 默认执行：make test（go vet + go test -race）与 make brand。
+# 只改动文档（docs/、*.md、docs/test-runs/）时跳过测试。
+#
+#   ETOS_PREPUSH_FULL=1 git push   额外执行 make gen-check、make lint（已安装 golangci-lint 时）与前端构建（已安装 pnpm 时）
+#   ETOS_SKIP_PREPUSH=1 git push   跳过本次检查（或 git push --no-verify），仅限紧急情况，事后请补跑
+set -euo pipefail
+
+if [[ "${ETOS_SKIP_PREPUSH:-}" == "1" ]]; then
+  echo "pre-push: 已按 ETOS_SKIP_PREPUSH=1 跳过检查，请在合并前补跑 make test" >&2
+  exit 0
+fi
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+zero=0000000000000000000000000000000000000000
+changed=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" == "$zero" ]] && continue # 删除远端分支，无需检查
+  if [[ "$remote_sha" == "$zero" ]]; then
+    # 新分支：与默认分支的分叉点比较；取不到时按“有代码改动”处理
+    base=$(git merge-base "$local_sha" origin/main 2>/dev/null || true)
+  else
+    base=$remote_sha
+  fi
+  if [[ -z "$base" ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+    changed="$changed"$'\n'"(unknown)"
+    continue
+  fi
+  changed="$changed"$'\n'"$(git diff --name-only "$base" "$local_sha")"
+done
+
+code_changed=$(printf '%s\n' "$changed" | sed '/^$/d' | grep -vE '^docs/|\.md$' || true)
+if [[ -z "$code_changed" ]]; then
+  echo "pre-push: 只有文档改动，跳过测试"
+  exit 0
+fi
+
+step() {
+  echo "pre-push: $*"
+  "$@" || {
+    echo "pre-push: 失败：$*（修复后重新推送；确需跳过见脚本头部说明）" >&2
+    exit 1
+  }
+}
+
+step make test
+step make brand
+
+if [[ "${ETOS_PREPUSH_FULL:-}" == "1" ]]; then
+  step make gen-check
+  if command -v golangci-lint >/dev/null 2>&1; then
+    step make lint
+  else
+    echo "pre-push: 未安装 golangci-lint，跳过 make lint" >&2
+  fi
+  if command -v pnpm >/dev/null 2>&1 && [[ -d web/node_modules ]]; then
+    step bash -c 'cd web && pnpm build'
+  else
+    echo "pre-push: 未安装 pnpm 或 web/node_modules，跳过前端构建" >&2
+  fi
+fi
+
+echo "pre-push: 检查通过"

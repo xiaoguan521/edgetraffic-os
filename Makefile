@@ -6,7 +6,7 @@ DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
 
-.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint brand web proto clean gen gen-check
+.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint brand web proto clean gen gen-check hooks
 
 all: test build
 
@@ -47,6 +47,11 @@ lint:
 
 brand:
 	./scripts/brand-check.sh
+
+# 安装本地 pre-push 检查（CI 已改为手动触发，推送前由本地兜底；说明见 scripts/git-hooks/pre-push）
+hooks:
+	git config core.hooksPath scripts/git-hooks
+	@echo "已启用 scripts/git-hooks（pre-push 执行 make test 与 make brand）"
 
 web:
 	cd web && pnpm install && pnpm build && touch dist/.gitkeep portal/dist/.gitkeep
