@@ -16,6 +16,7 @@ import (
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
@@ -99,11 +100,11 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 		return
 	}
 	sig, err := pkgsig.Parse(u.SignatureJson)
-	if err != nil || sig.Name != "syapp" || sig.Version != u.Version || sig.Arch != runtime.GOARCH || sig.SHA256 != u.PackageSha256 {
+	if err != nil || sig.Name != brand.ID() || sig.Version != u.Version || sig.Arch != runtime.GOARCH || sig.SHA256 != u.PackageSha256 {
 		reply(agentv1.CommandResult_REJECTED, "signature file does not match this upgrade", "")
 		return
 	}
-	data, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: "syapp", Version: u.Version, Arch: runtime.GOARCH, Variant: sig.Variant})
+	data, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: brand.ID(), Version: u.Version, Arch: runtime.GOARCH, Variant: sig.Variant})
 	if err != nil {
 		reply(agentv1.CommandResult_REJECTED, "fetch package: "+err.Error(), "")
 		return
@@ -118,7 +119,7 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 		reply(agentv1.CommandResult_REJECTED, err.Error(), "")
 		return
 	}
-	base := filepath.Join(a.upgradeDir(), "syapp-"+u.Version+".tar.gz")
+	base := filepath.Join(a.upgradeDir(), brand.ID()+"-"+u.Version+".tar.gz")
 	if err := os.WriteFile(base+".part", data, 0o644); err != nil || os.Rename(base+".part", base) != nil ||
 		os.WriteFile(base+".sig", u.SignatureJson, 0o644) != nil {
 		reply(agentv1.CommandResult_REJECTED, "write package failed", "")
@@ -127,11 +128,11 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 	// 节点装有 syapp-lua 时，控制台同时下发目标版本附加包的签名：一起投放，由 wrapper 验签后与二进制一起切换
 	if len(u.LuaSignatureJson) > 0 {
 		ls, err := pkgsig.Parse(u.LuaSignatureJson)
-		if err != nil || ls.Name != "syapp-lua" || ls.Version != u.Version || ls.Arch != runtime.GOARCH || ls.Variant != "lua" {
+		if err != nil || ls.Name != brand.Lua() || ls.Version != u.Version || ls.Arch != runtime.GOARCH || ls.Variant != "lua" {
 			reply(agentv1.CommandResult_REJECTED, "add-on signature does not match this upgrade", "")
 			return
 		}
-		ld, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: "syapp-lua", Version: u.Version, Arch: runtime.GOARCH, Variant: "lua"})
+		ld, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: brand.Lua(), Version: u.Version, Arch: runtime.GOARCH, Variant: "lua"})
 		if err != nil {
 			reply(agentv1.CommandResult_REJECTED, "fetch add-on package: "+err.Error(), "")
 			return
@@ -140,7 +141,7 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 			reply(agentv1.CommandResult_REJECTED, "add-on package sha256 mismatch", "")
 			return
 		}
-		lb := filepath.Join(a.upgradeDir(), "syapp-lua-"+u.Version+".tar.gz")
+		lb := filepath.Join(a.upgradeDir(), brand.Lua()+"-"+u.Version+".tar.gz")
 		if err := os.WriteFile(lb+".part", ld, 0o644); err != nil || os.Rename(lb+".part", lb) != nil ||
 			os.WriteFile(lb+".sig", u.LuaSignatureJson, 0o644) != nil {
 			reply(agentv1.CommandResult_REJECTED, "write add-on package failed", "")
@@ -173,11 +174,11 @@ func (a *Agent) handleAgentUpgrade(ctx context.Context, client agentv1.AgentGate
 		return
 	}
 	sig, err := pkgsig.Parse(u.SignatureJson)
-	if err != nil || sig.Name != "syapp-agent" || sig.Version != u.Version || sig.Arch != runtime.GOARCH {
+	if err != nil || sig.Name != brand.Agent() || sig.Version != u.Version || sig.Arch != runtime.GOARCH {
 		reply(agentv1.CommandResult_REJECTED, "signature file does not match this upgrade", "")
 		return
 	}
-	data, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: "syapp-agent", Version: u.Version, Arch: runtime.GOARCH, Variant: sig.Variant})
+	data, err := fetchPackage(ctx, client, &agentv1.FetchPackageRequest{Name: brand.Agent(), Version: u.Version, Arch: runtime.GOARCH, Variant: sig.Variant})
 	if err != nil {
 		reply(agentv1.CommandResult_REJECTED, "fetch package: "+err.Error(), "")
 		return

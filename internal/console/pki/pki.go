@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // NodeCertValidity 是节点证书有效期。
@@ -116,7 +118,7 @@ func (ca *CA) ServerCert(hosts []string) (tls.Certificate, error) {
 	}
 	tpl := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "syapp-console"},
+		Subject:      pkix.Name{CommonName: brand.Console()},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().AddDate(1, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

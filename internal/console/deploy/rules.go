@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
@@ -133,7 +134,7 @@ func (d *Service) CheckLua(groupID uint) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("LUA_ADDON_REQUIRED: 站点有 JWT 规则，但节点 %s 没有安装与当前 syapp 匹配的 syapp-lua 附加包；请先在节点上安装附加包（见 docs/lua.md）", strings.Join(missing, "、"))
+		return fmt.Errorf("LUA_ADDON_REQUIRED: 站点有 JWT 规则，但节点 %s 没有安装与当前 %s 匹配的 %s 附加包；请先在节点上安装附加包（见 docs/lua.md）", strings.Join(missing, "、"), brand.ID(), brand.Lua())
 	}
 	return nil
 }

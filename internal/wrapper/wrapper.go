@@ -1,39 +1,39 @@
-// Package wrapper 实现 syapp-wrapper：syapp-agent 唯一的提权入口（规格书 5.5）。
+// Package wrapper 实现提权入口 <品牌>-wrapper：agent 唯一的提权入口（规格书 5.5）。
 //
 // 安全要点：
 //   - 只接受固定的子命令 test / reload / reopen / quit / upgrade-start / upgrade-commit / upgrade-abort；
 //   - test 只接受一个 revision ID，且必须匹配 ^r[0-9]{6,12}$；upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$；
 //   - 升级包必须带厂商升级包签名（与 License 签名密钥分开），由本程序以 root 验签后才使用（upgrade.go）；
-//   - 二进制与配置路径全部为编译期常量，参数不参与路径以外的任何拼接；
+//   - 二进制与配置路径全部由 internal/layout 按实例名计算，参数不参与路径以外的任何拼接；
 //   - 用切片方式执行，清空环境变量，绝不经过 shell；
 //   - 永远不提供 restart、-g、-p 或任意 -c。
 package wrapper
 
 import (
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
-const (
-	// SyappBin 是数据面二进制的绝对路径。
-	SyappBin = "/opt/syapp/sbin/syapp"
-	// ReleasesDir 是版本目录的根。
-	ReleasesDir = "/opt/syapp/conf/releases"
+var (
+	// SyappBin 是数据面二进制的绝对路径（同机实例共用）。
+	SyappBin = layout.System("").Bin()
+	// ReleasesDir 是默认实例版本目录的根。
+	ReleasesDir = layout.System("").ReleasesDir()
 )
 
 // ExitUsage 是参数非法时的退出码（与 sysexits.h 的 EX_USAGE 一致）。
 const ExitUsage = 64
 
 // ErrUsage 表示调用参数不被允许。
-var ErrUsage = errors.New("usage: syapp-wrapper test <revision> | reload | reopen | quit | upgrade-start <version> | upgrade-commit | upgrade-abort")
+var ErrUsage = errors.New("usage: " + brand.Wrapper() + " test <revision> | reload | reopen | quit | upgrade-start <version> | upgrade-commit | upgrade-abort")
 
 var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$`)
 
 var revisionRe = regexp.MustCompile(`^r[0-9]{6,12}$`)
-
-var instanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 // Command 是一次经过校验、可直接执行的调用。
 type Command struct {
@@ -53,7 +53,7 @@ var SafeEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
 func Build(argv []string) (Command, error) {
 	var instance string
 	if len(argv) >= 2 && argv[0] == "--instance" {
-		if !instanceRe.MatchString(argv[1]) {
+		if argv[1] == "" || !layout.ValidInstance(argv[1]) { // 与 internal/layout 同一规则
 			return Command{}, ErrUsage
 		}
 		instance = argv[1]
@@ -65,15 +65,16 @@ func Build(argv []string) (Command, error) {
 	releasesDir := ReleasesDir
 	currentConf := ""
 	if instance != "" {
-		releasesDir = fmt.Sprintf("/opt/syapp/instances/%s/conf/releases", instance)
-		currentConf = fmt.Sprintf("/opt/syapp/instances/%s/conf/current/syapp.conf", instance)
+		l := layout.System(instance)
+		releasesDir = l.ReleasesDir()
+		currentConf = l.CurrentConf()
 	}
 	switch argv[0] {
 	case "test":
 		if len(argv) != 2 || !revisionRe.MatchString(argv[1]) {
 			return Command{}, ErrUsage
 		}
-		conf := fmt.Sprintf("%s/%s/syapp.conf", releasesDir, argv[1])
+		conf := releasesDir + "/" + argv[1] + "/" + brand.ConfName()
 		return Command{Instance: instance, Path: SyappBin, Args: []string{"-t", "-q", "-c", conf}, Env: SafeEnv}, nil
 	case "reload", "reopen", "quit":
 		if len(argv) != 1 {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -202,7 +203,7 @@ func (d *Service) CheckGM(groupID uint) error {
 		}
 	}
 	if len(std) > 0 {
-		return fmt.Errorf("GM_VARIANT_REQUIRED: 站点启用了国密双证书，但节点 %s 运行的不是国密版 syapp；请先在“数据面升级”中把节点组升级到国密版", strings.Join(std, "、"))
+		return fmt.Errorf("GM_VARIANT_REQUIRED: 站点启用了国密双证书，但节点 %s 运行的不是国密版 %s；请先在“数据面升级”中把节点组升级到国密版", strings.Join(std, "、"), brand.ID())
 	}
 	return nil
 }

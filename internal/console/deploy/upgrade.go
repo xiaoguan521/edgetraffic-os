@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
@@ -148,14 +149,14 @@ func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) 
 		if n.Arch == "" {
 			return nil, fmt.Errorf("节点 %s 的 agent 版本过旧（未上报架构），请先升级 agent", n.Name)
 		}
-		if c, _ := p.WithContext(bg).Where(p.Name.Eq("syapp"), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq(variant)).Count(); c == 0 {
-			return nil, fmt.Errorf("版本库中没有 syapp %s %s %s 的升级包", version, n.Arch, variant)
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.ID()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq(variant)).Count(); c == 0 {
+			return nil, fmt.Errorf("版本库中没有 %s %s %s %s 的升级包", brand.ID(), version, n.Arch, variant)
 		}
 	}
 	// 装有 syapp-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
 	for _, n := range luaNodes(nodes) {
-		if c, _ := p.WithContext(bg).Where(p.Name.Eq("syapp-lua"), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
-			return nil, fmt.Errorf("节点 %s 装有 syapp-lua 附加包：版本库中还需要 syapp-lua %s %s 的附加包", n.Name, version, n.Arch)
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.Lua()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
+			return nil, fmt.Errorf("节点 %s 装有 %s 附加包：版本库中还需要 %s %s %s 的附加包", n.Name, brand.Lua(), brand.Lua(), version, n.Arch)
 		}
 	}
 	mu, _ := upgradeLocks.LoadOrStore(groupID, &sync.Mutex{})
@@ -210,7 +211,7 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 		}
 		return []byte(pkg.Sig)
 	}
-	sigFor := func(arch string) []byte { return sigOf("syapp", arch, up.Variant) }
+	sigFor := func(arch string) []byte { return sigOf(brand.ID(), arch, up.Variant) }
 	ag := d.agents()
 	var mu sync.Mutex // 保护 plan、failed 与 save
 	failed := false
@@ -237,7 +238,7 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 			Action: agentv1.UpgradeDataplane_START, Version: up.Version, PackageSha256: ps.SHA256, SignatureJson: sig,
 			PostChecks: d.groupPostChecks(up.GroupID), TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
 		if node.LuaAddon != "" {
-			msg.GetUpgrade().LuaSignatureJson = sigOf("syapp-lua", node.Arch, "lua")
+			msg.GetUpgrade().LuaSignatureJson = sigOf(brand.Lua(), node.Arch, "lua")
 		}
 		res, err := ag.Send(context.Background(), n.NodeID, msg, UpgradeTimeout)
 		switch {
@@ -381,8 +382,8 @@ func (d *Service) StartAgentUpgrade(groupID uint, version, user, ip string) (*st
 		if n.Arch == "" {
 			return nil, fmt.Errorf("节点 %s 的 agent 版本过旧（未上报架构），请通过安装包升级", n.Name)
 		}
-		if c, _ := p.WithContext(bg).Where(p.Name.Eq("syapp-agent"), p.Version.Eq(version), p.Arch.Eq(n.Arch)).Count(); c == 0 {
-			return nil, fmt.Errorf("版本库中没有 syapp-agent %s %s 的升级包", version, n.Arch)
+		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.Agent()), p.Version.Eq(version), p.Arch.Eq(n.Arch)).Count(); c == 0 {
+			return nil, fmt.Errorf("版本库中没有 %s %s %s 的升级包", brand.Agent(), version, n.Arch)
 		}
 	}
 	mu, _ := upgradeLocks.LoadOrStore(groupID, &sync.Mutex{})
@@ -448,7 +449,7 @@ func (d *Service) runAgentUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode
 		n.Status = "upgrading"
 		save("running", false)
 		p := q.DataplanePackage
-		pkg, err := p.WithContext(bg).Select(p.Sig, p.SHA256).Where(p.Name.Eq("syapp-agent"), p.Version.Eq(up.Version), p.Arch.Eq(node.Arch)).First()
+		pkg, err := p.WithContext(bg).Select(p.Sig, p.SHA256).Where(p.Name.Eq(brand.Agent()), p.Version.Eq(up.Version), p.Arch.Eq(node.Arch)).First()
 		if err != nil {
 			n.Status, n.Message, failed = "failed", "版本库中没有对应的包", true
 			continue
@@ -478,7 +479,7 @@ func (d *Service) runAgentUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode
 		if back {
 			n.Status, n.Message = "upgraded", "已以新版本重新上线"
 		} else {
-			n.Status, n.Message, failed = "failed", "agent 未在规定时间内以新版本重新上线（syapp 不受影响）", true
+			n.Status, n.Message, failed = "failed", "agent 未在规定时间内以新版本重新上线（"+brand.ID()+" 不受影响）", true
 		}
 		save("running", false)
 	}

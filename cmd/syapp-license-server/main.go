@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
@@ -77,7 +78,7 @@ func keygen(args []string) {
 		die("-kid is required")
 	}
 	if !demoKID(*kid) {
-		die("syapp-license-server keygen 只生成演示 / CI 密钥（etos-demo-* / etos-ci-*）；正式密钥请在离线签名机上用 syapp-license-signer keygen 生成")
+		die(brand.LicenseServer() + " keygen 只生成演示 / CI 密钥（etos-demo-* / etos-ci-*）；正式密钥请在离线签名机上用 " + brand.LicenseSigner() + " keygen 生成")
 	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	check(err)
@@ -115,7 +116,7 @@ func issue(args []string) {
 		die("-installation-id requires -binding installation_only (host fingerprint comes from the activation request)")
 	}
 	if !demoKID(*kid) {
-		die("syapp-license-server issue 只能用演示 / CI 密钥签发；正式 License 由离线签名机上的 syapp-license-signer 签名（docs/license-ops.md）")
+		die(brand.LicenseServer() + " issue 只能用演示 / CI 密钥签发；正式 License 由离线签名机上的 " + brand.LicenseSigner() + " 签名（docs/license-ops.md）")
 	}
 	priv := loadKey(*keyPath)
 	var req license.ActivationRequest
@@ -157,13 +158,13 @@ func signPackage(args []string) {
 	keyPath := fs.String("key", "", "演示 / CI 升级包签名私钥（PEM）")
 	kid := fs.String("kid", "", "密钥编号（etos-demo-pkg-* / etos-ci-pkg-*）")
 	in := fs.String("in", "", "升级包 tar.gz")
-	name := fs.String("name", "syapp", "syapp | syapp-agent")
+	name := fs.String("name", brand.ID(), brand.ID()+" | "+brand.Agent()+" | "+brand.Lua())
 	ver := fs.String("version", "", "版本号")
 	arch := fs.String("arch", "", "amd64 | arm64")
 	variant := fs.String("variant", "standard", "standard | gmssl | lua")
 	_ = fs.Parse(args)
 	if !strings.HasPrefix(*kid, "etos-demo-pkg-") && !strings.HasPrefix(*kid, "etos-ci-pkg-") {
-		die("syapp-license-server sign-package 只能用演示 / CI 升级包密钥；正式升级包请在离线签名机上用 syapp-license-signer sign-package 签名")
+		die(brand.LicenseServer() + " sign-package 只能用演示 / CI 升级包密钥；正式升级包请在离线签名机上用 " + brand.LicenseSigner() + " sign-package 签名")
 	}
 	data, err := os.ReadFile(*in)
 	check(err)
@@ -223,6 +224,6 @@ func die(msg string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: syapp-license-server serve | request | crl-request | import | keygen | issue | sign-package | inspect | version")
+	fmt.Fprintln(os.Stderr, "usage: "+brand.LicenseServer()+" serve | request | crl-request | import | keygen | issue | sign-package | inspect | version")
 	os.Exit(2)
 }

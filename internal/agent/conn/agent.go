@@ -37,7 +37,9 @@ import (
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/apply"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/collect"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/cmdsig"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
@@ -245,9 +247,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			backoff = time.Second
 		}
 		if grpcstatus.Code(err) == codes.PermissionDenied {
-			a.log.Error("console rejected this node (revoked?); re-add it in the console and run the enroll command on this host; syapp keeps serving", "err", err)
+			a.log.Error("console rejected this node (revoked?); re-add it in the console and run the enroll command on this host; "+brand.ID()+" keeps serving", "err", err)
 		} else {
-			a.log.Warn("disconnected from console; syapp keeps serving", "err", err, "retry_in", backoff)
+			a.log.Warn("disconnected from console; "+brand.ID()+" keeps serving", "err", err, "retry_in", backoff)
 		}
 		// 等待退避时间，期间若本机重新注册则立即重连
 		deadline := time.After(backoff)
@@ -361,7 +363,7 @@ var luaVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$`)
 func (a *Agent) luaAddon() string {
 	dir := a.C.Modules
 	if dir == "" {
-		dir = "/opt/syapp/modules"
+		dir = layout.System("").Modules()
 	}
 	vb, err := os.ReadFile(filepath.Join(dir, "lua", "VERSION"))
 	if err != nil {

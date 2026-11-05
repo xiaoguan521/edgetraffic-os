@@ -21,14 +21,17 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
 const (
 	maxBinary = 96 << 20
-	binEntry  = "bin/syapp-agent"
 	envGuard  = "ETOS_AGENT_SELFUPDATE_EXEC"
 )
+
+// binEntry 是 agent 升级包中二进制的相对路径。
+var binEntry = "bin/" + brand.Agent()
 
 var ErrRejected = errors.New("agent package rejected")
 
@@ -40,7 +43,7 @@ func extract(data, sigJSON []byte, arch string, keys map[string]ed25519.PublicKe
 	if err != nil {
 		return nil, nil, err
 	}
-	if sig.Name != "syapp-agent" || sig.Arch != arch {
+	if sig.Name != brand.Agent() || sig.Arch != arch {
 		return nil, nil, fmt.Errorf("%w: signature is for %s %s", ErrRejected, sig.Name, sig.Arch)
 	}
 	if err := pkgsig.Verify(sig, data, keys); err != nil {
@@ -85,7 +88,7 @@ func Install(state string, data, sigJSON []byte, arch string, keys map[string]ed
 	if err := os.WriteFile(filepath.Join(tmp, "package.sig"), sigJSON, 0o600); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "syapp-agent"), bin, 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, brand.Agent()), bin, 0o700); err != nil {
 		return "", err
 	}
 	_ = os.RemoveAll(d)
@@ -130,7 +133,7 @@ func Staged(state, running, arch string, keys map[string]ed25519.PublicKey) stri
 	d := dir(state, ver)
 	data, err1 := os.ReadFile(filepath.Join(d, "package.tar.gz"))
 	sigJSON, err2 := os.ReadFile(filepath.Join(d, "package.sig"))
-	bin, err3 := os.ReadFile(filepath.Join(d, "syapp-agent"))
+	bin, err3 := os.ReadFile(filepath.Join(d, brand.Agent()))
 	if err1 != nil || err2 != nil || err3 != nil {
 		return ""
 	}
@@ -142,7 +145,7 @@ func Staged(state, running, arch string, keys map[string]ed25519.PublicKey) stri
 	if hex.EncodeToString(h1[:]) != hex.EncodeToString(h2[:]) {
 		return "" // 二进制被改动：不执行
 	}
-	return filepath.Join(d, "syapp-agent")
+	return filepath.Join(d, brand.Agent())
 }
 
 // MaybeExec 在启动时切换到已安装的新版本（只执行一次，避免循环）。返回时表示继续运行当前二进制。

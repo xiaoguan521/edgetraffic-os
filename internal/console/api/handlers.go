@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gen/field"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -405,7 +406,7 @@ func (s *Server) enrollToken(c *gin.Context) {
 		return
 	}
 	s.audit(c, "node.enroll_token", "node_group", fmt.Sprint(id), map[string]any{"expires_at": exp})
-	cmd := fmt.Sprintf("sudo syapp-agent enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now syapp-agent", s.GRPCAddr, tok, s.CAFingerprint)
+	cmd := fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now %s", brand.Agent(), s.GRPCAddr, tok, s.CAFingerprint, brand.Agent())
 	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint, "command": cmd})
 }
 

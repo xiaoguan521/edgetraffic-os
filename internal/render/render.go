@@ -17,6 +17,9 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 //go:embed templates/*.tmpl
@@ -85,7 +88,7 @@ func Render(in Input) (*Bundle, error) {
 	}
 
 	var err error
-	if files["syapp.conf"], err = exec("syapp.conf.tmpl", in); err != nil {
+	if files[brand.ConfName()], err = exec("main.conf.tmpl", in); err != nil {
 		return nil, err
 	}
 	if files["snippets/security.conf"], err = exec("security.conf.tmpl", in); err != nil {
@@ -232,7 +235,7 @@ func GMFiles(g *GMPair) map[string]string {
 }
 
 // ReleasesDir 是节点上版本目录的父目录。国密 ssl_conf_command 的文件路径不按配置目录解析，只能写本版本目录的绝对路径。
-const ReleasesDir = "/opt/syapp/conf/releases/"
+var ReleasesDir = layout.System("").ReleasesDir() + "/"
 
 // RebaseRevision 把配置文件中指向 oldRev 版本目录的绝对路径改写为 newRev（证书续期在线上版本基础上重打包时使用）。
 // 只改写 .conf 文件；证书、私钥与静态文件原样保留。
