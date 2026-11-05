@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license/signer"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
@@ -88,7 +89,7 @@ func (a *app) run(args []string) int {
 }
 
 func (a *app) usage() {
-	_, _ = fmt.Fprintln(a.errw, `用法：syapp-license-signer keygen|pubkey|inspect|sign|verify|sign-package [参数]   （-h 查看各子命令参数）`)
+	_, _ = fmt.Fprintln(a.errw, "用法："+brand.LicenseSigner()+" keygen|pubkey|inspect|sign|verify|sign-package [参数]   （-h 查看各子命令参数）")
 }
 
 // offlineCheck 在 Linux 上检查是否有处于连接状态的网卡（只读 /sys，不使用网络库）。
@@ -383,7 +384,7 @@ func (a *app) signPackage(args []string) error {
 	fs := flag.NewFlagSet("sign-package", flag.ContinueOnError)
 	keyPath := fs.String("key", "", "升级包签名私钥文件（etos-pkg-*）")
 	in := fs.String("in", "", "升级包（tar.gz）")
-	name := fs.String("name", "syapp", "syapp | syapp-agent")
+	name := fs.String("name", brand.ID(), brand.ID()+" | "+brand.Agent()+" | "+brand.Lua())
 	ver := fs.String("version", "", "版本号，如 1.30.7-1")
 	arch := fs.String("arch", "", "amd64 | arm64")
 	variant := fs.String("variant", "standard", "standard | gmssl | lua")

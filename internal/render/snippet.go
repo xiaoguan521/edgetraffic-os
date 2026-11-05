@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
@@ -272,7 +273,7 @@ func (c *checker) one(d *conf.Directive, scope SnippetScope, allow map[string]bo
 		}
 	case "root", "alias":
 		if len(d.Args) != 1 || !c.underSite(d.Args[0]) {
-			c.bad(d, "只能指向本站点目录 /opt/syapp/conf/current/sites/"+c.ctx.Site+"/")
+			c.bad(d, "只能指向本站点目录 "+sitesBase()+c.ctx.Site+"/")
 		}
 	case "set":
 		if len(d.Args) != 2 || !strings.HasPrefix(d.Args[0], "$") {
@@ -303,7 +304,7 @@ func (c *checker) proxyTarget(t string) error {
 }
 
 func (c *checker) underSite(p string) bool {
-	base := "/opt/syapp/conf/current/sites/" + c.ctx.Site + "/"
+	base := sitesBase() + c.ctx.Site + "/"
 	return c.ctx.Site != "" && strings.HasPrefix(p, base) && !strings.Contains(p, "..") && !strings.ContainsAny(p, "$")
 }
 
@@ -395,3 +396,6 @@ func (in *Input) validateInputSnippets() error {
 	}
 	return nil
 }
+
+// sitesBase 是节点上当前版本静态站点目录的父目录（片段中 root / alias 只能指向本站点子目录）。
+func sitesBase() string { return layout.System("").ConfRoot() + "/current/sites/" }

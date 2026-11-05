@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/firewall"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // firewallMain 实现离线子命令（不连接控制台，由 syapp-firewall 脚本调用）：
@@ -15,7 +16,7 @@ import (
 //	syapp-agent firewall covers -ssh-from CIDRS -ip IP     退出码 0 表示 IP 在列表中，1 表示不在
 func firewallMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "用法：syapp-agent firewall render|covers ...")
+		_, _ = fmt.Fprintln(stderr, "用法："+brand.Agent()+" firewall render|covers ...")
 		return 2
 	}
 	fs := flag.NewFlagSet("firewall "+args[0], flag.ContinueOnError)

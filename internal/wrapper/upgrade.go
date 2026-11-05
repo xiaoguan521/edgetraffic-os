@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
@@ -53,14 +55,9 @@ func DefaultPaths() Paths {
 
 // DefaultPathsForInstance 返回指定实例（空串表示默认单实例）的热升级路径。
 func DefaultPathsForInstance(instance string) Paths {
-	p := Paths{Bin: SyappBin, Modules: "/opt/syapp/modules", Versions: "/opt/syapp/versions", Incoming: "/var/lib/syapp-agent/upgrade",
-		PidFile: "/run/syapp/syapp.pid", Conf: "/opt/syapp/conf/current/syapp.conf", Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second}
-	if instance != "" {
-		p.Incoming = "/var/lib/syapp-agent-" + instance + "/upgrade"
-		p.PidFile = "/run/syapp-" + instance + "/syapp.pid"
-		p.Conf = "/opt/syapp/instances/" + instance + "/conf/current/syapp.conf"
-	}
-	return p
+	l := layout.System(instance)
+	return Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
+		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second}
 }
 
 const (
@@ -74,8 +71,10 @@ const (
 
 var (
 	ErrUpgrade = errors.New("upgrade failed")
-	entryRe    = regexp.MustCompile(`^(sbin/syapp|modules/[a-z0-9_]+\.so|VERSION|NOTICE)$`)
-	verOutRe   = regexp.MustCompile(`syapp/([0-9]+\.[0-9]+\.[0-9]+)`)
+	entryRe    = regexp.MustCompile(`^(` + regexp.QuoteMeta(binEntry) + `|modules/[a-z0-9_]+\.so|VERSION|NOTICE)$`)
+	verOutRe   = regexp.MustCompile(regexp.QuoteMeta(brand.VersionPrefix()) + `([0-9]+\.[0-9]+\.[0-9]+)`)
+	// binEntry 是升级包与版本目录中数据面二进制的相对路径。
+	binEntry = "sbin/" + brand.ID()
 )
 
 // State 记录上一次升级，用于中止时切回与一键回退。
@@ -118,12 +117,12 @@ func fileSHA(path string) string {
 func (p Paths) installed(ver string) bool {
 	dir := filepath.Join(p.Versions, ver)
 	want, err := os.ReadFile(filepath.Join(dir, shaFile))
-	return err == nil && strings.TrimSpace(string(want)) == fileSHA(filepath.Join(dir, "sbin/syapp"))
+	return err == nil && strings.TrimSpace(string(want)) == fileSHA(filepath.Join(dir, binEntry))
 }
 
 // install 校验签名并解压升级包到 versions/<ver>。
 func (p Paths) install(ver string) error {
-	base := filepath.Join(p.Incoming, "syapp-"+ver+".tar.gz")
+	base := filepath.Join(p.Incoming, brand.ID()+"-"+ver+".tar.gz")
 	data, err := readNoFollow(base, maxPackage)
 	if err != nil {
 		return fail("read package: %v", err)
@@ -136,8 +135,8 @@ func (p Paths) install(ver string) error {
 	if err != nil {
 		return err
 	}
-	if sig.Name != "syapp" || sig.Version != ver || sig.Arch != p.Arch {
-		return fail("signature is for %s %s %s, want syapp %s %s", sig.Name, sig.Version, sig.Arch, ver, p.Arch)
+	if sig.Name != brand.ID() || sig.Version != ver || sig.Arch != p.Arch {
+		return fail("signature is for %s %s %s, want %s %s %s", sig.Name, sig.Version, sig.Arch, brand.ID(), ver, p.Arch)
 	}
 	if err := pkgsig.Verify(sig, data, p.Keys); err != nil {
 		return err
@@ -182,7 +181,7 @@ func (p Paths) install(ver string) error {
 			return err
 		}
 		mode := os.FileMode(0o644)
-		if name == "sbin/syapp" {
+		if name == binEntry {
 			mode, got = 0o755, true
 		}
 		f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
@@ -198,9 +197,9 @@ func (p Paths) install(ver string) error {
 		}
 	}
 	if !got {
-		return fail("package has no sbin/syapp")
+		return fail("package has no %s", binEntry)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, shaFile), []byte(fileSHA(filepath.Join(tmp, "sbin/syapp"))+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, shaFile), []byte(fileSHA(filepath.Join(tmp, binEntry))+"\n"), 0o644); err != nil {
 		return err
 	}
 	dir := filepath.Join(p.Versions, ver)
@@ -227,7 +226,7 @@ func readPid(path string) (int, error) {
 // isMaster 确认 pid 是 syapp 的 master 进程（防止 pid 文件被篡改后向任意进程发信号）。
 func isMaster(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	return err == nil && strings.HasPrefix(string(b), "syapp: master process")
+	return err == nil && strings.HasPrefix(string(b), brand.MasterTitle())
 }
 
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
@@ -258,7 +257,7 @@ func workerPids(master int) map[int]bool {
 			continue
 		}
 		// 收到 WINCH 正在优雅退出的 worker 标题为 "worker process is shutting down"，不算在内
-		if cl, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && strings.HasPrefix(string(cl), "syapp: worker process") &&
+		if cl, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && strings.HasPrefix(string(cl), brand.WorkerTitle()) &&
 			!strings.Contains(string(cl), "shutting down") {
 			out[pid] = true
 		}
@@ -268,7 +267,7 @@ func workerPids(master int) map[int]bool {
 
 func signal(pid int, sig syscall.Signal) error {
 	if !isMaster(pid) {
-		return fail("pid %d is not a syapp master process", pid)
+		return fail("pid %d is not a %s master process", pid, brand.ID())
 	}
 	return syscall.Kill(pid, sig)
 }
@@ -319,14 +318,14 @@ func (p Paths) current() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(filepath.Join(dir, "sbin/syapp"), b, 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, binEntry), b, 0o755); err != nil {
 			return "", err
 		}
 		if err := os.WriteFile(filepath.Join(dir, shaFile), []byte(fileSHA(p.Bin)+"\n"), 0o644); err != nil {
 			return "", err
 		}
 	}
-	target := filepath.Join(dir, "sbin/syapp")
+	target := filepath.Join(dir, binEntry)
 	if err := p.swapLink(target); err != nil {
 		return "", err
 	}
@@ -398,14 +397,14 @@ func UpgradeStart(p Paths, ver string) error {
 	}
 	oldPid, err := readPid(p.PidFile)
 	if err != nil || !isMaster(oldPid) {
-		return fail("syapp master is not running")
+		return fail("%s master is not running", brand.ID())
 	}
 	if !p.installed(ver) {
 		if err := p.install(ver); err != nil {
 			return err
 		}
 	}
-	newBin := filepath.Join(p.Versions, ver, "sbin/syapp")
+	newBin := filepath.Join(p.Versions, ver, binEntry)
 	// 装有 syapp-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
 	prevLua, err := p.prepareLua(ver, newBin)
 	if err != nil {

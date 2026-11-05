@@ -9,6 +9,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // Lua 规则（P10）：只在节点装有 syapp-lua 附加包时可用（控制台负责门禁，未装时 syapp -t 失败、agent 自动回滚）。
@@ -19,7 +22,7 @@ import (
 // 进程、代码加载与 C 模块加载能力。
 
 // LuaModulesDir 是附加包模块目录（软链，指向与运行中二进制版本匹配的 lua-<版本>）。
-const LuaModulesDir = "/opt/syapp/modules/lua"
+var LuaModulesDir = layout.System("").Modules() + "/lua"
 
 // JWTAction：校验 JWT（HS256 / RS256）。失败返回 401，并带 WWW-Authenticate。
 type JWTAction struct {
@@ -156,7 +159,7 @@ func renderLuaHTTP(in Input) string {
 	sort.Slice(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
 	var b strings.Builder
 	b.WriteString(`
-    # Lua 规则（syapp-lua 附加包）：只加载附加包中审核过的库，不加载任何 C 模块
+    # Lua 规则（` + brand.Lua() + ` 附加包）：只加载附加包中审核过的库，不加载任何 C 模块
     lua_package_path   "` + LuaModulesDir + `/lualib/?.lua";
     lua_package_cpath  "` + LuaModulesDir + `/lualib/?.disabled";
     lua_code_cache     on;

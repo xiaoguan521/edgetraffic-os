@@ -29,6 +29,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // Status 与协议 CommandResult.Status 一一对应。
@@ -194,7 +196,7 @@ func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck) 
 		return Result{Status: Conflict, Message: "another apply is running: " + err.Error()}
 	}
 	defer unlock()
-	if _, err := os.Stat(filepath.Join(a.releases(), rev, "syapp.conf")); err != nil {
+	if _, err := os.Stat(filepath.Join(a.releases(), rev, brand.ConfName())); err != nil {
 		return Result{Status: Rejected, Message: "revision not present on node"}
 	}
 	if out, err := a.wrapper(ctx, "test", rev); err != nil {
@@ -208,7 +210,7 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 	prevTarget, _ := os.Readlink(a.link("current"))
 	before, err := a.snapshot()
 	if err != nil {
-		return Result{Status: Degraded, Message: "syapp is not running: " + err.Error()}
+		return Result{Status: Degraded, Message: brand.ID() + " is not running: " + err.Error()}
 	}
 	if err := a.setLink("current", filepath.Join("releases", rev)); err != nil {
 		return Result{Status: Degraded, Message: "switch failed: " + err.Error()}

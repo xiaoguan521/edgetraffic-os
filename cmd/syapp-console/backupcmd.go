@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/backup"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
@@ -29,7 +30,7 @@ func isBackupSubcommand(cmd string) bool {
 // 口令只从文件或环境变量 ETOS_BACKUP_PASSPHRASE 读取，不接受命令行参数（会出现在 ps 与 shell 历史中）。
 func backupMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "用法：syapp-console backup|restore|verify-backup|backup-prune [参数]")
+		_, _ = fmt.Fprintln(stderr, "用法："+brand.Console()+" backup|restore|verify-backup|backup-prune [参数]")
 		return 2
 	}
 	var err error
@@ -59,7 +60,7 @@ type commonFlags struct {
 
 func addCommon(fs *flag.FlagSet) commonFlags {
 	return commonFlags{
-		dataDir:  fs.String("data", envOr("ETOS_DATA", "/var/lib/syapp-console"), "数据目录"),
+		dataDir:  fs.String("data", envOr("ETOS_DATA", "/var/lib/"+brand.Console()), "数据目录"),
 		dsn:      fs.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）"),
 		passFile: fs.String("passphrase-file", "", "备份口令文件（也可用环境变量 ETOS_BACKUP_PASSPHRASE）"),
 	}

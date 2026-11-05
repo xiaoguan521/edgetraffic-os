@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/api"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/service"
@@ -29,7 +30,7 @@ import (
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := fs.String("listen", envOr("ETOS_PORTAL_LISTEN", "127.0.0.1:8600"), "监听地址")
-	dataDir := fs.String("data", envOr("ETOS_PORTAL_DATA", "/var/lib/syapp-license-server"), "数据目录")
+	dataDir := fs.String("data", envOr("ETOS_PORTAL_DATA", "/var/lib/"+brand.LicenseServer()), "数据目录")
 	dsn := fs.String("db", os.Getenv("ETOS_PORTAL_DB"), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/portal.db）")
 	tlsCert := fs.String("tls-cert", "", "HTTPS 证书")
 	tlsKey := fs.String("tls-key", "", "HTTPS 私钥")

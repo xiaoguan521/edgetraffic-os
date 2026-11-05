@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // WebCA 为 Web 控制台签发 HTTPS 证书（-tls-auto）。
@@ -106,7 +108,7 @@ func (w *WebCA) Leaf(hosts []string) (*tls.Certificate, error) {
 	now := w.now()
 	tpl := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "syapp-console"},
+		Subject:      pkix.Name{CommonName: brand.Console()},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(webLeafValidity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

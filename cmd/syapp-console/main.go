@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/acme"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/alerts"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/api"
@@ -52,7 +53,7 @@ func main() {
 	grpcListen := flag.String("grpc-listen", envOr("ETOS_GRPC_LISTEN", "0.0.0.0:9443"), "节点连接的 gRPC 监听地址")
 	grpcHosts := flag.String("grpc-hosts", envOr("ETOS_GRPC_HOSTS", ""), "gRPC 服务端证书包含的主机名/IP，逗号分隔（节点用它们连接）")
 	grpcAdvertise := flag.String("grpc-advertise", envOr("ETOS_GRPC_ADVERTISE", ""), "写入节点安装命令的控制台地址 host:port")
-	dataDir := flag.String("data", envOr("ETOS_DATA", "/var/lib/syapp-console"), "数据目录（数据库、CA、安装 ID）")
+	dataDir := flag.String("data", envOr("ETOS_DATA", "/var/lib/"+brand.Console()), "数据目录（数据库、CA、安装 ID）")
 	dsn := flag.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）")
 	acmeCA := flag.String("acme-ca-file", os.Getenv("ETOS_ACME_CA_FILE"), "额外信任的 ACME 服务 CA 证书（内网自建 ACME 时使用，可选）")
 	tlsAuto := flag.Bool("tls-auto", envBool("ETOS_TLS_AUTO"), "Web 控制台使用内置 Web CA 自动签发的 HTTPS 证书（未指定 -tls-cert 时）")
@@ -68,7 +69,7 @@ func main() {
 	o := options{listen: *listen, tlsCert: *tlsCert, tlsKey: *tlsKey, tlsAuto: *tlsAuto, webHosts: *webHosts, grpcListen: *grpcListen,
 		grpcHosts: *grpcHosts, grpcAdvertise: *grpcAdvertise, dataDir: *dataDir, dsn: *dsn, acmeCA: *acmeCA}
 	if err := run(log, o); err != nil {
-		log.Error("syapp-console stopped", "err", err)
+		log.Error(brand.Console()+" stopped", "err", err)
 		os.Exit(1)
 	}
 }
@@ -221,7 +222,7 @@ func run(log *slog.Logger, o options) error {
 			errc <- hs.ListenAndServe()
 		}
 	}()
-	log.Info("syapp-console started", "version", version.Version, "web", listen, "grpc", grpcListen,
+	log.Info(brand.Console()+" started", "version", version.Version, "web", listen, "grpc", grpcListen,
 		"grpc_advertise", grpcAdvertise, "grpc_hosts", strings.Join(hosts, ","), "installation_id", lic.InstallationID(), "ha", el.Enabled())
 
 	select {

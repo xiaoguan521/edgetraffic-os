@@ -16,10 +16,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // Table 是规则所在的 nftables 表名。
-const Table = "syapp_fw"
+var Table = brand.ID() + "_fw"
 
 // Options 是防火墙参数。
 type Options struct {
@@ -134,7 +136,7 @@ func Render(o Options) (string, error) {
 	}
 
 	var b strings.Builder
-	b.WriteString("# 由 syapp-firewall 生成，请勿手工修改；重新生成：syapp-firewall enable ...\n")
+	b.WriteString("# 由 " + brand.Firewall() + " 生成，请勿手工修改；重新生成：" + brand.Firewall() + " enable ...\n")
 	// add + delete：表不存在时也不报错，重新加载时整表替换（原子），不影响其他表
 	fmt.Fprintf(&b, "add table inet %s\ndelete table inet %s\n\n", Table, Table)
 	fmt.Fprintf(&b, "table inet %s {\n", Table)

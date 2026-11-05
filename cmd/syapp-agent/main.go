@@ -23,6 +23,8 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/apply"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/conn"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
@@ -38,7 +40,7 @@ func main() {
 	}
 	if cmd == "package-defaults" { // 打包时使用：写入初始版本与独立模式文件
 		if len(args) != 2 || args[0] != "-out" {
-			fmt.Fprintln(os.Stderr, "usage: syapp-agent package-defaults -out <opt/syapp 暂存目录>")
+			fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" package-defaults -out <安装根目录的暂存目录>")
 			os.Exit(2)
 		}
 		if err := render.WritePackageDefaults(args[1]); err != nil {
@@ -48,10 +50,11 @@ func main() {
 		return
 	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	server := fs.String("server", envOr("SYAPP_CONSOLE", ""), "控制台 gRPC 地址 host:port")
-	stateDir := fs.String("state-dir", "/var/lib/syapp-agent", "身份与状态目录")
-	confRoot := fs.String("conf-root", "/opt/syapp/conf", "syapp 配置根目录")
-	wrapper := fs.String("wrapper", envOr("SYAPP_WRAPPER", "sudo -n /usr/libexec/syapp/syapp-wrapper"), "提权入口（按空格切分，不经过 shell）")
+	lay := layout.System("")
+	server := fs.String("server", envOr(brand.Env("CONSOLE"), ""), "控制台 gRPC 地址 host:port")
+	stateDir := fs.String("state-dir", lay.AgentState(), "身份与状态目录")
+	confRoot := fs.String("conf-root", lay.ConfRoot(), "数据面配置根目录")
+	wrapper := fs.String("wrapper", envOr(brand.Env("WRAPPER"), "sudo -n "+lay.WrapperBin()), "提权入口（按空格切分，不经过 shell）")
 	token := fs.String("token", "", "一次性注册令牌（enroll）")
 	caFP := fs.String("ca-fingerprint", "", "控制台 CA 证书 sha256 指纹（enroll）")
 	replaceLocal := fs.Bool("replace-local-config", false, "本机有独立模式下的自定义配置时，备份后由控制台接管（enroll）")
@@ -59,11 +62,11 @@ func main() {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	cfg := conn.Config{
-		Server: *server, StateDir: *stateDir, SyappBin: "/opt/syapp/sbin/syapp",
-		StatusURL: "http://127.0.0.1:8081/__syapp_status", AccessLog: "/var/log/syapp/access.json",
+		Server: *server, StateDir: *stateDir, SyappBin: lay.Bin(), Modules: lay.Modules(),
+		StatusURL: lay.StatusURL(8081), AccessLog: lay.AccessLog(),
 		Apply: apply.Config{
-			ConfRoot: *confRoot, PidFile: "/run/syapp/syapp.pid", ErrorLog: "/var/log/syapp/error.log",
-			LockFile: "/run/syapp-agent/apply.lock", Wrapper: strings.Fields(*wrapper),
+			ConfRoot: *confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
+			LockFile: lay.AgentLock(), Wrapper: strings.Fields(*wrapper),
 		},
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -163,6 +166,6 @@ func fatal(log *slog.Logger, what string, err error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: syapp-agent bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version | firewall render|covers ...")
+	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version | firewall render|covers ...")
 	os.Exit(2)
 }

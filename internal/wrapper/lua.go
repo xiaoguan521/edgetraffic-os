@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // syapp-lua 附加包与热升级（P10）：动态模块与 syapp 二进制版本强绑定。
@@ -76,10 +78,10 @@ func binBase(bin string) string {
 
 // installLua 校验签名并把 Incoming 中的 syapp-lua-<ver> 解到 Modules/lua-<ver>（只取 base 对应的模块）。
 func (p Paths) installLua(ver, base string) error {
-	path := filepath.Join(p.Incoming, "syapp-lua-"+ver+".tar.gz")
+	path := filepath.Join(p.Incoming, brand.Lua()+"-"+ver+".tar.gz")
 	data, err := readNoFollow(path, maxPackage)
 	if err != nil {
-		return fail("this node has the syapp-lua add-on: the add-on package for %s is required (%v)", ver, err)
+		return fail("this node has the %s add-on: the add-on package for %s is required (%v)", brand.Lua(), ver, err)
 	}
 	sb, err := readNoFollow(path+".sig", 64<<10)
 	if err != nil {
@@ -89,8 +91,8 @@ func (p Paths) installLua(ver, base string) error {
 	if err != nil {
 		return err
 	}
-	if sig.Name != "syapp-lua" || sig.Version != ver || sig.Arch != p.Arch || sig.Variant != "lua" {
-		return fail("add-on signature is for %s %s %s %s, want syapp-lua %s %s lua", sig.Name, sig.Version, sig.Arch, sig.Variant, ver, p.Arch)
+	if sig.Name != brand.Lua() || sig.Version != ver || sig.Arch != p.Arch || sig.Variant != "lua" {
+		return fail("add-on signature is for %s %s %s %s, want %s %s %s lua", sig.Name, sig.Version, sig.Arch, sig.Variant, brand.Lua(), ver, p.Arch)
 	}
 	if err := pkgsig.Verify(sig, data, p.Keys); err != nil {
 		return err

@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/service"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/store/query"
@@ -104,7 +105,7 @@ func (s *Server) Handler() (http.Handler, error) {
 				return
 			}
 			if _, err := fs.Stat(s.Web, "index.html"); err != nil {
-				c.String(http.StatusServiceUnavailable, "web/portal/dist 未构建：先执行 make web 再编译 syapp-license-server\n")
+				c.String(http.StatusServiceUnavailable, "web/portal/dist 未构建：先执行 make web 再编译 "+brand.LicenseServer()+"\n")
 				return
 			}
 			p := strings.TrimPrefix(c.Request.URL.Path, "/")

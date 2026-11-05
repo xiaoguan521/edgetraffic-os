@@ -18,9 +18,9 @@ func TestBuildAllowed(t *testing.T) {
 		{[]string{"reopen"}, []string{"-s", "reopen"}},
 		{[]string{"quit"}, []string{"-s", "quit"}},
 		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syapp/instances/edge-a/conf/releases/r000123/syapp.conf"}},
-		{[]string{"--instance", "edge_2", "reload"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "reload"}},
-		{[]string{"--instance", "edge_2", "reopen"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "reopen"}},
-		{[]string{"--instance", "edge_2", "quit"}, []string{"-c", "/opt/syapp/instances/edge_2/conf/current/syapp.conf", "-s", "quit"}},
+		{[]string{"--instance", "edge-2", "reload"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "reload"}},
+		{[]string{"--instance", "edge-2", "reopen"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "reopen"}},
+		{[]string{"--instance", "edge-2", "quit"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "quit"}},
 	}
 	for _, c := range cases {
 		cmd, err := Build(c.argv)
@@ -99,6 +99,12 @@ func TestBuildRejected(t *testing.T) {
 		{"--instance", "EdgeUpper", "reload"},
 		{"--instance", "-dashstart", "reload"},
 		{"--instance", "edge-a"},
+		{"--instance", "edge_2", "reload"},  // 下划线不在实例名规则内（internal/layout）
+		{"--instance", "1edge", "reload"},   // 必须以字母开头
+		{"--instance", "default", "reload"}, // 保留名
+		{"--instance", "abcdefghijklmnopq", "reload"},
+		{"reload", "--instance", "edge-a"}, // --instance 只能是第一个参数
+		{"--instance", "edge-a", "--instance", "edge-b", "reload"},
 		{"--instance", "edge-a", "test", "-c", "/tmp/evil.conf"},
 	}
 	for _, argv := range bad {

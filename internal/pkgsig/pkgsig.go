@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
 // Format 是签名文件格式标识。
@@ -34,7 +36,7 @@ var (
 
 // 允许的包名、架构与变体。
 var (
-	Names    = map[string]bool{"syapp": true, "syapp-agent": true, "syapp-lua": true} // syapp-lua：P10 附加包（变体固定为 lua）
+	Names    = map[string]bool{brand.ID(): true, brand.Agent(): true, brand.Lua(): true} // <品牌>-lua：P10 附加包（变体固定为 lua）；包名带品牌，其他品牌的包不被接受
 	Arches   = map[string]bool{"amd64": true, "arm64": true}
 	Variants = map[string]bool{"standard": true, "gmssl": true, "lua": true}
 )
@@ -65,8 +67,8 @@ func (s *Sig) validFields() error {
 		return fmt.Errorf("%w: bad version %q", ErrSignature, s.Version)
 	case !Arches[s.Arch]:
 		return fmt.Errorf("%w: bad arch %q", ErrSignature, s.Arch)
-	case s.Name == "syapp-lua" && s.Variant != "lua":
-		return fmt.Errorf("%w: syapp-lua must use variant lua", ErrSignature)
+	case s.Name == brand.Lua() && s.Variant != "lua":
+		return fmt.Errorf("%w: %s must use variant lua", ErrSignature, brand.Lua())
 	case !Variants[s.Variant]:
 		return fmt.Errorf("%w: bad variant %q", ErrSignature, s.Variant)
 	case !kidAnyRe.MatchString(s.KID):
