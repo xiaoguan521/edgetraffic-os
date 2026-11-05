@@ -1,6 +1,6 @@
 # EdgeTraffic OS 完整功能测试清单（MVP 回归 + P6–P10）
 
-更新日期：2026-11-02。源码基线：`2b54940f1dea073b271fa9a4df24060511a63a98`。
+更新日期：2026-11-05。源码基线：`main`（含 `scripts/ci/release-gate.sh` 发布门禁与 29 表备份全覆盖）。
 
 ## 使用范围与结果口径
 
@@ -556,9 +556,10 @@
 
 | 测试层 | 入口 | 前提与限制 |
 | --- | --- | --- |
+| 统一发布门禁 | `scripts/ci/release-gate.sh [--out summary.md]` | 一次执行 `gofmt`、`golangci-lint`、`make brand`、`make gen-check`、Web `eslint` + `build`、`make build` + `-tags release`、`go test -race -count=1 ./...` |
 | Go 静态检查与单测 | `make test` | 含 vet、race；部分真实数据面/数据库测试有额外环境前提，应检查跳过记录 |
 | 代码与生成检查 | `make lint`、`make brand`、`make gen-check` | 安装项目要求的工具；生成代码需与模型同步 |
-| 前端构建 | `cd web && pnpm install --frozen-lockfile && pnpm build` | 含 TypeScript 检查、控制台与授权后台前端；不等于 UI 功能验收 |
+| 前端静态检查与构建 | `cd web && pnpm install --frozen-lockfile && pnpm lint && pnpm build` | 含 ESLint、TypeScript 检查、控制台与授权后台前端；不等于 UI 功能验收 |
 | 控制台 API 冒烟 | `scripts/ci/console-smoke.sh <console> <license-tool> [DSN]` | 专用测试二进制与临时公钥；`LIC_KEY/LIC_KID/PKG_KEY` 设置见 `.github/workflows/ci.yml` |
 | 真实 demo 端到端 | `cd demo && ./e2e.sh` | 独立且已启动的 demo；需要测试签发密钥，ACME 场景启用 Pebble；会修改数据与授权 |
 | 浏览器验收 | `NODE_PATH=/tmp/pw/node_modules node web/e2e/ui-acceptance.cjs` | 先完成 demo e2e；Chromium/Playwright、BASE、LIC_TOOL/LIC_KEY/LIC_KID 见 `demo-e2e.yml` |
@@ -573,6 +574,17 @@
 日常先执行 MVP + 本轮变更模块 + 权限/授权/审计交叉回归；发布候选再执行完整环境矩阵。执行脚本前阅读对应脚本的参数说明，不把缺少环境导致的 skip 计为通过。
 
 ## 已有证据与尚未完成的验收
+
+### 2026-11-05 发布门禁与阻断项修复复验记录
+
+| 范围 | 结果与边界 |
+| --- | --- |
+| 统一发布门禁 (`scripts/ci/release-gate.sh`) | `make lint`（`gofmt` + `golangci-lint`）0 问题；`make brand` 通过；`make gen-check` 通过；Web `eslint` 0 问题；Web Console + Portal 构建通过；`make build` 与 `-tags release` 构建通过；`go test -race -count=1 ./...` 全部 35 个测试包通过 |
+| 静态资源包归档安全 (`STATIC-04`) | `TestStaticBundleAPI` 与 `TestValidateStaticArchive` 通过：拒绝绝对路径、`..` 路径穿越、符号链接、超限与缺失根 `index.html` |
+| 告警 SSRF 与重定向防护 (`ALERT-04`) | `TestRejectsPrivateAlertTargets`、`TestBlockedAlertAddr`、`TestAlertRedirectLimit`、`TestSMTPTargetGuard` 通过：拦截 loopback、RFC1918、RFC6598、链路本地、云元数据（169.254.169.254 / 100.100.100.200 / fd00:ec2::254）、NAT64/6to4/Teredo 及重定向链 |
+| 备份全模型覆盖与校验 (`BKP-07`) | `backup.tables()` 补齐全部 29 个持久化模型（含 `static_bundles` 等 14 张新增表），`TestTablesCoverAllStoreModels` 自动守卫 `store.Models()`，`TestBackupRestoreAllModels` 验证引用静态资源包的站点在恢复后可正常预览与发布；新增 `verify-backup`、`restore -dry-run`、`backup-prune`；跨 PostgreSQL 17 实例迁移待在 PG 环境复跑确认 |
+| 过期授权应急通道 (`CERT-05`、`DRF-03`、`LIC-07`) | Agent 持久化受控版本基线与文件清单（`.approved/`），`TestExpiredLicenseEmergencyOperations` 与 `TestRestoreClearsDriftStateImmediately` 验证过期授权下回滚、手动/国密证书续期与漂移恢复（含 `MANIFEST.json` 被篡改场景）均被允许且立即清除漂移状态，普通配置变更仍被拒绝 |
+| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]` 与 `syapp-wrapper --instance <name>` 多实例支持 |
 
 ### 2026-11-02 本聊天实际执行记录
 
