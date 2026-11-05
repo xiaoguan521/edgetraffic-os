@@ -6,7 +6,7 @@ DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
 LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
 
-.PHONY: all build console agent wrapper license-server test lint brand web proto clean gen gen-check
+.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint brand web proto clean gen gen-check
 
 all: test build
 
@@ -21,6 +21,16 @@ wrapper:
 test:
 	$(GO) vet ./...
 	$(GO) test -race -count=1 ./...
+
+# Real HTTP routing/middleware/database tests; ETOS_TEST_DB selects PostgreSQL.
+test-imports:
+	$(GO) test -race -count=1 -run TestImportHTTP ./internal/console/api
+
+# Requires a disposable initialized console and test signer; see test/playwright/README.md.
+IMPORT_REPORT_DIR ?= dist/test-reports/import-ui
+test-import-ui:
+	mkdir -p "$(IMPORT_REPORT_DIR)"
+	node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$(IMPORT_REPORT_DIR)/junit.xml" web/e2e/import-acceptance.cjs
 
 # 由 model.go 重新生成 gorm/gen 查询代码（控制台与授权后台的 store/query），结果需提交
 GEN_DIRS := internal/console/store/query internal/portal/store/query
