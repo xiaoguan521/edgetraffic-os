@@ -3,6 +3,7 @@
 #   用法：scripts/ci/lua-acceptance.sh <dist-lua 目录> <standard|gmssl>
 #   需要：sudo、go、python3、openssl、curl、wrk；PKG_KEY / PKG_KID 为 CI 升级包签名私钥与编号，
 #         WRAPPER 为注入了对应公钥（pkgsig.ciKey）的 syapp-wrapper，LIC 为 syapp-license-server。
+#         PERF_GATE=0 时 QPS 门槛只报告不拦截（默认 1，拦截）。
 # 覆盖：模块加载与真实 syapp -t；原生规则（IP / UA / 路径 / 跳转 / 限速 / 外部鉴权）；JWT HS256 / RS256；
 #      Lua 沙箱；reload；带附加包的热升级与中止；标准 HTTPS 与国密 NTLS；附加包安装与卸载；品牌检查；
 #      三条常用规则下 QPS 下降不超过 15%。
@@ -266,7 +267,16 @@ pct() { local v=$1 sg=""; (( v < 0 )) && { sg=-; v=$(( -v )); }; echo "$sg$((v /
 # 验收口径（代表性负载）：4 KB 响应、整机运行、ABBA ×4，取 8 个配对比值的中位数，下降不超过 15%
 read -r drop cnt raw <<<"$(abba 4)"
 echo "::notice title=perf $BASE/$ARCH::代表性负载（4 KB、整机）ABBA ×4：$raw；中位下降 $(pct "$drop")；jit=${JIT:-?}"
-(( cnt >= 8 && drop <= 150 )) && ok "三条常用规则下 QPS 下降 $(pct "$drop") ≤ 15%（代表性负载，ABBA 配对中位数）" || bad "QPS 下降 $(pct "$drop") 超过 15%（$raw）"
+if (( cnt >= 8 && drop <= 150 )); then
+  ok "三条常用规则下 QPS 下降 $(pct "$drop") ≤ 15%（代表性负载，ABBA 配对中位数）"
+elif [[ "${PERF_GATE:-1}" == 1 ]]; then
+  bad "QPS 下降 $(pct "$drop") 超过 15%（$raw）"
+else
+  # PERF_GATE=0：只报告不拦截。用于吞吐抖动过大的共享机器（GitHub arm64 机器同一配置相差可达数十倍），
+  # 该架构的性能验收在专用实机上执行（docs/lua.md）
+  echo "::warning title=perf $BASE/$ARCH (not gating)::QPS 下降 $(pct "$drop") 超过 15%（$raw）；本机器上不作门槛，请在专用实机上复测"
+  ok "QPS 下降 $(pct "$drop")，超过 15%，但本机器上不作门槛（PERF_GATE=0）"
+fi
 
 # 参考（不作门槛）：隔离最坏情况——前端 syapp 绑 0-1、后端 2、wrk 3，前端是唯一瓶颈，Lua 固定开销占比被放大
 if (( $(nproc) >= 4 )); then
