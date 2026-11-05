@@ -1,0 +1,189 @@
+package render
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func instanceProfile() Profile {
+	return Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
+}
+
+// 具名实例：所有路径与端口都来自档案，渲染结果中不残留默认实例的路径或端口（设计 0001 第 3、5.3 节）。
+func TestRenderInstanceProfile(t *testing.T) {
+	in := sampleInput(t)
+	in.Profile = instanceProfile()
+	in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("x")}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(b.Files["syapp.conf"])
+	for _, want := range []string{
+		"user  syapp;",
+		"pid   /run/syapp-blue/syapp.pid;",
+		"error_log  /var/log/syapp-blue/error.log  warn;",
+		"access_log  /var/log/syapp-blue/access.json  edge_json;",
+		"client_body_temp_path  /var/cache/syapp-blue/client_temp;",
+		"proxy_temp_path        /var/cache/syapp-blue/proxy_temp;",
+		"listen       18080  default_server;",
+		"listen       18443  ssl  default_server;",
+		"listen       127.0.0.1:8082;",
+		"location = /__syapp_status {",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("main config missing %q", want)
+		}
+	}
+	all := ""
+	for n, c := range b.Files {
+		if strings.HasSuffix(n, ".conf") {
+			all += string(c)
+		}
+	}
+	for _, bad := range []string{"/run/syapp/", "/var/log/syapp/", "/opt/syapp/conf/", " 80;", " 80 ", " 443 ", " 443;", ":8081"} {
+		if strings.Contains(all, bad) {
+			t.Errorf("instance render still contains default %q", bad)
+		}
+	}
+	site := string(b.Files["conf.d/site-blog.conf"])
+	if !strings.Contains(site, "listen       18080;") || !strings.Contains(site, "alias  /opt/syapp/instances/blue/conf/current/sites/blog/") {
+		t.Errorf("site config not using profile:\n%s", site)
+	}
+	if !strings.Contains(string(b.Files["conf.d/site-shop.conf"]), "listen       18443  ssl;") {
+		t.Error("https site not using profile port")
+	}
+}
+
+// user 模式：没有 user 指令，全部路径在安装根目录下，Lua 模块用绝对路径，文件数上限取自档案。
+func TestRenderUserProfile(t *testing.T) {
+	in := luaInput(t)
+	in.Profile = Profile{Mode: "user", Root: "/home/ops/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082, NoFile: 4096}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(b.Files["syapp.conf"])
+	if strings.Contains(main, "\nuser ") {
+		t.Error("user mode must not emit the user directive")
+	}
+	for _, want := range []string{
+		"worker_rlimit_nofile  4096;",
+		"pid   /home/ops/edge/run/syapp.pid;",
+		"error_log  /home/ops/edge/logs/error.log  warn;",
+		"client_body_temp_path  /home/ops/edge/cache/client_temp;",
+		"load_module  /home/ops/edge/modules/lua/ndk_http_module.so;",
+		`lua_package_path   "/home/ops/edge/modules/lua/lualib/?.lua";`,
+		"/home/ops/edge/conf/releases/" + in.Revision + "/lua/",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("user-mode main config missing %q", want)
+		}
+	}
+}
+
+func TestProfileValidation(t *testing.T) {
+	ok := []Profile{{}, instanceProfile(), {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
+	for _, p := range ok {
+		if err := p.Validate(); err != nil {
+			t.Errorf("%+v rejected: %v", p, err)
+		}
+	}
+	bad := []Profile{
+		{Instance: "Bad"},
+		{Instance: "default"},
+		{Mode: "weird"},
+		{Mode: "user"},                     // 缺少根目录
+		{Mode: "user", Root: "relative"},   // 根目录必须是绝对路径
+		{Root: "/data/edge"},               // system 模式不接受根目录
+		{Mode: "user", Root: "/data/edge"}, // user 模式不能用 80/443（默认端口）
+		{HTTPPort: 8080, HTTPSPort: 8080},  // 端口重复
+		{StatusPort: 443},                  // 与 HTTPS 端口冲突
+		{HTTPPort: 70000},                  // 越界
+		{NoFile: -1},                       // 越界
+		{Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 22}, // 保留端口
+	}
+	for _, p := range bad {
+		if err := p.Validate(); err == nil {
+			t.Errorf("%+v accepted", p)
+		}
+	}
+	// 四层代理不能占用档案中的端口
+	in := sampleInput(t)
+	in.Profile = instanceProfile()
+	in.Streams = []StreamProxy{{Name: "mysql", Listen: 18080, Servers: []UpstreamServer{{Addr: "10.0.0.1:1"}}}}
+	if _, err := Render(in); err == nil || !strings.Contains(err.Error(), "port 18080 not allowed") {
+		t.Errorf("stream on the instance HTTP port: want port rejection, got %v", err)
+	}
+	in.Streams[0].Listen = 80 // 默认实例的端口对具名实例并不保留
+	if _, err := Render(in); err != nil {
+		t.Errorf("stream on 80 rejected for a non-default instance: %v", err)
+	}
+}
+
+// 证书续期重打包时，只改写本实例版本目录下的绝对路径。
+func TestRebaseRevisionUsesProfile(t *testing.T) {
+	p := instanceProfile()
+	src := map[string][]byte{"a.conf": []byte(p.ReleasesDir() + "r000001/certs/x /opt/syapp/conf/releases/r000001/y")}
+	out := RebaseRevisionFor(p, src, "r000001", "r000002")
+	want := p.ReleasesDir() + "r000002/certs/x /opt/syapp/conf/releases/r000001/y"
+	if got := string(out["a.conf"]); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// 具名实例与 user 模式的渲染结果也必须通过真实 syapp -t（CLAUDE.md「配置」：修改模板须过真实 syapp -t）。
+// 在 ci 工作流的 dataplane 任务中以 root 运行；没有二进制或非 root 时跳过。
+func TestRenderProfileSyappSyntax(t *testing.T) {
+	bin := os.Getenv("SYAPP_BIN")
+	if bin == "" {
+		bin = "/opt/syapp/sbin/syapp"
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Skip("syapp binary not installed")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("syapp -t needs root to check user and log paths")
+	}
+	userRoot := filepath.Join(t.TempDir(), "edge")
+	for name, p := range map[string]Profile{
+		"instance": instanceProfile(),
+		"user":     {Mode: "user", Root: userRoot, HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082, NoFile: 4096},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := sampleInput(t)
+			in.Profile = p
+			if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
+				in.MimeTypes = mt
+			}
+			in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>x</h1>")}
+			in.Streams = []StreamProxy{{Name: "mysql", Listen: 13306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}}}
+			b, err := Render(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, _ := p.Layout()
+			// 安装程序负责创建的实例目录（system 模式在 /var/log、/var/cache 下，user 模式在根目录下）
+			for _, d := range []string{l.LogDir(), l.CacheDir(), l.RunDir()} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if l.Mode() == "system" {
+					d := d
+					t.Cleanup(func() { _ = os.RemoveAll(d) })
+				}
+			}
+			dir := filepath.Join(t.TempDir(), in.Revision)
+			if err := b.WriteDir(dir); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput()
+			if err != nil {
+				t.Fatalf("syapp -t failed: %v\n%s", err, out)
+			}
+		})
+	}
+}

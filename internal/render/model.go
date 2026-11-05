@@ -23,6 +23,8 @@ type Input struct {
 	HTTPSnippets []NamedSnippet // 已审批的 http 层自定义片段（12.7）
 	Streams      []StreamProxy  // 四层代理（P9，授权功能 stream）
 	IPSets       []IPSet        // 节点组的 IP 集 / 地域库（P10，被规则的 ip_set 条件引用）
+
+	Profile Profile // 节点组的实例档案（路径与端口）；零值为默认实例
 }
 
 // AcmeChallenge 是一个 HTTP-01 挑战：节点对 /.well-known/acme-challenge/<Token> 返回 KeyAuth。
@@ -173,6 +175,9 @@ var (
 )
 
 func (in *Input) Validate() error {
+	if err := in.Profile.Validate(); err != nil {
+		return err
+	}
 	if !revisionRe.MatchString(in.Revision) {
 		return fmt.Errorf("render: invalid revision %q", in.Revision)
 	}

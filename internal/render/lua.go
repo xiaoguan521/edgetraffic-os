@@ -160,8 +160,8 @@ func renderLuaHTTP(in Input) string {
 	var b strings.Builder
 	b.WriteString(`
     # Lua 规则（` + brand.Lua() + ` 附加包）：只加载附加包中审核过的库，不加载任何 C 模块
-    lua_package_path   "` + LuaModulesDir + `/lualib/?.lua";
-    lua_package_cpath  "` + LuaModulesDir + `/lualib/?.disabled";
+    lua_package_path   "` + in.P().LuaDir + `/lualib/?.lua";
+    lua_package_cpath  "` + in.P().LuaDir + `/lualib/?.disabled";
     lua_code_cache     on;
     init_by_lua_block {
         require("etos.init").setup({
@@ -169,7 +169,7 @@ func renderLuaHTTP(in Input) string {
 	for _, j := range rules {
 		r := j.Rule
 		fmt.Fprintf(&b, "            [%s] = { alg = %s, key_file = %s, source = %s, cookie = %s, iss = %s, aud = %s, leeway = %d, subject_header = %s },\n",
-			luaStr(j.ID), luaStr(r.Alg), luaStr(ReleasesDir+in.Revision+"/"+j.File), luaStr(r.Source), luaStr(r.Cookie),
+			luaStr(j.ID), luaStr(r.Alg), luaStr(in.P().ReleasesDir+in.Revision+"/"+j.File), luaStr(r.Source), luaStr(r.Cookie),
 			luaStr(r.Issuer), luaStr(r.Audience), r.Leeway, luaStr(r.SubjectHeader))
 	}
 	b.WriteString("        })\n    }\n")
@@ -210,5 +210,8 @@ func renderJWTHTTP(s Site) string {
 
 func siteIdent(name string) string { return "etos_" + strings.ReplaceAll(name, "-", "_") }
 
-// luaLoadModules 是 syapp.conf 开头加载附加包模块的指令（相对 /opt/syapp）。
-const luaLoadModules = "load_module  modules/lua/ndk_http_module.so;\nload_module  modules/lua/ngx_http_lua_module.so;\n"
+// luaLoad 是主配置开头加载附加包模块的指令：system 模式相对编译期前缀（modules/），user 模式为绝对路径。
+func luaLoad(in Input) string {
+	m := in.P().ModulesDir
+	return "load_module  " + m + "lua/ndk_http_module.so;\nload_module  " + m + "lua/ngx_http_lua_module.so;\n"
+}

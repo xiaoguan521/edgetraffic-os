@@ -6,7 +6,7 @@
 {{- if and $s.HTTPS $s.ForceHTTPS }}
 
 server {
-    listen       80;
+    listen       {{ $.P.HTTP }};
     server_name  {{ join $s.Domains " " }};
     include  snippets/acme-challenge.conf;
     location / {
@@ -17,10 +17,10 @@ server {
 
 server {
 {{- if not (and $s.HTTPS $s.ForceHTTPS) }}
-    listen       80;
+    listen       {{ $.P.HTTP }};
 {{- end }}
 {{- if $s.HTTPS }}
-    listen       443  ssl;
+    listen       {{ $.P.HTTPS }}  ssl;
 {{- if $s.HTTP2 }}
     http2        on;
 {{- end }}
@@ -36,10 +36,10 @@ server {
     # ssl_conf_command 的文件路径不按配置目录解析，因此写本版本目录的绝对路径。
     ssl_ciphers       "ECC-SM2-SM4-GCM-SM3:ECC-SM2-SM4-CBC-SM3:ECDHE-SM2-SM4-GCM-SM3:ECDHE-SM2-SM4-CBC-SM3:HIGH:!aNULL:!MD5";
     ssl_conf_command  Enable_ntls  on;
-    ssl_conf_command  SignCertificate  /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.crt;
-    ssl_conf_command  SignPrivateKey   /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.key;
-    ssl_conf_command  EncCertificate   /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.crt;
-    ssl_conf_command  EncPrivateKey    /opt/syapp/conf/releases/{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.key;
+    ssl_conf_command  SignCertificate  {{ $.P.ReleasesDir }}{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.crt;
+    ssl_conf_command  SignPrivateKey   {{ $.P.ReleasesDir }}{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-sign.key;
+    ssl_conf_command  EncCertificate   {{ $.P.ReleasesDir }}{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.crt;
+    ssl_conf_command  EncPrivateKey    {{ $.P.ReleasesDir }}{{ $.Revision }}/certs/site-{{ $s.Name }}.sm2-enc.key;
 {{- end }}
     add_header  Strict-Transport-Security  "max-age=31536000"  always;
 {{- end }}
@@ -59,10 +59,10 @@ server {
     location {{ if eq $r.Match "exact" }}= {{ end }}{{ $r.Path }} {
 {{- if eq $r.Mode "static" }}
 {{- if eq $r.Match "exact" }}
-        alias         /opt/syapp/conf/current/sites/{{ $s.Name }}/{{ routeDir $r }}/index.html;
+        alias         {{ $.P.SitesDir }}{{ $s.Name }}/{{ routeDir $r }}/index.html;
         default_type  text/html;
 {{- else }}
-        alias  /opt/syapp/conf/current/sites/{{ $s.Name }}/{{ routeDir $r }}/;
+        alias  {{ $.P.SitesDir }}{{ $s.Name }}/{{ routeDir $r }}/;
         index  index.html;
 {{- if $r.Static.Files }}
         expires  1h;
