@@ -180,9 +180,9 @@
 ### 5.3 渲染器
 
 - `render.Input` 新增 `Profile`，取值来自节点组档案；`Profile` 为空时使用默认值。
-- 模板按 3.2 节改为相对路径；监听端口、状态页端口、HTTP/3 端口取自 `Profile`；`user` 指令只在 system 模式输出；`worker_rlimit_nofile` 取自档案的 `nofile`。
+- 模板按 3.2 节从 `Profile` 取路径；监听端口、状态页端口、HTTP/3 端口取自 `Profile`；`user` 指令只在 system 模式输出；`worker_rlimit_nofile` 取自档案的 `nofile`。
 - 国密证书路径和 `render.ReleasesDir` 改为根据 `Profile` 计算。
-- 黄金用例更新为新的相对路径写法，并按 `CLAUDE.md` 的要求通过真实的 `B -t`，以及用 `-p` 方式实际启动。另外新增两组黄金用例：具名实例和 user 模式。
+- 默认档案的输出与现在逐字节相同，现有黄金用例不变。新增具名实例和 user 模式两组用例，按 `CLAUDE.md` 的要求通过真实的 `B -t`。
 
 ### 5.4 agent
 
@@ -308,8 +308,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 ## 8. 兼容与迁移
 
-- 已部署的单实例节点（v0.1 / 当前 main）：路径完全不变，默认实例的档案就是现状。安装包升级后，第一次发布会生成相对路径写法的新配置，通过现有的发布状态机下发（先 test，再 reload，失败自动回滚）。需要在安装包升级时补上 `/opt/syapp/run`、`logs`、`cache` 三个软链，这一步由 postinstall 脚本完成，并且幂等。
-- 已部署的数据面进程：配置中的 pid 路径虽然从绝对路径变成了相对路径，但解析结果仍然是 `/run/syapp/syapp.pid`，reload 不受影响。
+- 已部署的单实例节点（v0.1 / v0.2）：默认档案的渲染结果与现在逐字节相同，路径、配置、数据面进程都不变，不需要任何迁移步骤。
 - 当前的 wrapper 调用方式（不带 `--instance`）继续有效。
 
 ## 9. 需要修改的 `CLAUDE.md` 条款
