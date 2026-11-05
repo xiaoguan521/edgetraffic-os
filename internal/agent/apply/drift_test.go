@@ -11,6 +11,19 @@ import (
 
 func TestDriftReport(t *testing.T) {
 	root := t.TempDir()
+	checkDriftReport(t, root)
+}
+
+func TestDriftReportWithSymlinkedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(t.TempDir(), root); err != nil {
+		t.Fatal(err)
+	}
+	checkDriftReport(t, root)
+}
+
+func checkDriftReport(t *testing.T, root string) {
+	t.Helper()
 	a := &Applier{C: Config{ConfRoot: root}}
 	rel := filepath.Join(root, "releases", "r000001")
 	_ = os.MkdirAll(filepath.Join(rel, "conf.d"), 0o755)

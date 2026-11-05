@@ -42,7 +42,13 @@ func (a *Applier) Drift() (*DriftReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel, err := filepath.Rel(a.releases(), dir)
+	// Compare canonical paths on both sides: ConfRoot may itself contain a
+	// symlink (for example /var -> /private/var on macOS).
+	releases, err := filepath.EvalSymlinks(a.releases())
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(releases, dir)
 	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, string(filepath.Separator)) || !revRe.MatchString(rel) {
 		return nil, nil // current 不在受管版本目录内：不读取
 	}
