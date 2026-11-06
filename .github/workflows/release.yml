@@ -76,6 +76,7 @@ jobs:
         run: |
           # 正式版本必须内置正式签名公钥、且不含演示密钥；否则在建草稿之前就失败
           go test -mod=vendor -tags release -count=1 -run 'TestReleaseKeyRing|TestProductionKeyTable' ./internal/license/
+          go test -mod=vendor -tags release -count=1 -run 'TestReleasePackageKeys' ./internal/pkgsig/
       - name: prepare release
         env:
           RELEASE: ${{ steps.v.outputs.release }}

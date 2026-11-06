@@ -19,4 +19,8 @@ func TestReleasePackageKeys(t *testing.T) {
 	if n == 0 {
 		t.Fatal("no production package signing key in internal/pkgsig/keys.go (key ceremony pending)")
 	}
+	// 已部署的节点必须已经信任备用密钥，主密钥丢失或泄露后才能继续升级（docs/license-ops.md 第 3.3 节）
+	if len(Keys()) < 2 {
+		t.Fatal("release build needs a standby package signing key (etos-pkg-<year>-b) besides the primary one (docs/license-ops.md §3.3)")
+	}
 }
