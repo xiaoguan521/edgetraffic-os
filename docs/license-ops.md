@@ -26,6 +26,9 @@
 3. 在一台联网电脑上从发布页下载 `edgetraffic-os-vendor-tools-…` 与 `SHA256SUMS`，核对校验和，用一个**专用的传输 U 盘**拷入离线机。
 4. 准备两个**备份 U 盘**（标记为 A、B），只用于存放加密私钥文件。
 5. Linux 上签名工具会读取 `/sys/class/net` 检查网卡状态：检测到联网会警告；加 `-require-offline` 则直接拒绝运行，建议始终加上。
+   **macOS / Windows 上该检查不生效**（参数可加但不起作用），务必人工确认已关闭 Wi-Fi、蓝牙并拔掉网线。
+6. 本手册命令中的 `/media/backup-a` 是 Linux 的 U 盘挂载点。其他系统换成实际路径：macOS 为 `/Volumes/<U 盘卷名>`（`ls /Volumes` 查看），
+   Windows 为盘符（如 `E:\`）。`-out` 必须是已挂载、可写的 U 盘目录。
 
 ## 3. 密钥仪式（首次与每年轮换）
 
