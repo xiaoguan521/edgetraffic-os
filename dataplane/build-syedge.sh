@@ -158,7 +158,8 @@ done
 cp "$HERE/packaging/html/index.html" "$HERE/packaging/html/50x.html" "$O/html/"
 cp "$HERE/../docs/NOTICE" "$O/share/doc/NOTICE"
 # 定制品牌：NOTICE 中的数据面名称随品牌改写（上游版权与 BSD 许可文本不变）
-[[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_PROC" ]] && sed -i -e "s/$DEFAULT_PROC/$P/g" -e "s/$DEFAULT_BRAND/$B/g" "$O/share/doc/NOTICE"
+# 默认页面（html/）中的产品显示名同样随品牌改写
+[[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_PROC" ]] && sed -i -e "s/$DEFAULT_PROC/$P/g" -e "s/$DEFAULT_BRAND/$B/g" "$O/share/doc/NOTICE" "$O"/html/*.html
 strip "$O/sbin/$B"
 
 # 构建后自检

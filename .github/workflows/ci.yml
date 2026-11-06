@@ -78,8 +78,8 @@ jobs:
           git fetch -q --depth 1 origin "$V010"
           git worktree add -q --detach /tmp/v010 "$V010"
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
-          (cd /tmp/v010 && CGO_ENABLED=0 go build -mod=vendor -o /tmp/old-console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syedge-console \
-            && go build -mod=vendor -o /tmp/old-lic ./cmd/syedge-license-server)
+          (cd /tmp/v010 && CGO_ENABLED=0 go build -mod=vendor -o /tmp/old-console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console \
+            && go build -mod=vendor -o /tmp/old-lic ./cmd/syapp-license-server)   # v0.1.0 时产品还叫 syapp
           export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral OLD_LIC=/tmp/old-lic
           scripts/ci/upgrade-from-v010.sh /tmp/old-console /tmp/console /tmp/lic
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE upgrade'

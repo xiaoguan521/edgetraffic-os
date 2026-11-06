@@ -16,7 +16,7 @@ skipif() { echo "skip $1 ($2)"; skip=$((skip+1)); }
 
 check "-v 输出 syedge"                "\"$BIN\" -v 2>&1 | grep -q '^SyEdge version: SyEdge/'"
 check "-h 用法为 syedge 且无上游名"     "\"$BIN\" -h 2>&1 | grep -q '^Usage: syedge' && ! \"$BIN\" -h 2>&1 | grep -qi $name"
-check "-t 输出前缀为 syedge"           "\"$BIN\" -t 2>&1 | grep -q '^syedge: '"
+check "-t 输出前缀为 SyEdge"           "\"$BIN\" -t 2>&1 | grep -q '^SyEdge: '"
 check "-V 配置路径"                   "\"$BIN\" -V 2>&1 | grep -q -- '--conf-path=/opt/syedge/conf/current/syedge.conf'"
 check "ps -C syedge"                  "ps -C syedge -o comm= | grep -q syedge"
 check "master 进程标题"               "ps -eo args | grep -q '^SyEdge: master process'"
@@ -29,7 +29,7 @@ else
 fi
 check "HTTP/1.1 Server 头"            "${C[*]} -I -H 'Host: $SITE' http://127.0.0.1/ | grep -qi '^server: syedge'"
 check "HTTP/2 server 头"              "${C[*]} -k -I --http2 --resolve $SITE:443:127.0.0.1 https://$SITE/ | grep -qi '^server: syedge'"
-check "默认错误页"                    "${C[*]} -k --resolve $SITE:443:127.0.0.1 https://$SITE/__no_such_page__ | grep -q '<center>syedge</center>'"
+check "默认错误页"                    "${C[*]} -k --resolve $SITE:443:127.0.0.1 https://$SITE/__no_such_page__ | grep -q '<center>SyEdge</center>'"
 check "未知 Host 直接断开"            "! ${C[*]} -o /dev/null http://127.0.0.1/"
 check "二进制无上游名"                "! strings \"$BIN\" | grep -qi $name"
 check "安装目录无上游名"              "! find /opt/syedge | grep -qi $name"
