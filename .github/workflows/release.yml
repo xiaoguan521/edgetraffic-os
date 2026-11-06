@@ -85,7 +85,8 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             # 正式版先建草稿，资产与校验和全部上传后再发布
             gh release view "$RELEASE" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-              gh release create "$RELEASE" -R "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes --title "EdgeTraffic OS $VERSION"
+              gh release create "$RELEASE" -R "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
+                --notes-file docs/release-assets.md --title "EdgeTraffic OS $VERSION"
           else
             # 滚动预发布：每次推送重建，始终指向分支最新提交
             gh release delete "$RELEASE" -R "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || true
@@ -158,6 +159,12 @@ jobs:
           trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
           export BUILD_DATE=$(date -u +%F) COMMIT=$(git rev-parse --short HEAD)
           scripts/release/package.sh node ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          # 免 root 安装的节点包（user 模式，设计 0001 第 6 节）
+          scripts/release/package.sh node-user ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          # 统一升级用的升级包（未签名，厂商离线 sign-package 后导入控制台版本库）：标准版数据面（版本号即数据面版本）与 agent
+          dp=$(basename dist/syapp/syapp-*.tar.gz); dp=${dp#syapp-}; dp=${dp%-*.tar.gz}
+          SYAPP_UPGRADE_VERSION=$dp scripts/release/package.sh syapp-upgrade ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          scripts/release/package.sh agent-upgrade ${{ matrix.arch }}
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
           scripts/release/package.sh backend ${{ matrix.arch }}
