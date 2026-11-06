@@ -50,7 +50,7 @@ sudo mkdir -p /run/syedge /var/log/syedge /var/cache/syedge /var/lib/syedge-agen
 sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge /opt/syedge/versions
 sudo chown syedge:syedge /opt/syedge/sbin /opt/syedge/modules
 sudo ip addr add 10.99.0.1/32 dev lo 2>/dev/null || true
-VER=$($SY -v 2>&1 | sed -n 's|.*syedge/\([0-9.]*\).*|\1|p')
+VER=$($SY -v 2>&1 | sed -n 's|.* version: [^/]*/\([0-9][0-9.]*\).*|\1|p')   # 与显示名无关
 bin_sha=$(sha256sum "$SY" | cut -c1-64)
 check "基础包 -V 带 auth_request" "$($SY -V 2>&1)" "http_auth_request_module"
 [[ $BASE == gmssl ]] && check "国密基础包 -V 带 enable-ntls" "$($SY -V 2>&1)" "enable-ntls"

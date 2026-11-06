@@ -15,7 +15,7 @@ die() { echo "syedge-lua: $*" >&2; exit 1; }
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$HERE/addon/VERSION"; }
 pkg=$(field version); want=$(field syedge)
 [[ "$pkg" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || die "附加包版本无效"
-running=$("$SY" -v 2>&1 | sed -n 's|.*syedge/\([0-9][0-9.]*\).*|\1|p')
+running=$("$SY" -v 2>&1 | sed -n 's|.* version: [^/]*/\([0-9][0-9.]*\).*|\1|p')   # 与显示名无关
 [[ "$running" == "$want" ]] || die "附加包适用于 syedge $want，当前节点运行 syedge ${running:-未知}；请安装对应版本的附加包"
 base=standard
 "$SY" -V 2>&1 | grep -q "enable-ntls" && base=gmssl

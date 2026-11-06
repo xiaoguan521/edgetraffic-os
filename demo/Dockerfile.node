@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
       libpcre2-dev libssl-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY dataplane dataplane
+COPY brand.env brand.env
 COPY scripts/rename-scan.sh scripts/rename-scan.sh
 COPY docs/NOTICE docs/NOTICE
 RUN dataplane/build-syedge.sh -o /out
