@@ -18,7 +18,8 @@ fi
 has_systemd && systemctl daemon-reload
 # 运行时不使用 root：交出运行时目录；升级前以 root 启动的 master 无中断切换为 syapp 运行（不重启）
 /usr/sbin/syapp-instance nonroot || echo "警告：syapp-instance nonroot 未完成（数据面照常服务），请检查后手工执行" >&2
-runuser -u syapp -- /opt/syapp/sbin/syapp -t -q
+# 经 wrapper 以 syapp 校验（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不以 root 运行）
+runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper test "$(basename "$(readlink /opt/syapp/conf/current)")"
 if has_systemd; then
   systemctl daemon-reload
   systemctl enable syapp.service >/dev/null 2>&1 || true

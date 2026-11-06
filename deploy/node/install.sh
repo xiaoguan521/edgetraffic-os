@@ -91,7 +91,8 @@ fi
 systemctl daemon-reload
 # 交出运行时目录；升级前以 root 启动的 master 无中断切换为 syapp 运行（与二进制热升级同一机制，不重启）
 /usr/sbin/syapp-instance nonroot
-runuser -u syapp -- /opt/syapp/sbin/syapp -t -q
+# 经 wrapper 以 syapp 校验（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不以 root 运行，也不会创建属于 root 的日志）
+runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper test "$(basename "$(readlink /opt/syapp/conf/current)")"
 
 echo "== 启动 syapp"
 systemctl daemon-reload

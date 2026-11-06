@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 go build -mod=vendor -trimpath \
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libpcre2-8-0 libssl3t64 zlib1g sudo ca-certificates curl procps \
+      libpcre2-8-0 libssl3t64 zlib1g sudo ca-certificates curl procps libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r syapp && useradd -r -g syapp -s /usr/sbin/nologin syapp \
  && useradd -r -g syapp -s /usr/sbin/nologin syapp-agent
@@ -44,6 +44,9 @@ RUN mkdir -p /tmp/syapp-lua \
 COPY --from=go /out/syapp-agent /usr/bin/syapp-agent
 COPY --from=go /out/syapp-wrapper /usr/libexec/syapp/syapp-wrapper
 COPY dataplane/packaging/sudoers/syapp-agent /etc/sudoers.d/syapp-agent
+# 运行时不使用 root（D5）：wrapper 以 syapp 运行，-t 绑定 80/443 需要文件能力；只允许 syapp 组执行
+RUN chown root:syapp /usr/libexec/syapp/syapp-wrapper && chmod 0750 /usr/libexec/syapp/syapp-wrapper \
+ && setcap cap_net_bind_service=ip /usr/libexec/syapp/syapp-wrapper
 RUN chmod 0440 /etc/sudoers.d/syapp-agent && visudo -c
 COPY demo/node/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY demo/node/systemctl /usr/local/bin/systemctl

@@ -117,6 +117,8 @@ render() { # <版本> <是否含 Lua>
 render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 /opt/syapp/conf/current
+# 前面以 root 执行的 syapp -t（渲染器黄金用例）可能创建了属于 root 的日志：交还给 syapp
+sudo chown -R syapp:syapp /var/log/syapp /var/cache/syapp /run/syapp
 # 与 syapp.service 相同的身份：syapp 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
 sudo setpriv --reuid=syapp --regid=syapp --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- $SY \
   || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
