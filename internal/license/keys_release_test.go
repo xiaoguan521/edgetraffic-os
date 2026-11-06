@@ -14,4 +14,8 @@ func TestReleaseKeyRing(t *testing.T) {
 	if len(ProductionKIDs()) == 0 {
 		t.Fatal("release build has no production signing key: generate one with syapp-license-signer keygen and add its public key to internal/license/keys.go (docs/license-ops.md)")
 	}
+	// 主密钥丢失或泄露时，客户控制台必须已经信任备用密钥（docs/license-ops.md 第 3.3 节）
+	if len(ProductionKIDs()) < 2 {
+		t.Fatal("release build needs a standby signing key (etos-prod-<year>-b) besides the primary one (docs/license-ops.md §3.3)")
+	}
 }

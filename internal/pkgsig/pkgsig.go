@@ -127,6 +127,9 @@ const CIKeyID = "etos-ci-pkg-ephemeral"
 func Keys() map[string]ed25519.PublicKey {
 	out := map[string]ed25519.PublicKey{}
 	for kid, b64 := range builtinKeys {
+		if revokedKIDs[kid] {
+			continue
+		}
 		if b, err := base64.StdEncoding.DecodeString(b64); err == nil && len(b) == ed25519.PublicKeySize {
 			out[kid] = ed25519.PublicKey(b)
 		}
