@@ -191,7 +191,7 @@
 - 漂移检测、漂移 diff 上报的目录限制改为 `P/conf/releases/`，单文件大小上限和私钥只报哈希的规则不变。
 - 发布后的探活端口取自档案。
 - 注册时上报品牌、实例名、模式、前缀、`HostKey` 和档案。
-- agent 自升级：二进制按主机共用。某个实例的 agent 完成自升级后，同机其他 agent 发现自身二进制已被替换（`/proc/self/exe` 指向已删除的文件，或 sha256 变化），在空闲时自行退出，由 systemd（或 user 模式下的守护任务）重新拉起。agent 重启不会影响数据面。
+- agent 自升级（实现时修订）：新版本安装在各实例自己的 agent 状态目录（`<状态目录>/agent/<版本>/`），启动时验签后 exec，`/usr/bin/B-agent` 本身不被替换。因此各实例的 agent 自升级互不影响，不需要“发现共用二进制被替换后自行退出”的机制。agent 重启不会影响数据面。
 
 ### 5.5 wrapper 与 sudoers（新契约）
 
@@ -220,12 +220,13 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 
 1. 控制台制定升级计划时，以**主机**为最小单位分批。同一主机上的所有实例在同一批内依次升级，不允许只升其中一部分。
 2. 主机内的顺序：第一个实例执行 `upgrade-start V`。wrapper 在主机锁（`versions/.upgrade.lock`，9b0716a 已实现）的保护下验签、安装版本、切换共用软链，再向该实例的 master 发送 USR2 并等待新进程就绪，然后执行 `upgrade-commit`。之后的实例执行 `upgrade-start V` 时，版本已经安装、软链已经切换，只需要对各自的 master 执行 USR2 和 commit。
-3. 升级状态拆成两部分：主机级的“版本库与软链”状态，存放在 `versions/host-state.json`；实例级的“本实例的升级步骤”状态，存放在实例的 agent 状态目录。这样就解决了 `state.json` 互相覆盖的问题。
+3. 升级状态按实例保存（实现时修订）：`versions/state.json`（默认实例，与已部署节点兼容）与 `versions/state-<I>.json`，root 所有。wrapper 用 `/proc/<master>/exe` 判断本实例实际运行的版本：软链已指向目标版本、本实例却仍在运行旧版本时（同机前一个实例已完成升级），只给本实例的 master 换版本，状态中记 `keep_link`，中止时不切回软链；同一实例重复升级到正在运行的版本被拒绝。没有另设主机级状态文件：软链本身就是主机级状态，只由“切换它的那个实例”在中止时切回。
 4. 失败处理：
    - 第一个实例在 commit 之前失败，执行 abort：该实例回到旧 master，共用软链也切回旧版本。
    - 第一个实例已经 commit，后续某个实例失败：该实例 abort，回到旧 master，继续运行内存中的旧二进制。控制台把该主机标记为“部分升级”，并提供两个选项：“重试剩余实例”，或者“主机整体回退”（对已升级的实例按同样的流程升级到上一个版本）。
    - 无论哪种情况，都不会停止或 restart 任何实例。
-5. 控制台显示各实例实际运行的版本（agent 通过 `/proc/<master pid>/exe` 读取），同一主机上出现不同版本时给出告警。
+5. 控制台显示各实例实际运行的版本，同一主机上出现不同版本时给出告警（告警规则 `host_version_mixed`）。实现时修订：system 模式下 agent 与 root 的 master 不是同一用户，读不了 `/proc/<pid>/exe`；改为状态服务（只监听 127.0.0.1）增加 `/__B_version`，由 worker 返回编译时的版本号（`$B_version`），agent 在 Hello 与心跳中上报 `running_version`。它是上游版本号（不含发行序号），用于发现“同机实例运行不同版本”。
+6. 控制台编排（`deploy.StartUpgrade`）：升级某个节点组时，把这些节点所在主机上其他节点组的实例一并纳入，涉及的节点组都加锁；主机按“先 1 台、再约 10%、其余”分批，批内主机并行，主机内本组实例在前、依次 START→COMMIT。已开始的主机会把实例做完，尚未开始的主机在出现失败后跳过。升级记录给出每台主机的结果（已升级 / 部分升级 / 保持原版本 / 未开始），“重试未完成的实例”（`POST /upgrades/:id/retry`）与“主机整体回退”（`POST /upgrades/:id/rollback-hosts`）都生成新的升级记录。
 
 不采用“每个实例一份独立二进制”的方案。它虽然更简单，但会让每台机器的版本数量随实例数增长，Lua 附加包也要按实例重复安装，而且客户运维更难弄清每个实例用的是哪个版本。
 
@@ -252,18 +253,18 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 
 - logrotate：匹配 `/var/log/B/*` 和 `/var/log/B-*/*`，`postrotate` 中调用 `B-instance reopen-all`。
 - tmpfiles：开机时为每个已存在的实例创建 `/run/B-I`。具名实例的服务单元同时设置 `RuntimeDirectory=`，作为双重保障。
-- nftables 防火墙：`B-firewall` 读取所有实例的 `instance.json`，按全部实例的端口（包括四层代理端口）生成放行规则，不再写死 80/443。实例增删后由 `B-instance` 自动刷新规则。
+- nftables 防火墙：`B-firewall` 按全部实例当前生效配置中的 `listen` 指令（不含回环地址；`udp` / `quic` 为 UDP）生成放行规则，不再写死 80/443；读不到任何实例配置时回到 80/443。实例增删后由 `B-instance` 刷新规则，并维护 `B-firewall-refresh.path` 的附加配置，使每次发布（切换各实例的 `current`）后也自动刷新。某个实例监听 SSH 端口时拒绝生成、保留现有规则。
 
 ## 6. 非 root 运行（R2）
 
-### 6.1 两种可选方式
+### 6.1 两种方式
 
 | 方式 | 安装是否需要 root | 运行是否有 root 进程 | 适用场景 |
 | --- | --- | --- | --- |
-| **A. user 模式**（本需求的主方案） | 不需要 | 没有 | 客户只给普通账号的服务器 |
-| B. system 模式降权运行（可选） | 只在装包时需要一次 | 没有：master 以 `B` 用户运行，由 systemd 的 `AmbientCapabilities=CAP_NET_BIND_SERVICE` 授予绑定 80/443 的能力 | 有管理员可以一次性装包，但要求运行时不出现 root 进程 |
+| **A. user 模式** | 不需要 | 没有 | 客户只给普通账号的服务器 |
+| **B. system 模式（D5：默认且唯一的 system 运行方式）** | 只在装包时需要 | 没有：master、worker 与 wrapper 都以 `B` 用户运行，只带 `CAP_NET_BIND_SERVICE` | 有管理员装包的服务器 |
 
-方式 B 只是 system 模式的一个开关，P11-C 只实现方式 A；方式 B 推迟到有客户需要时再做（要点：`B.service` 以 `User=B` 运行并授予 `CAP_NET_BIND_SERVICE`，pid / 日志 / 缓存目录改归 `B` 用户，wrapper 仍经 sudo 调用但改以 `B` 身份发信号）。下面主要描述方式 A。
+方式 B 的实现见 6.7 节。下面 6.2～6.5 节描述方式 A。
 
 ### 6.2 user 模式的安装与运行
 
@@ -291,6 +292,23 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 
 user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被攻破（例如出现可利用的漏洞），攻击者就能读到 agent 的 mTLS 私钥，冒充这个节点连接控制台。缓解措施：控制台按证书识别节点身份，可以吊销单个节点；这个节点能拿到的也只是本组的配置，而配置里不包含其他节点的私钥。部署手册中会说明：面向互联网的生产节点仍然推荐 system 模式（agent 与 worker 用户隔离），user 模式适用于无法获得 root 的环境。
 
+### 6.7 system 模式运行时不使用 root（方式 B，D5，已实现）
+
+安装、卸载与 `B-instance` 等管理命令由管理员以 root 执行；运行时的进程都不是 root：
+
+| 进程 | 身份 | 能力 |
+| --- | --- | --- |
+| 数据面 master 与 worker（`B.service`、`B@I.service`） | `B` | `AmbientCapabilities=CAP_NET_BIND_SERVICE`（`CapabilityBoundingSet` 只留这一项，`NoNewPrivileges=yes`）。ambient 能力跨 exec 保留，热升级（USR2 重新执行）产生的新 master 同样能绑定 80/443 |
+| wrapper（agent 经 sudo 调用） | `B`（sudoers 为 `(B)`，7 行不变） | 文件能力 `cap_net_bind_service=ip`（只在 permitted / inheritable，不在 effective），文件属组 `B`、权限 0750。`-t` 会绑定配置中的端口，wrapper 把这一项设为 ambient 后再执行 `B -t`。wrapper 以 root 运行时拒绝执行 |
+| agent | `B-agent[-I]` | 无 |
+| 防火墙开机加载、发布后刷新（`B-firewall*.service`） | `B-firewall` | 只有 `CAP_NET_ADMIN`；规则与参数在 `/var/lib/B-firewall/`，归该用户 |
+| logrotate 的 reopen | `B`（`su B B`，`runuser -u B`） | 无 |
+
+- 模板不再输出 `user` 指令（worker 与 master 同一用户）。
+- 运行时目录、日志、缓存与版本库归 `B`；二进制所在目录与模块目录本身归 `B`（wrapper 在其中切换软链、安装新版本），已安装的文件仍归 root。私钥由 agent 写为 0640、组 `B`，master 可读。
+- **已以 root 运行的 master**（升级前启动）不能 restart，由 `B-instance nonroot`（安装与升级软件包时自动执行，可重复执行）无中断切换：共用软链临时指向 root 所有的 `B-instance`（launcher），USR2 → 旧 master exec launcher → launcher 读取 root 所有的 `versions/.handover.json`，降权为 `B`、只保留 `CAP_NET_BIND_SERVICE`（ambient），exec 真正的二进制；监听套接字随 exec 继承 → 软链立即切回 → WINCH / QUIT 旧 master。新 master 身份或能力不对时让它退出，旧 master 照常服务。`nonroot` 同时交出目录、重写具名实例的 sudoers、设置 wrapper 的文件能力、重启 agent（只重启 agent）。
+- 安全权衡：master 与 worker 同一用户，二进制目录与版本库对 `B` 可写。worker 被攻破时可以替换二进制或读取私钥（与以前 worker 能读私钥相同），但没有任何 root 进程可被利用，替换后的二进制也只以 `B` 身份、带 `CAP_NET_BIND_SERVICE` 运行。升级包仍须厂商签名才会被 wrapper 安装。
+
 ### 6.6 控制台的非 root 运行
 
 控制台本来就以 `syapp-console` 普通用户运行，端口为 8443 和 9443，数据目录可以通过 `-data` 指定。这里只需要补充：免安装包、`systemd --user` 单元示例，以及授权后台的同类说明。
@@ -305,6 +323,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 | 并发升级破坏共用版本库 | 主机锁加上拆分后的主机级 / 实例级升级状态 |
 | 实例删除时影响其他实例 | `remove` 只操作该实例自己的前缀、单元、用户和 sudoers；共用文件只在卸载安装包时处理，并且有具名实例时拒绝卸载 |
 | user 模式下同一用户导致隔离减弱 | 见 6.5 节，在文档中明确说明适用边界 |
+| 运行时的 root 进程被利用 | 运行时没有 root 进程（6.7 节）：数据面与 wrapper 只有 `CAP_NET_BIND_SERVICE`，防火墙服务只有 `CAP_NET_ADMIN` |
 | 品牌包混用 | 注册和升级时都校验品牌标识 |
 
 ## 8. 兼容与迁移
@@ -368,8 +387,8 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 | --- | --- | --- |
 | D1 | 授权的节点配额按实例计数，还是按主机计数 | 按实例计数。模型简单，与“每个实例都是一个受管节点”一致；如果商务上希望同机多实例更便宜，可以在授权中另加“每主机实例上限” |
 | D2 | 品牌名的大小写：命令和路径用小写 `syedge`，进程标题和 Server 头用 `SyEdge` | 按此执行。如果希望命令也是 `SyEdge`，技术上可行，但不符合 Linux 命令和路径的惯例 |
-| D3 | 授权文件是否绑定品牌，防止某个 OEM 品牌的授权被用到另一个品牌的安装包上 | 绑定。授权中增加可选的品牌字段，不填时视为通用 |
+| D3 | 授权文件是否绑定品牌，防止某个 OEM 品牌的授权被用到另一个品牌的安装包上 | 绑定。授权中增加可选的品牌字段，不填时视为通用（已实现：`product.brand`，签发时 `-brand`） |
 | D4 | user 模式是否必须支持没有 `systemd --user` 的机器 | 必须支持。cron 兜底的实现成本低，而且国产操作系统上经常无法开启 linger |
-| D5 | 是否需要方式 B（system 模式降权运行） | 需要，放在 P11-C 末尾，成本低 |
+| D5 | 是否需要方式 B（system 模式运行时不使用 root） | 需要（已确认并实现，见 6.7 节）：作为 system 模式的默认且唯一的运行方式；已以 root 运行的 master 由 `B-instance nonroot` 无中断切换 |
 | D6 | v0.2 是否等 P11 完成 | 不等。v0.2 只包含 10.1 节的最小修复，按单实例交付试点；P11 进入 v0.3 |
-| D7 | `Server` 响应头是否允许客户配置为隐藏品牌名 | 允许，作为节点组的一个选项（只影响响应头和错误页的显示） |
+| D7 | `Server` 响应头与错误页显示什么 | 显示品牌的显示名：默认品牌为 `syapp`，定制品牌为其显示名（例如 `SyEdge`），不隐藏。由改名 patch 模板按品牌生成：HTTP/1.1、HTTP/2（HPACK 编码）、HTTP/3 的 Server 头与默认错误页都用显示名；`server_tokens off` 时不带版本号。实现时修复了两处：HTTP/2 的 HPACK 字节曾写死为默认品牌，控制台输出的前缀长度曾写死为默认长度（显示名长度不同时吞掉消息首字符）。由 `scripts/ci/brand-runtime.sh` 对默认品牌与定制品牌分别实测（CI：`dataplane`、`dataplane-brand`） |

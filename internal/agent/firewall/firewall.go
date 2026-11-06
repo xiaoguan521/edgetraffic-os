@@ -30,6 +30,8 @@ type Options struct {
 	AllowTCP    []int    // 在 80、443 之外对所有来源开放的 TCP 端口
 	AllowUDP    []int    // 对所有来源开放的 UDP 端口（如 HTTP/3 的 443）
 	AllowAnySSH bool     // 允许 SSH 来源为 0.0.0.0/0 或 ::/0（不建议）
+	// Public 是本机实例配置中对外监听的端口（见 ListenPorts）；为空时放行默认的 80/443
+	Public *Ports
 }
 
 func parsePrefix(s string) (netip.Prefix, error) {
@@ -120,6 +122,16 @@ func Render(o Options) (string, error) {
 		}
 	}
 	tcp := []int{80, 443}
+	udp := append([]int(nil), o.AllowUDP...)
+	if o.Public != nil {
+		tcp = append([]int(nil), o.Public.TCP...)
+		udp = append(udp, o.Public.UDP...)
+		for _, p := range append(append([]int(nil), o.Public.TCP...), o.Public.UDP...) {
+			if p == o.SSHPort {
+				return "", fmt.Errorf("实例配置监听了 SSH 端口 %d，不能对所有来源开放；请修改实例档案或四层代理的端口", p)
+			}
+		}
+	}
 	for _, p := range o.AllowTCP {
 		if err := validPort(p); err != nil {
 			return "", err
@@ -129,7 +141,7 @@ func Render(o Options) (string, error) {
 		}
 		tcp = append(tcp, p)
 	}
-	for _, p := range o.AllowUDP {
+	for _, p := range udp {
 		if err := validPort(p); err != nil {
 			return "", err
 		}
@@ -147,9 +159,11 @@ func Render(o Options) (string, error) {
 	b.WriteString("\t\tiif \"lo\" accept\n")
 	b.WriteString("\t\tip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 20/second accept\n")
 	b.WriteString("\t\tip6 nexthdr icmpv6 icmpv6 type { echo-request, destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n")
-	fmt.Fprintf(&b, "\t\ttcp dport %s accept\n", portSet(tcp))
-	if len(o.AllowUDP) > 0 {
-		fmt.Fprintf(&b, "\t\tudp dport %s accept\n", portSet(o.AllowUDP))
+	if len(tcp) > 0 {
+		fmt.Fprintf(&b, "\t\ttcp dport %s accept\n", portSet(tcp))
+	}
+	if len(udp) > 0 {
+		fmt.Fprintf(&b, "\t\tudp dport %s accept\n", portSet(udp))
 	}
 	if len(v4) > 0 {
 		fmt.Fprintf(&b, "\t\tip saddr { %s } tcp dport %d accept\n", strings.Join(v4, ", "), o.SSHPort)

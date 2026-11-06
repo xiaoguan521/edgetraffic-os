@@ -3,9 +3,13 @@ package license
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// brandRe 与 brand.env 的 BRAND_ID 规则一致。
+var brandRe = regexp.MustCompile(`^[a-z][a-z0-9]{2,6}$`)
 
 // EditionFeatures 是各版本包含的功能（签发时据此填写 features）。
 var EditionFeatures = map[Edition][]Feature{
@@ -36,6 +40,7 @@ type IssueOptions struct {
 	Binding      string // installation | installation_only
 	Request      ActivationRequest
 	ProductName  string
+	Brand        string // 非空时只对该品牌的控制台有效（D3）；为空为通用
 	Now          time.Time
 }
 
@@ -53,6 +58,9 @@ func BuildPayload(o IssueOptions) (*Payload, error) {
 	}
 	if o.Binding == "" {
 		o.Binding = "installation"
+	}
+	if o.Brand != "" && !brandRe.MatchString(o.Brand) {
+		return nil, fmt.Errorf("品牌 ID %q 无效", o.Brand)
 	}
 	if o.Binding == "installation" && len(o.Request.FPHashes) < 3 {
 		return nil, errors.New("主机指纹绑定需要激活申请文件（容器部署请用 installation_only）")
@@ -81,7 +89,7 @@ func BuildPayload(o IssueOptions) (*Payload, error) {
 		Limits:   Limits{Nodes: o.Nodes, Sites: o.Sites, AuditDays: 365},
 		IssuedAt: now, NotBefore: notBefore, ExpiresAt: exp, MaintenanceUntil: maint, GraceDays: o.GraceDays,
 		Binding: Binding{Type: o.Binding, InstallationID: o.Request.InstallationID},
-		Product: Product{Name: o.ProductName, MinVersion: "0.0.0", MaxVersion: "1.*"},
+		Product: Product{Name: o.ProductName, MinVersion: "0.0.0", MaxVersion: "1.*", Brand: o.Brand},
 	}
 	if o.Binding == "installation" {
 		p.Binding.FPHashes = o.Request.FPHashes

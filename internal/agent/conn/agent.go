@@ -51,6 +51,7 @@ type Config struct {
 	StateDir     string         // /var/lib/syapp-agent
 	DataplaneBin string         // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
 	StatusURL    string         // http://127.0.0.1:8081/__syapp_status
+	VersionURL   string         // http://127.0.0.1:8081/__syapp_version：本实例 worker 实际运行的版本
 	Profile      render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
 	AccessLog    string         // /var/log/syapp/access.json
 	Heartbeat    time.Duration
@@ -150,7 +151,7 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 	resp, err := agentv1.NewAgentGatewayClient(cc).Enroll(cctx, &agentv1.EnrollRequest{
 		EnrollToken: token, CsrDer: csr, Hostname: host,
 		MachineFingerprint: machineFingerprint(), AgentVersion: version.Version,
-		Instance: instanceInfo(a.C.Profile),
+		Instance: instanceInfo(a.C.Profile), Brand: brand.ID(),
 	})
 	if err != nil {
 		return fmt.Errorf("enroll: %w", err)
@@ -349,7 +350,7 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 
 func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
 	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint(),
-		Instance: instanceInfo(a.C.Profile)}
+		Instance: instanceInfo(a.C.Profile), Brand: brand.ID(), RunningVersion: a.runningVersion(ctx)}
 	if out, err := exec.CommandContext(ctx, a.C.DataplaneBin, "-V").CombinedOutput(); err == nil {
 		h.SyappVersionOutput = string(out)
 	}
@@ -358,6 +359,18 @@ func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
 	}
 	h.LuaAddon = a.luaAddon()
 	return h
+}
+
+// runningVersion 返回本实例 worker 实际运行的数据面版本；配置中还没有版本路径（旧版本）时为空。
+func (a *Agent) runningVersion(ctx context.Context) string {
+	if a.C.VersionURL == "" {
+		return ""
+	}
+	v, err := collect.ReadVersion(ctx, a.C.VersionURL)
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 var luaVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$`)
@@ -396,7 +409,7 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 			return
 		case now := <-t.C:
 			cpu, mem := host.Sample()
-			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem, LuaAddon: a.luaAddon()}
+			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem, LuaAddon: a.luaAddon(), RunningVersion: a.runningVersion(ctx)}
 			if st, err := collect.ReadStub(ctx, a.C.StatusURL); err == nil {
 				hb.ActiveConnections, hb.RequestsTotal = st.Active, st.Requests
 			}

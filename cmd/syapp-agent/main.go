@@ -76,7 +76,8 @@ func main() {
 		*confRoot = lay.ConfRoot()
 	}
 	if *wrapper == "" {
-		*wrapper = "sudo -n " + lay.WrapperBin()
+		// wrapper 以数据面用户运行（不是 root，设计 0001 D5），sudoers 只允许这 7 条命令
+		*wrapper = "sudo -n -u " + brand.ID() + " " + lay.WrapperBin()
 		if userMode {
 			*wrapper = lay.WrapperBin() // 与数据面同一用户：直接调用，校验与验签规则不变
 		}
@@ -86,7 +87,7 @@ func main() {
 	}
 	cfg := conn.Config{
 		Server: *server, StateDir: *stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
-		StatusURL: lay.StatusURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
+		StatusURL: lay.StatusURL(prof.Status()), VersionURL: lay.VersionURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
 			ConfRoot: *confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
 			LockFile: lay.AgentLock(), Wrapper: strings.Fields(*wrapper),

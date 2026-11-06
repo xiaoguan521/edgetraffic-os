@@ -10,7 +10,7 @@ ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=firewall::$1"; fail=$((fail+1)); }
 N=(ip netns exec etosfw-node); C=(ip netns exec etosfw-cli)
 cleanup() { ip netns pids etosfw-node 2>/dev/null | xargs -r kill 2>/dev/null; ip netns del etosfw-node 2>/dev/null; ip netns del etosfw-cli 2>/dev/null; }
-trap cleanup EXIT
+trap 'cleanup; [[ -n "${made_conf:-}" ]] && rm -rf /opt/syapp/conf /opt/syapp/instances' EXIT
 cleanup
 ip netns add etosfw-node && ip netns add etosfw-cli
 ip link add fwn0 type veth peer name fwc0
@@ -57,6 +57,37 @@ echo "== 追加端口"
 "${N[@]}" "${env_fw[@]}" "$FW" enable --ssh-from 10.99.0.2 --allow-tcp 9100 >/dev/null 2>&1
 [[ $(reach 10.99.0.3 9100) == yes ]] && ok "--allow-tcp 9100 生效" || bad "--allow-tcp 未生效"
 [[ $(reach 10.99.0.3 22) == no ]] && ok "重新生成后 SSH 仍受限" || bad "重新生成后 SSH 放开了"
+
+echo "== 按实例配置放行（同机多实例，设计 0001 第 5.8 节）"
+# 本测试机没有安装数据面：写出两个实例的当前配置（默认实例 80/443 + 四层代理 13306，blue 18080），测试结束后删除
+if [[ ! -e /opt/syapp/conf/current ]]; then
+  made_conf=1
+  mkdir -p /opt/syapp/conf/releases/r1/stream.d /opt/syapp/instances/blue/conf/releases/r1
+  ln -sfn releases/r1 /opt/syapp/conf/current; ln -sfn releases/r1 /opt/syapp/instances/blue/conf/current
+  echo 'http { server { listen 80; listen 443 ssl; listen 127.0.0.1:8081; } }' > /opt/syapp/conf/current/syapp.conf
+  echo 'server { listen 13306; }' > /opt/syapp/conf/current/stream.d/mysql.conf
+  echo 'http { server { listen 18080; } }' > /opt/syapp/instances/blue/conf/current/syapp.conf
+  echo '{"instance":"blue"}' > /opt/syapp/instances/blue/instance.json
+  for p in 13306 18080 28080; do "${N[@]}" python3 -m http.server -b 0.0.0.0 $p >/dev/null 2>&1 & done
+  sleep 1
+  "${N[@]}" "${env_fw[@]}" "$FW" enable --ssh-from 10.99.0.2 >/dev/null 2>&1 || bad "按实例配置启用失败"
+  [[ $(reach 10.99.0.3 18080) == yes ]] && ok "blue 实例端口 18080 放行" || bad "18080 被拦截"
+  [[ $(reach 10.99.0.3 13306) == yes ]] && ok "四层代理端口 13306 放行" || bad "13306 被拦截"
+  [[ $(reach 10.99.0.3 9100) == no ]] && ok "不再使用的 --allow-tcp 端口被丢弃" || bad "9100 仍放行"
+  [[ $(reach 10.99.0.3 28080) == no ]] && ok "尚未创建的实例端口被丢弃" || bad "28080 被放行"
+  # 新增实例 green（28080）后刷新：放行；配置未变时刷新不重新加载
+  mkdir -p /opt/syapp/instances/green/conf/releases/r1 && ln -sfn releases/r1 /opt/syapp/instances/green/conf/current
+  echo 'http { server { listen 28080; } }' > /opt/syapp/instances/green/conf/current/syapp.conf
+  echo '{"instance":"green"}' > /opt/syapp/instances/green/instance.json
+  "${N[@]}" "${env_fw[@]}" "$FW" refresh | grep -q "已按实例配置刷新" && ok "新增实例后 refresh 更新规则" || bad "refresh 未更新规则"
+  [[ $(reach 10.99.0.3 28080) == yes ]] && ok "green 实例端口 28080 放行" || bad "28080 被拦截"
+  "${N[@]}" "${env_fw[@]}" "$FW" refresh | grep -q "规则无变化" && ok "配置未变时 refresh 不重新加载" || bad "refresh 重复加载"
+  # 某个实例改为监听 SSH 端口：refresh 拒绝并保留现有规则
+  echo 'http { server { listen 22; } }' > /opt/syapp/instances/green/conf/current/syapp.conf
+  "${N[@]}" "${env_fw[@]}" "$FW" refresh >/dev/null 2>&1 && bad "实例监听 SSH 端口时 refresh 成功" || ok "实例监听 SSH 端口时 refresh 被拒绝"
+  [[ $(reach 10.99.0.3 22) == no ]] && ok "SSH 仍只对允许的来源开放" || bad "SSH 被放开"
+  [[ $(reach 10.99.0.3 28080) == yes ]] && ok "拒绝后保留原规则" || bad "拒绝后规则丢失"
+fi
 
 echo "== 停用"
 "${N[@]}" "${env_fw[@]}" "$FW" disable >/dev/null

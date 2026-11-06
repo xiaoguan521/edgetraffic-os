@@ -8,7 +8,18 @@ if [ ! -e /opt/syapp/conf/current ]; then
   /usr/bin/syapp-agent bootstrap
 fi
 chown -R syapp-agent:syapp /opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent
-/opt/syapp/sbin/syapp -t -q
+# 旧版本把防火墙规则放在 /etc/syapp：迁移到防火墙用户的目录
+if [ -f /etc/syapp/firewall.nft ] && [ ! -e /var/lib/syapp-firewall/firewall.nft ]; then
+  install -d -m 0700 -o syapp-firewall -g syapp-firewall /var/lib/syapp-firewall
+  for f in firewall.nft firewall.nft.args; do
+    if [ -f /etc/syapp/$f ]; then mv /etc/syapp/$f /var/lib/syapp-firewall/$f && chown syapp-firewall: /var/lib/syapp-firewall/$f; fi
+  done
+fi
+has_systemd && systemctl daemon-reload
+# 运行时不使用 root：交出运行时目录；升级前以 root 启动的 master 无中断切换为 syapp 运行（不重启）
+/usr/sbin/syapp-instance nonroot || echo "警告：syapp-instance nonroot 未完成（数据面照常服务），请检查后手工执行" >&2
+# 经 wrapper 以 syapp 校验（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不以 root 运行）
+runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper test "$(basename "$(readlink /opt/syapp/conf/current)")"
 if has_systemd; then
   systemctl daemon-reload
   systemctl enable syapp.service >/dev/null 2>&1 || true

@@ -31,6 +31,14 @@ scripts/release/package.sh console linux amd64              # 控制台
 make brand-matrix          # 用测试品牌 sytest / SyTest 完整检查：patch 生成、全部 Go 程序、节点发布包
 ```
 
+构建出数据面后，用真实二进制检查对外可见的名字（需要 root）：
+
+```bash
+sudo scripts/ci/brand-runtime.sh dist/syedge-1.30.6-x86_64.tar.gz syedge SyEdge
+```
+
+它检查 `-v` / `-t` 输出、master 与 worker 进程标题、HTTP/1.1 与 HTTP/2 的 `Server` 头（应为显示名，如 `SyEdge`；默认品牌为 `syapp`）、默认错误页、`$<品牌>_version` 变量，以及二进制中没有上游名和默认品牌名。HTTP/2 的 `Server` 头是 HPACK 哈夫曼编码，`strings` 扫描看不到，必须这样实测。
+
 默认品牌的产物与引入品牌参数前完全相同（`TestDefaultBrandMatchesCommittedPatch`：默认品牌生成的 patch 与 `dataplane/patches/0001-syapp-rename.patch` 逐字节相同）。
 
 ## 4. 已知限制

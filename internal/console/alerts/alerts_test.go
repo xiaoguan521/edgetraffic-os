@@ -332,3 +332,41 @@ func TestEvaluateOperationalRules(t *testing.T) {
 		t.Fatalf("expected only deployment_rolled_back firing after recovery, got %+v", firing)
 	}
 }
+
+// 同一主机上的实例运行着不同版本时告警；版本一致后恢复。
+func TestEvaluateHostVersionMixed(t *testing.T) {
+	s, _ := newSvc(t, true)
+	if err := s.SaveRule(KindHostVersionMix, true, 0, nil, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	q := query.Use(s.Store.DB)
+	ctx := context.Background()
+	for _, n := range []store.Node{
+		{Name: "d1", Hostname: "edge-a", HostKey: "aaaaaaaaaaaaaaaa", Status: "online", RunningVersion: "1.30.7"},
+		{Name: "b1", Hostname: "edge-a", HostKey: "aaaaaaaaaaaaaaaa", Status: "online", RunningVersion: "1.30.6"},
+		{Name: "d2", Hostname: "edge-b", HostKey: "bbbbbbbbbbbbbbbb", Status: "online", RunningVersion: "1.30.7"},
+		{Name: "b2", Hostname: "edge-b", HostKey: "bbbbbbbbbbbbbbbb", Status: "online", RunningVersion: "1.30.7"},
+		{Name: "old", Hostname: "edge-c", Status: "online", RunningVersion: "1.30.5"}, // 旧版 agent：不上报主机标识
+	} {
+		n := n
+		_ = q.Node.WithContext(ctx).Create(&n)
+	}
+	firing := func() []store.AlertEvent {
+		var evs []store.AlertEvent
+		s.Store.DB.Where("status = ? AND kind = ?", "firing", KindHostVersionMix).Find(&evs)
+		return evs
+	}
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 1 || !strings.Contains(evs[0].Message, "edge-a") {
+		t.Fatalf("firing %+v", evs)
+	}
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.Name.Eq("b1")).Update(q.Node.RunningVersion, "1.30.7")
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 0 {
+		t.Fatalf("not resolved: %+v", evs)
+	}
+}

@@ -56,6 +56,8 @@ type Product struct {
 	Name       string `json:"name"`
 	MinVersion string `json:"min_version"`
 	MaxVersion string `json:"max_version"`
+	// Brand 非空时 License 只对该品牌（OEM 定制构建，设计 0001 第 4 节、D3）的控制台有效；为空表示通用
+	Brand string `json:"brand,omitempty"`
 }
 
 // HasFeature 报告 License 是否包含某功能。

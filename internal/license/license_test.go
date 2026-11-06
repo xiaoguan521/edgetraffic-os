@@ -145,3 +145,31 @@ func TestUnlicensed(t *testing.T) {
 		t.Fatalf("got %s", s.State)
 	}
 }
+
+// D3（设计 0001 第 11 节）：指定品牌的 License 只对该品牌的控制台有效；未指定品牌的 License 通用。
+func TestBrandBinding(t *testing.T) {
+	keys, priv, p, env := fixture(t)
+	env.Brand = "syapp"
+	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateValid {
+		t.Fatalf("universal license: %s (%s)", s.State, s.Reason)
+	}
+	p.Product.Brand = "syapp"
+	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateValid {
+		t.Fatalf("same brand: %s (%s)", s.State, s.Reason)
+	}
+	p.Product.Brand = "syedge"
+	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateInvalid || !strings.Contains(s.Reason, "syedge") {
+		t.Fatalf("other brand: %s (%s)", s.State, s.Reason)
+	}
+	// 签发：品牌写入 payload，格式与 brand.env 一致
+	o := IssueOptions{KID: "k", CustomerName: "c", Edition: EditionStandard, Days: 30, Binding: "installation_only",
+		Request: ActivationRequest{InstallationID: "inst_x"}, Brand: "syedge", Now: time.Now()}
+	bp, err := BuildPayload(o)
+	if err != nil || bp.Product.Brand != "syedge" {
+		t.Fatalf("payload brand: %+v %v", bp, err)
+	}
+	o.Brand = "Bad Brand"
+	if _, err := BuildPayload(o); err == nil {
+		t.Fatal("invalid brand accepted")
+	}
+}

@@ -44,7 +44,8 @@ index 0c09426..0bde06b 100644
 +++ b/src/core/ngx_log.c
 @@ -204,7 +204,7 @@ ngx_log_error_core(ngx_uint_t level, ngx_log_t *log, ngx_err_t err,
  
-     msg -= (7 + err_levels[level].len + 3);
+-    msg -= (7 + err_levels[level].len + 3);
++    msg -= (@PROCLEN2@ + err_levels[level].len + 3);
  
 -    (void) ngx_sprintf(msg, "nginx: [%V] ", &err_levels[level]);
 +    (void) ngx_sprintf(msg, "@PROC@: [%V] ", &err_levels[level]);
@@ -279,7 +280,7 @@ index 6b73b1e..74091e1 100644
      u_char                     addr[NGX_SOCKADDR_STRLEN];
  
 -    static const u_char nginx[5] = { 0x84, 0xaa, 0x63, 0x55, 0xe7 };
-+    static const u_char nginx[5] = { 0x84, 0x47, 0xa1, 0xd7, 0x5f };
++    static const u_char nginx[@HPACKLEN@] = { @HPACK@ };
  #if (NGX_HTTP_GZIP)
      static const u_char accept_encoding[12] = {
          0x8b, 0x84, 0x84, 0x2d, 0x69, 0x5b, 0x05, 0x44, 0x3c, 0x86, 0xaa, 0x6f

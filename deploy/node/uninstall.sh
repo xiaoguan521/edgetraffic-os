@@ -53,7 +53,9 @@ rm -f /usr/sbin/syapp /usr/bin/syapp-agent /usr/libexec/syapp/syapp-wrapper /usr
 rm -f /etc/sudoers.d/syapp-agent /etc/logrotate.d/syapp /etc/tmpfiles.d/syapp.conf
 rm -f /etc/systemd/system/syapp.service /etc/systemd/system/syapp@.service \
       /etc/systemd/system/syapp-agent.service /etc/systemd/system/syapp-agent@.service \
-      /etc/systemd/system/syapp-firewall.service
+      /etc/systemd/system/syapp-firewall.service /etc/systemd/system/syapp-firewall-refresh.service \
+      /etc/systemd/system/syapp-firewall-refresh.path
+rm -rf /etc/systemd/system/syapp-firewall-refresh.path.d
 rm -rf /opt/syapp/sbin /opt/syapp/versions /opt/syapp/modules
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
@@ -61,7 +63,7 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
 fi
 
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf /opt/syapp /var/lib/syapp-agent /var/lib/syapp-agent-* /var/log/syapp /var/cache/syapp /etc/syapp-agent /run/syapp /run/syapp-* /run/syapp-agent /run/syapp-agent-*
+  rm -rf /opt/syapp /var/lib/syapp-agent /var/lib/syapp-agent-* /var/lib/syapp-firewall /var/log/syapp /var/cache/syapp /etc/syapp-agent /run/syapp /run/syapp-* /run/syapp-agent /run/syapp-agent-*
   echo "已卸载 EdgeTraffic OS 节点并清理全部配置与数据（--purge）。"
 else
   echo "已卸载 EdgeTraffic OS 节点程序（保留 /opt/syapp/conf 与 /var/log/syapp；如需彻底清除请加 --purge）。"

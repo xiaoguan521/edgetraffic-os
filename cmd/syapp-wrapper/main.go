@@ -1,4 +1,4 @@
-// syapp-wrapper 由 root 拥有、经 sudoers 授权给 syapp-agent 调用（规格书 5.5）。
+// syapp-wrapper 由 root 拥有、经 sudoers 授权给 syapp-agent 以数据面用户身份调用（规格书 5.5；运行时不使用 root，设计 0001 D5）。
 // 构建：CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" ./cmd/syapp-wrapper
 package main
 
@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/wrapper"
 )
 
@@ -29,6 +30,18 @@ func main() {
 	if root != "" && os.Geteuid() == 0 {
 		fmt.Fprintln(os.Stderr, "user-mode wrapper must not run as root")
 		os.Exit(wrapper.ExitUsage)
+	}
+	// system 模式：运行时不使用 root（设计 0001 D5）。sudoers 以数据面用户运行 wrapper，与 master 同一身份
+	if root == "" && os.Geteuid() == 0 {
+		fmt.Fprintln(os.Stderr, "wrapper must not run as root: sudoers runs it as the data-plane user (sudo -u "+layout.WorkerUser()+")")
+		os.Exit(wrapper.ExitUsage)
+	}
+	if root == "" {
+		// `-t` 绑定配置中的端口（80/443）：把 wrapper 文件带的 CAP_NET_BIND_SERVICE 交给子进程（只此一项）
+		if err := wrapper.RaiseBindCap(); err != nil {
+			fmt.Fprintln(os.Stderr, "raise CAP_NET_BIND_SERVICE:", err)
+			os.Exit(1)
+		}
 	}
 	cmd, err := wrapper.BuildAt(root, os.Args[1:])
 	if err != nil {

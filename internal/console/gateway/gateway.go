@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/cmdsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/pki"
@@ -193,6 +194,11 @@ func (s *Server) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agent
 		host = host[:64]
 	}
 	hostKey := HostKey(req.MachineFingerprint)
+	// 品牌不一致的 agent（另一个 OEM 品牌的安装包）不能注册：路径、单元名、升级包名都对不上（设计 0001 第 4 节，BR-03）。
+	// 旧版 agent 不上报品牌，按现有行为放行
+	if req.Brand != "" && req.Brand != brand.ID() {
+		return fail(codes.FailedPrecondition, fmt.Sprintf("BRAND_MISMATCH: agent is built for %q, this console is %q", req.Brand, brand.ID()))
+	}
 	if s.CheckInstance != nil {
 		if err := s.CheckInstance(tok.GroupID, ReportedProfile(req.GetInstance())); err != nil {
 			return fail(codes.FailedPrecondition, err.Error())
@@ -325,7 +331,10 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		nd := s.q().Node
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.AgentVersion.Value(agentVer), nd.Arch.Value(arch),
 			nd.SyappVersion.Value(ver), nd.SyappSHA256.Value(b.Hello.SyappSha256), nd.TLSLib.Value(TLSLib(b.Hello.SyappVersionOutput)), nd.LuaAddon.Value(LuaAddon(b.Hello.LuaAddon)), nd.AppliedRevision.Value(b.Hello.AppliedRevisionId),
-			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)))
+			nd.LastSeenAt.Value(now), nd.RemoteAddr.Value(remoteAddr(ctx)), nd.RunningVersion.Value(RunningVersion(b.Hello.RunningVersion)))
+		if b.Hello.Brand != "" && b.Hello.Brand != brand.ID() {
+			s.Log.Warn("node agent brand differs from the console", "node", nodeID, "agent_brand", b.Hello.Brand)
+		}
 		if hk := HostKey(b.Hello.MachineFingerprint); hk != "" {
 			// 补齐升级前注册的节点的主机标识
 			_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.HostKey.Value(hk))
@@ -359,7 +368,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		}
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.LuaAddon.Value(LuaAddon(hb.LuaAddon)), nd.CPUPercent.Value(hb.CpuPercent),
 			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
-			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now))
+			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now), nd.RunningVersion.Value(RunningVersion(hb.RunningVersion)))
 		if !drifted {
 			_, _ = q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(nodeID)).Delete()
 		}
@@ -596,4 +605,14 @@ func ReportedProfile(i *agentv1.InstanceInfo) *render.Profile {
 	}
 	return &render.Profile{Instance: i.GetName(), Mode: i.GetMode(), Root: i.GetRoot(),
 		HTTPPort: int(i.GetHttpPort()), HTTPSPort: int(i.GetHttpsPort()), StatusPort: int(i.GetStatusPort())}
+}
+
+var runningVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// RunningVersion 校验 agent 上报的实例运行版本；不合法或未上报（旧版 agent、旧配置）时为空。
+func RunningVersion(v string) string {
+	if !runningVersionRe.MatchString(v) {
+		return ""
+	}
+	return v
 }

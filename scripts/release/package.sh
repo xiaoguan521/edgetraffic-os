@@ -191,7 +191,8 @@ case "${1:-}" in
     cp dataplane/packaging/sudoers/syapp-agent "$r/etc/sudoers.d/syapp-agent"
     cp dataplane/packaging/systemd/syapp.service dataplane/packaging/systemd/syapp@.service \
        dataplane/packaging/systemd/syapp-agent.service dataplane/packaging/systemd/syapp-agent@.service \
-       dataplane/packaging/systemd/syapp-firewall.service "$r/etc/systemd/system/"
+       dataplane/packaging/systemd/syapp-firewall.service dataplane/packaging/systemd/syapp-firewall-refresh.service \
+       dataplane/packaging/systemd/syapp-firewall-refresh.path "$r/etc/systemd/system/"
     install -m 0755 dataplane/packaging/firewall/syapp-firewall "$r/usr/sbin/syapp-firewall"
     cp dataplane/packaging/logrotate/syapp "$r/etc/logrotate.d/syapp"
     mkdir -p "$r/etc/tmpfiles.d" && cp dataplane/packaging/tmpfiles/syapp.conf "$r/etc/tmpfiles.d/syapp.conf"
@@ -240,6 +241,8 @@ case "${1:-}" in
     cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"
     cp dataplane/packaging/systemd/syapp-agent@.service "$st/agent/syapp-agent@.service"
     cp dataplane/packaging/systemd/syapp-firewall.service "$st/agent/syapp-firewall.service"
+    cp dataplane/packaging/systemd/syapp-firewall-refresh.service "$st/agent/syapp-firewall-refresh.service"
+    cp dataplane/packaging/systemd/syapp-firewall-refresh.path "$st/agent/syapp-firewall-refresh.path"
     install -m 0755 dataplane/packaging/firewall/syapp-firewall "$st/agent/syapp-firewall"
     gobuild linux "$arch" "$st/console" ./cmd/syapp-console
     cp deploy/systemd/syapp-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"

@@ -12,6 +12,7 @@ const gid = ref(0)
 const nodes = ref<any[]>([])
 const packages = ref<any[]>([])
 const upgrades = ref<any[]>([])
+const hosts = ref<any[]>([])
 const ver = ref<string>()
 const variant = ref('standard')
 const starting = ref(false)
@@ -21,10 +22,11 @@ async function load() {
     groups.value = await api.get('/node-groups')
     if (!gid.value && groups.value.length) gid.value = groups.value[0].id
   }
-  const [n, p, u] = await Promise.all([api.get('/nodes'), session.can('operator') ? api.get('/packages') : Promise.resolve([]), api.get('/upgrades', { group_id: gid.value })])
+  const [n, p, u, h] = await Promise.all([api.get('/nodes'), session.can('operator') ? api.get('/packages') : Promise.resolve([]), api.get('/upgrades', { group_id: gid.value }), api.get('/hosts')])
   nodes.value = n.filter((x: any) => x.group_id === gid.value && x.status !== 'revoked')
   packages.value = p
   upgrades.value = u
+  hosts.value = h
 }
 let timer: number | undefined
 onMounted(async () => {
@@ -98,6 +100,57 @@ async function start() {
   }
 }
 const running = computed(() => upgrades.value.some((u) => u.status === 'running'))
+
+// 同机多实例（设计 0001 第 5.6 节）：数据面二进制按主机共用，同机其他节点组的实例随主机一起升级
+const siblings = computed(() => {
+  const mine = new Set(nodes.value.map((n) => n.id))
+  const out: any[] = []
+  for (const h of hosts.value) {
+    if (!h.nodes.some((n: any) => mine.has(n.id))) continue
+    for (const n of h.nodes) if (!mine.has(n.id)) out.push({ ...n, host: h.name || h.host })
+  }
+  return out
+})
+const mixedHosts = computed(() => hosts.value.filter((h) => h.mixed && h.nodes.some((n: any) => nodes.value.some((m) => m.id === n.id))))
+function dataplaneVersion(n: any) {
+  return (n.syapp_version || '').replace(brand.proc + ' version: ', '').replace(brand.id + '/', '')
+}
+const upStatus: Record<string, { t: string; c: string }> = {
+  done: { t: '完成', c: 'green' },
+  running: { t: '进行中', c: 'processing' },
+  failed: { t: '已停止', c: 'red' },
+  partial: { t: '主机部分升级', c: 'orange' },
+}
+const hostStatus: Record<string, { t: string; c: string }> = {
+  done: { t: '已升级', c: 'green' },
+  upgrading: { t: '升级中', c: 'processing' },
+  partial: { t: '部分升级', c: 'orange' },
+  failed: { t: '保持原版本', c: 'red' },
+  skipped: { t: '未开始', c: 'default' },
+  pending: { t: '等待', c: 'default' },
+}
+async function retry(u: any) {
+  try {
+    await api.post(`/upgrades/${u.id}/retry`)
+    message.success('已开始重试未完成的实例')
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+const rollbackVer = ref<Record<number, string>>({})
+function rollbackVersions(u: any) {
+  return [...new Set(packages.value.filter((p) => p.name === brand.id && p.variant === u.variant && p.version !== u.version).map((p) => p.version))]
+}
+async function rollbackHosts(u: any) {
+  try {
+    await api.post(`/upgrades/${u.id}/rollback-hosts`, { version: rollbackVer.value[u.id] })
+    message.success('已开始把部分升级主机上已升级的实例切回所选版本（热升级，不中断连接）')
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 </script>
 
 <template>
@@ -105,7 +158,7 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
     <div class="page-head">
       <div>
         <h1>数据面版本</h1>
-        <p>导入厂商签名的 {{ brand.id }} 升级包，按节点组分批热升级（二进制热替换，连接不中断）。任一节点探活失败会自动回到旧版本并停止后续节点；回退即用上一版本再升级一次。</p>
+        <p>导入厂商签名的 {{ brand.id }} 升级包，按节点组分批热升级（二进制热替换，连接不中断）。同一主机上的实例共用一个二进制，按主机分批、主机内依次升级。任一节点探活失败会自动回到旧版本并停止后续主机；回退即用上一版本再升级一次。</p>
       </div>
       <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
@@ -113,12 +166,23 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
     <section class="panel">
       <h2>节点版本</h2>
       <a-table :data-source="nodes" row-key="id" :pagination="false" size="small"
-        :columns="[{ title: '节点', dataIndex: 'name' }, { title: '架构', dataIndex: 'arch' }, { title: brand.proc, key: 'v' }, { title: 'agent', dataIndex: 'agent_version' }, { title: '状态', key: 'st' }]">
+        :columns="[{ title: '节点', dataIndex: 'name' }, { title: '架构', dataIndex: 'arch' }, { title: brand.proc, key: 'v' }, { title: '实际运行', key: 'run' }, { title: 'agent', dataIndex: 'agent_version' }, { title: '状态', key: 'st' }]">
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'v'">{{ (record.syapp_version || '').replace(brand.proc + ' version: ', '') || '—' }}</template>
+          <template v-if="column.key === 'v'">{{ dataplaneVersion(record) || '—' }}</template>
+          <template v-else-if="column.key === 'run'">
+            {{ record.running_version || '—' }}
+            <a-tooltip v-if="record.running_version && dataplaneVersion(record) && !dataplaneVersion(record).includes(record.running_version)" title="同机其他实例已升级了共用的二进制，本实例仍在运行旧版本：请完成或回退该主机的升级">
+              <a-tag color="gold" style="margin-left: 6px">未切换</a-tag>
+            </a-tooltip>
+          </template>
           <template v-else-if="column.key === 'st'"><a-badge :status="record.status === 'online' ? 'success' : 'default'" :text="record.status === 'online' ? '在线' : '离线'" /></template>
         </template>
       </a-table>
+      <a-alert v-if="siblings.length" type="info" show-icon style="margin-top: 12px"
+        :message="`同机还有 ${siblings.length} 个其他节点组的实例，会随主机一起升级`"
+        :description="`同一台主机上的实例共用一个 ${brand.id} 二进制，升级以主机为单位：本组实例先升级，同机实例随后依次升级。涉及：${siblings.map((n) => `${n.name}（${n.group_name}，主机 ${n.host}）`).join('、')}`" />
+      <a-alert v-for="h in mixedHosts" :key="h.host" type="warning" show-icon style="margin-top: 8px"
+        :message="`主机 ${h.name || h.host} 上的实例运行着不同版本：${h.versions.join('、')}`" description="通常是上一次升级只完成了一部分：在下方升级记录中重试剩余实例，或整体回退。" />
       <div class="up" v-if="session.can('operator')">
         <a-select v-model:value="variant" style="width: 120px" :options="Object.entries(variantName).map(([value, label]) => ({ value, label }))" />
         <a-select v-model:value="ver" style="width: 200px" placeholder="目标版本" :options="versions.map((v) => ({ value: v, label: v }))" />
@@ -137,16 +201,35 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
       <div class="phead">
         <h2>{{ u.variant === 'agent' ? 'agent 升级' : '升级' }} #{{ u.id }} → {{ u.version }} <span class="sub">{{ variantName[u.variant] }}</span></h2>
         <span class="sub">
-          <a-tag :color="u.status === 'done' ? 'green' : u.status === 'running' ? 'processing' : 'red'">{{ { done: '完成', running: '进行中', failed: '已停止' }[u.status as string] }}</a-tag>
+          <a-tag :color="upStatus[u.status]?.c">{{ upStatus[u.status]?.t }}</a-tag>
           {{ u.created_by }} · {{ dayjs(u.created_at).format('MM-DD HH:mm') }}
         </span>
       </div>
+      <div v-if="u.variant !== 'agent' && (u.hosts || []).length > 1" class="hosts">
+        <span v-for="h in u.hosts" :key="h.host" class="host">
+          主机 <b>{{ h.name || h.host }}</b> <a-tag :color="hostStatus[h.status]?.c">{{ hostStatus[h.status]?.t }}</a-tag>
+        </span>
+      </div>
       <a-table :data-source="u.nodes" row-key="node_id" :pagination="false" size="small"
-        :columns="[{ title: '批次', dataIndex: 'batch', width: 70 }, { title: '节点', dataIndex: 'name' }, { title: '结果', key: 'st', width: 130 }, { title: '说明', dataIndex: 'message' }]">
+        :columns="[{ title: '批次', dataIndex: 'batch', width: 70 }, { title: '主机', key: 'host', width: 160 }, { title: '节点', key: 'name' }, { title: '结果', key: 'st', width: 130 }, { title: '说明', dataIndex: 'message' }]">
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'st'"><a-tag :color="nodeStatus[record.status]?.c">{{ nodeStatus[record.status]?.t }}</a-tag></template>
+          <template v-if="column.key === 'host'"><span class="sub">{{ record.host_name || record.host || '—' }}</span></template>
+          <template v-else-if="column.key === 'name'">{{ record.name }}<a-tag v-if="record.sibling" style="margin-left: 6px">同机实例</a-tag></template>
+          <template v-else-if="column.key === 'st'"><a-tag :color="nodeStatus[record.status]?.c">{{ nodeStatus[record.status]?.t }}</a-tag></template>
         </template>
       </a-table>
+      <div class="up" v-if="u.variant !== 'agent' && (u.status === 'partial' || u.status === 'failed') && session.can('operator')">
+        <a-popconfirm title="对未完成的实例（失败、回退、未开始、离线）以同一版本重新执行？已升级的实例不受影响。" @confirm="retry(u)">
+          <a-button :disabled="running || !session.writable">重试未完成的实例</a-button>
+        </a-popconfirm>
+        <template v-if="u.status === 'partial'">
+          <span class="gap" />
+          <a-select v-model:value="rollbackVer[u.id]" style="width: 200px" placeholder="回退到版本" :options="rollbackVersions(u).map((v) => ({ value: v, label: v }))" />
+          <a-popconfirm :title="`把部分升级主机上已升级的实例热切回 ${rollbackVer[u.id]}？连接不中断，任何实例都不会停止。`" @confirm="rollbackHosts(u)">
+            <a-button :disabled="!rollbackVer[u.id] || running || !session.writable">主机整体回退</a-button>
+          </a-popconfirm>
+        </template>
+      </div>
     </section>
 
     <section class="panel" v-if="session.can('operator')">
@@ -177,6 +260,13 @@ const running = computed(() => upgrades.value.some((u) => u.status === 'running'
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 14px;
+}
+.hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 13px;
 }
 .phead {
   display: flex;

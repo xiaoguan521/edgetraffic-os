@@ -69,6 +69,10 @@ func TestGMSitePublishAndRenew(t *testing.T) {
 		t.Fatalf("unlicensed: %v", err)
 	}
 	licensed = true
+	// 组内还没有节点时同样先报国密约束（控制台冒烟用例依赖这个顺序）
+	if _, err := d.StartUpgrade(g.ID, "1.30.6-1", "standard", "alice", ""); err == nil || !strings.Contains(err.Error(), "国密") {
+		t.Fatalf("standard upgrade of a GM group without nodes: %v", err)
+	}
 	node := &store.Node{GroupID: g.ID, Name: "edge-1", Status: "offline", TLSLib: "openssl"}
 	if err := q.Node.WithContext(ctx).Create(node); err != nil {
 		t.Fatal(err)

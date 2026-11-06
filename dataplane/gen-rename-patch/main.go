@@ -80,7 +80,21 @@ func Generate(tmpl []byte, id, proc string) ([]byte, error) {
 	if len(bad) > 0 {
 		return nil, fmt.Errorf("unknown placeholders in template: %v", bad)
 	}
-	return out, nil
+	return foldNoops(out), nil
+}
+
+// foldNoops 把代入后内容相同的相邻 "-行"/"+行" 还原为上下文行（例如默认品牌下长度常量不变）。
+// 两侧行数都不变，hunk 头仍然正确；默认品牌生成的 patch 因此与已提交的 patch 逐字节相同。
+func foldNoops(p []byte) []byte {
+	lines := strings.Split(string(p), "\n")
+	for i := 0; i+1 < len(lines); i++ {
+		a, b := lines[i], lines[i+1]
+		if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "---") && strings.HasPrefix(b, "+") && !strings.HasPrefix(b, "+++") && a[1:] == b[1:] {
+			lines[i] = " " + a[1:]
+			lines = append(lines[:i+1], lines[i+2:]...)
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 func main() {

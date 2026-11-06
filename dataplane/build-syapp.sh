@@ -157,6 +157,8 @@ for f in koi-utf koi-win win-utf; do
 done
 cp "$HERE/packaging/html/index.html" "$HERE/packaging/html/50x.html" "$O/html/"
 cp "$HERE/../docs/NOTICE" "$O/share/doc/NOTICE"
+# 定制品牌：NOTICE 中的数据面名称随品牌改写（上游版权与 BSD 许可文本不变）
+[[ "$B" != "$DEFAULT_BRAND" ]] && sed -i "s/$DEFAULT_BRAND/$B/g" "$O/share/doc/NOTICE"
 strip "$O/sbin/$B"
 
 # 构建后自检

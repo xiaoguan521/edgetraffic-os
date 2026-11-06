@@ -106,6 +106,7 @@ func issue(args []string) {
 	grace := fs.Int("grace", 15, "宽限天数")
 	maint := fs.String("maintenance", "", "维护截止日 YYYY-MM-DD（默认同到期日）；构建日期晚于它的控制台视授权无效")
 	binding := fs.String("binding", "installation", "installation（安装 ID + 主机指纹）| installation_only（容器部署）")
+	brandID := fs.String("brand", "", "只对该品牌（OEM 定制构建）的控制台有效；留空为通用")
 	licID := fs.String("id", "", "License 编号（默认自动生成）")
 	out := fs.String("out", "", "输出文件（默认打印到标准输出）")
 	_ = fs.Parse(args)
@@ -129,7 +130,7 @@ func issue(args []string) {
 	}
 	o := license.IssueOptions{KID: *kid, LicenseID: *licID, CustomerID: *customerID, CustomerName: *customer,
 		Edition: license.Edition(*edition), Nodes: *nodes, Sites: *sites, Days: *days, GraceDays: *grace,
-		Binding: *binding, Request: req, ProductName: version.Product, Now: time.Now()}
+		Binding: *binding, Request: req, ProductName: version.Product, Brand: *brandID, Now: time.Now()}
 	if *expires != "" {
 		t, err := time.Parse("2006-01-02", *expires)
 		check(err)

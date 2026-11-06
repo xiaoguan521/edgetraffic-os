@@ -19,6 +19,10 @@
   路径写本版本目录的绝对路径（见 docs/gm.md）。
 - 不开放客户自定义 Lua 脚本：Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。
 - 永远不得 restart syapp；任何代码路径（含授权失效）不得停止 syapp。
+- 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syapp 运行，只带 CAP_NET_BIND_SERVICE
+  （单元的 AmbientCapabilities；wrapper 为文件能力，只允许 syapp 组执行）；防火墙的开机加载与刷新以 syapp-firewall 运行，
+  只带 CAP_NET_ADMIN。sudoers 以 (syapp) 运行 wrapper，wrapper 拒绝以 root 运行。已以 root 运行的 master 由
+  syapp-instance nonroot 经热升级机制无中断切换，不得用 restart。只有安装、卸载与 syapp-instance 等管理命令以 root 执行。
 
 ## 配置
 - 禁止用字符串拼接用户输入生成配置；一律经 internal/render 的校验器 + 模板 + 转义函数。
@@ -30,11 +34,11 @@
 - agent 只主动连接控制台，不得监听任何端口。
 - agent 协议中不得加入「执行命令」「读写任意文件」类指令。仅有两个受限的专用消息：
   - 漂移 diff 上报：只限受管版本目录 /opt/syapp/conf/releases/ 内的文件，单文件大小设上限，私钥文件只报哈希。
-  - UpgradeDataplane：升级包必须带厂商 Ed25519 签名（与 License 签名密钥分开），由 wrapper 以 root 验签后才可使用。
+  - UpgradeDataplane：升级包必须带厂商 Ed25519 签名（与 License 签名密钥分开），由 wrapper 验签后才可使用。
 - 所有外部命令用 exec.Command 切片调用，禁止 sh -c。
 - wrapper 只接受子命令 test|reload|reopen|quit|upgrade-start|upgrade-commit|upgrade-abort（升级三个在 P8 实现）；
   test 只接受 ^r[0-9]{6,12}$，upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$；每个子命令都必须有注入测试；
-  sudoers 每个子命令单独一行（共 7 行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验。
+  sudoers 每个子命令单独一行（共 7 行，以 (syapp) 身份运行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验。
 - 私钥、凭据、License 签名私钥不得出现在代码、日志、前端响应中。
 - 数据库访问只用参数化查询；MVP 阶段集中在 internal/console/store 封装，正式版迁移到 gorm/gen。每个写接口写审计。
 

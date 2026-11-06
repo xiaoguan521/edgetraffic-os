@@ -49,7 +49,10 @@ func schemaOf(t *testing.T, db *gorm.DB) string {
 			if p {
 				continue
 			}
-			is = append(is, fmt.Sprintf("%s(%s) unique=%v", i.Name(), strings.Join(i.Columns(), ","), u))
+			// PostgreSQL 驱动返回的索引列不按 indkey 顺序（同一索引两次查询可能不同），排序后比较列集合
+			cols := append([]string(nil), i.Columns()...)
+			sort.Strings(cols)
+			is = append(is, fmt.Sprintf("%s(%s) unique=%v", i.Name(), strings.Join(cols, ","), u))
 		}
 		sort.Strings(is)
 		fmt.Fprintf(&b, "%s\n  %s\n  idx: %s\n", tbl, strings.Join(cs, "\n  "), strings.Join(is, "; "))

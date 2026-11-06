@@ -3,6 +3,8 @@ package instance
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,12 +13,14 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
+	"github.com/xiaoguan521/edgetraffic-os/internal/wrapper"
 )
 
 type fakeEnv struct {
 	Env
 	cmds   []string
-	failOn string // 执行到包含此子串的命令时失败
+	failOn string   // 执行到包含此子串的命令时失败
+	caps   []string // SetCaps 写入能力的文件
 }
 
 func newFake(t *testing.T) *fakeEnv {
@@ -40,6 +44,10 @@ func newFake(t *testing.T) *fakeEnv {
 			return nil
 		},
 		Listening: func() (map[string]bool, error) { return map[string]bool{}, nil },
+		SetCaps: func(path string, value []byte) error {
+			f.caps = append(f.caps, path)
+			return nil
+		},
 	}
 	return f
 }
@@ -75,7 +83,7 @@ func TestAddCreatesInstance(t *testing.T) {
 	if st, _ := os.Stat(f.path(l.Prefix())); st == nil || st.Mode().Perm() != 0o755 {
 		t.Fatal("prefix dir must be 0755")
 	}
-	for _, d := range []string{l.ReleasesDir(), l.LogDir(), l.CacheDir(), l.AgentState()} {
+	for _, d := range []string{l.ReleasesDir(), l.LogDir(), l.CacheDir(), l.AgentState(), l.RunDir()} {
 		if _, err := os.Stat(f.path(d)); err != nil {
 			t.Errorf("missing dir %s", d)
 		}
@@ -98,7 +106,7 @@ func TestAddCreatesInstance(t *testing.T) {
 		t.Fatalf("sudoers rules = %d:\n%s", len(rules), sb)
 	}
 	for _, r := range rules {
-		if !strings.HasPrefix(r, "syapp-agent-blue ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper --instance blue ") {
+		if !strings.HasPrefix(r, "syapp-agent-blue ALL=(syapp) NOPASSWD: /usr/libexec/syapp/syapp-wrapper --instance blue ") {
 			t.Errorf("rule not pinned to the instance: %q", r)
 		}
 	}
@@ -110,7 +118,7 @@ func TestAddCreatesInstance(t *testing.T) {
 		"useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp-agent-blue",
 		"visudo -cf ",
 		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent bootstrap -instance blue",
-		"/opt/syapp/sbin/syapp -t -q -c /opt/syapp/instances/blue/conf/current/syapp.conf",
+		"runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper --instance blue test r000000",
 		"systemctl enable --now syapp@blue.service",
 		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent enroll -instance blue -server console.example.com:9443 -token tok -ca-fingerprint abc",
 		"systemctl enable --now syapp-agent@blue.service",
@@ -340,7 +348,154 @@ func TestReopenAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"/opt/syapp/sbin/syapp -s reopen", "/opt/syapp/sbin/syapp -c /opt/syapp/instances/blue/conf/current/syapp.conf -s reopen"}
+	// 运行时不使用 root（D5）：以 root 执行时经 runuser 以数据面用户发送信号，`-s` 打开的日志不会变成 root 所有
+	if os.Geteuid() == 0 {
+		for i := range want {
+			want[i] = "runuser -u syapp -- " + want[i]
+		}
+	}
 	if strings.Join(f.cmds, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands = %q", f.cmds)
+	}
+}
+
+// 实例增删后：防火墙 path 单元监视各具名实例的配置目录，并刷新规则（防火墙已安装时）。
+func TestAddRemoveSyncsFirewall(t *testing.T) {
+	f := newFake(t)
+	fw := f.path("/usr/sbin/syapp-firewall")
+	_ = os.MkdirAll(filepath.Dir(fw), 0o755)
+	_ = os.WriteFile(fw, []byte("#!/bin/sh\n"), 0o755)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	green := render.Profile{Instance: "green", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8083}
+	if err := f.Add(AddOptions{Profile: green}); err != nil {
+		t.Fatal(err)
+	}
+	dropIn := f.path("/etc/systemd/system/syapp-firewall-refresh.path.d/instances.conf")
+	b, _ := os.ReadFile(dropIn)
+	for _, want := range []string{"PathChanged=/opt/syapp/instances/blue/conf\n", "PathChanged=/opt/syapp/instances/green/conf\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("drop-in missing %q:\n%s", want, b)
+		}
+	}
+	if !f.ran("systemctl start syapp-firewall-refresh.service") || !f.ran("systemctl try-restart syapp-firewall-refresh.path") {
+		t.Fatalf("firewall not refreshed: %v", f.cmds)
+	}
+	f.cmds = nil
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(dropIn)
+	if strings.Contains(string(b), "/blue/") || !strings.Contains(string(b), "/green/") {
+		t.Fatalf("drop-in after remove:\n%s", b)
+	}
+	if !f.ran("systemctl start syapp-firewall-refresh.service") {
+		t.Fatal("firewall not refreshed after remove")
+	}
+	// 刷新失败只提示，不影响实例操作
+	f.failOn = "start syapp-firewall-refresh.service"
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatalf("firewall failure broke add: %v", err)
+	}
+}
+
+// D5：具名实例的运行时目录、日志与缓存属于数据面用户；nofile 超过单元默认值时写单元附加配置。
+func TestAddNonRootRuntime(t *testing.T) {
+	f := newFake(t)
+	p := blue
+	p.NoFile = 200000
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"chown syapp:syapp /var/log/syapp-blue", "chown syapp:syapp /var/cache/syapp-blue", "chown syapp:syapp /run/syapp-blue",
+		"runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper --instance blue test r000000"} {
+		if !f.ran(want) {
+			t.Errorf("missing %q in %v", want, f.cmds)
+		}
+	}
+	b, err := os.ReadFile(f.path("/etc/systemd/system/syapp@blue.service.d/nofile.conf"))
+	if err != nil || !strings.Contains(string(b), "LimitNOFILE=200000") {
+		t.Fatalf("nofile drop-in: %q %v", b, err)
+	}
+	if err := f.Remove("blue", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path("/etc/systemd/system/syapp@blue.service.d")); err == nil {
+		t.Fatal("drop-in left after remove")
+	}
+}
+
+// D5：nonroot 交出运行时目录、重写具名实例 sudoers、切换仍以 root 运行的 master、重启 agent；可重复执行。
+func TestNonroot(t *testing.T) {
+	f := newFake(t)
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	def := layout.System("")
+	_ = os.MkdirAll(f.path(def.ConfRoot()), 0o755) // 默认实例随安装包创建
+	for _, l := range []layout.Layout{def, layout.System("blue")} {
+		_ = os.MkdirAll(f.path(l.RunDir()), 0o755)
+		_ = os.WriteFile(f.path(l.PidFile()), []byte("100\n"), 0o644)
+	}
+	w := f.path("/usr/libexec/syapp/syapp-wrapper")
+	_ = os.MkdirAll(filepath.Dir(w), 0o755)
+	_ = os.WriteFile(w, []byte("x"), 0o755)
+	// 升级前生成的 sudoers：以 root 运行 wrapper
+	_ = os.WriteFile(f.path(layout.System("blue").SudoersFile()), []byte("syapp-agent-blue ALL=(root) NOPASSWD: x\n"), 0o440)
+	var handed []string
+	f.Handover = func(name string) error {
+		handed = append(handed, name)
+		if name == "blue" {
+			return wrapper.ErrNotRoot
+		}
+		return nil
+	}
+	f.cmds = nil
+	if err := f.Nonroot(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(handed) != "[ blue]" {
+		t.Fatalf("handover calls %q", handed)
+	}
+	for _, want := range []string{"chown -R syapp:syapp /opt/syapp/versions", "chown syapp:syapp /opt/syapp/sbin", "chown syapp:syapp /opt/syapp/modules",
+		"chown -R syapp:syapp /run/syapp", "chown -R syapp:syapp /var/log/syapp", "chown -R syapp:syapp /var/cache/syapp-blue",
+		"systemctl try-restart syapp-agent.service syapp-agent@blue.service"} {
+		if !f.ran(want) {
+			t.Errorf("missing %q in %v", want, f.cmds)
+		}
+	}
+	// 版本库在切换之后再交一次（切换以 root 执行，会留下 root 所有的升级锁与首次收入的原二进制）
+	last := -1
+	for i, c := range f.cmds {
+		if c == "chown -R syapp:syapp /opt/syapp/versions" {
+			last = i
+		}
+	}
+	if last < len(f.cmds)-2 {
+		t.Fatalf("versions not re-owned after the handover: %v", f.cmds)
+	}
+	for _, want := range []string{} {
+		if !f.ran(want) {
+			t.Errorf("missing %q in %v", want, f.cmds)
+		}
+	}
+	// wrapper 带 CAP_NET_BIND_SERVICE 文件能力，只允许数据面组执行
+	if len(f.caps) == 0 || f.caps[len(f.caps)-1] != w || !f.ran("chmod 0750 /usr/libexec/syapp/syapp-wrapper") || !f.ran("chown root:syapp /usr/libexec/syapp/syapp-wrapper") {
+		t.Fatalf("wrapper capability not set: caps=%v cmds=%v", f.caps, f.cmds)
+	}
+	b, _ := os.ReadFile(f.path(layout.System("blue").SudoersFile()))
+	if strings.Contains(string(b), "(root)") || !strings.Contains(string(b), "ALL=(syapp) NOPASSWD:") {
+		t.Fatalf("sudoers not rewritten:\n%s", b)
+	}
+	// 切换失败：返回错误（数据面一直在服务）
+	f.Handover = func(string) error { return errors.New("boom") }
+	if err := f.Nonroot(); err == nil || !strings.Contains(err.Error(), "仍以 root 运行") {
+		t.Fatalf("failed handover: %v", err)
+	}
+	// user 模式不需要
+	u, _ := newUserFake(t, false)
+	if err := u.Nonroot(); err == nil {
+		t.Fatal("nonroot accepted in user mode")
 	}
 }

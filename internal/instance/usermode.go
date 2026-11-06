@@ -240,9 +240,10 @@ func (e Env) startAgent(l layout.Layout) error {
 	return nil
 }
 
-// running 读取 pid 文件，返回仍在运行、且可执行文件就是 exe 的进程号（0 表示没有）。
+// running 读取 pid 文件，返回仍在运行、且可执行文件属于我们的进程号（0 表示没有）。
 // 核对可执行文件：重启后 pid 可能被本用户的其他进程复用，不能把它当成我们的进程，更不能给它发信号。
-func (e Env) running(pidFile, exe string) int {
+// ours 判断可执行文件：热升级后数据面 master 运行的是 versions/<版本>/ 下的二进制，agent 自升级后运行的是状态目录中的版本。
+func (e Env) running(pidFile string, ours func(exe string) bool) int {
 	b, err := os.ReadFile(e.path(pidFile))
 	if err != nil {
 		return 0
@@ -252,14 +253,38 @@ func (e Env) running(pidFile, exe string) int {
 		return 0
 	}
 	got, err := os.Readlink(e.path("/proc/" + strconv.Itoa(pid) + "/exe"))
-	if err != nil || strings.TrimSuffix(got, " (deleted)") != exe {
+	if err != nil || !ours(strings.TrimSuffix(got, " (deleted)")) {
 		return 0
 	}
 	return pid
 }
 
-// alive 判断 pid 文件中的进程是否仍是 exe 在运行。
-func (e Env) alive(pidFile, exe string) bool { return e.running(pidFile, exe) != 0 }
+// alive 判断 pid 文件中的进程是否仍在运行我们的程序。
+func (e Env) alive(pidFile string, ours func(string) bool) bool { return e.running(pidFile, ours) != 0 }
+
+// dataplaneExe：安装的二进制，或版本库中任一版本的二进制（热升级后）。
+func dataplaneExe(l layout.Layout) func(string) bool {
+	return func(exe string) bool {
+		if exe == l.Bin() {
+			return true
+		}
+		rel, err := filepath.Rel(l.Versions(), exe)
+		parts := strings.Split(rel, "/")
+		return err == nil && len(parts) == 3 && parts[0] != ".." && parts[1] == "sbin" && parts[2] == brand.ID()
+	}
+}
+
+// agentExe：安装的 agent，或该实例状态目录中自升级安装的版本（agent/<版本>/<品牌>-agent）。
+func agentExe(l layout.Layout) func(string) bool {
+	return func(exe string) bool {
+		if exe == l.AgentBin() {
+			return true
+		}
+		rel, err := filepath.Rel(filepath.Join(l.AgentState(), "agent"), exe)
+		parts := strings.Split(rel, "/")
+		return err == nil && len(parts) == 2 && parts[0] != ".." && parts[1] == brand.Agent()
+	}
+}
 
 // Ensure 启动 user 模式下未在运行的数据面与（已注册的）agent；正在运行的进程不受影响。供 cron 每分钟调用。
 func (e Env) Ensure() error {
@@ -275,7 +300,7 @@ func (e Env) Ensure() error {
 	for _, in := range list {
 		l := e.lay(in.Name)
 		dpUnit, agUnit := userUnits(l)
-		if !e.alive(l.PidFile(), l.Bin()) {
+		if !e.alive(l.PidFile(), dataplaneExe(l)) {
 			if systemd {
 				errs = append(errs, e.Run("systemctl", "--user", "start", dpUnit))
 			} else {
@@ -288,7 +313,7 @@ func (e Env) Ensure() error {
 		}
 		if systemd {
 			errs = append(errs, e.Run("systemctl", "--user", "start", agUnit)) // 已在运行时为空操作
-		} else if !e.alive(e.agentPidFile(l), l.AgentBin()) {
+		} else if !e.alive(e.agentPidFile(l), agentExe(l)) {
 			errs = append(errs, e.startAgent(l))
 			e.say("%s：已启动 agent", label(in.Name))
 		}
@@ -323,7 +348,7 @@ func (e Env) removeUser(name string, purge, yes bool) error {
 	if hasUnit(agUnit) {
 		_ = e.Run("systemctl", "--user", "disable", "--now", agUnit)
 	}
-	if pid := e.running(e.agentPidFile(l), l.AgentBin()); pid > 0 {
+	if pid := e.running(e.agentPidFile(l), agentExe(l)); pid > 0 {
 		if p, err := os.FindProcess(pid); err == nil {
 			_ = p.Signal(syscall.SIGTERM)
 		}
@@ -331,7 +356,7 @@ func (e Env) removeUser(name string, purge, yes bool) error {
 	if hasUnit(dpUnit) {
 		_ = e.Run("systemctl", "--user", "disable", "--now", dpUnit)
 	}
-	if e.alive(l.PidFile(), l.Bin()) {
+	if e.alive(l.PidFile(), dataplaneExe(l)) {
 		_ = e.Run(l.Bin(), "-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "quit")
 	}
 	for _, u := range []string{dpUnit, agUnit} {

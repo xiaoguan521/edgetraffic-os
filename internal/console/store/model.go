@@ -57,6 +57,7 @@ type Node struct {
 	AgentVersion    string     `json:"agent_version"`
 	Arch            string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
 	SyappVersion    string     `json:"syapp_version"`
+	RunningVersion  string     `gorm:"size:32" json:"running_version"` // 本实例 worker 实际运行的版本（同机实例共用二进制时可能与 syapp_version 不同）
 	SyappSHA256     string     `json:"syapp_sha256"`
 	TLSLib          string     `gorm:"size:16" json:"tls_lib"`   // syapp -V 中的 TLS 库：openssl | tongsuo（国密变体）
 	LuaAddon        string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syapp-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）

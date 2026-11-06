@@ -62,10 +62,11 @@ func TestCustomBrand(t *testing.T) {
 		t.Fatal("default brand left in generated patch")
 	}
 	for _, want := range []string{
-		`"Usage: syedge [-?hvVtTq]`,            // 命令名用品牌标识
-		`#define NGINX_VER          "SyEdge/"`, // 版本串用显示名
-		`#define NGINX_VAR          "SYEDGE"`,  // 环境变量用大写标识
-		`ngx_cpymem(errstr, "SyEdge: ", 8)`,    // 长度随名字计算
+		`"Usage: syedge [-?hvVtTq]`,              // 命令名用品牌标识
+		`#define NGINX_VER          "SyEdge/"`,   // 版本串用显示名
+		`#define NGINX_VAR          "SYEDGE"`,    // 环境变量用大写标识
+		`ngx_cpymem(errstr, "SyEdge: ", 8)`,      // 长度随名字计算
+		`msg -= (8 + err_levels[level].len + 3)`, // 控制台输出的前缀长度同样随名字计算（否则吞掉消息首字符）
 		`"Server: SyEdge"`,
 		`<center>SyEdge</center>`,
 		`ngx_string("syedge_version")`, // 配置变量名用小写标识
@@ -82,6 +83,10 @@ func TestCustomBrand(t *testing.T) {
 	}
 	if n := len(strings.Split(m[2], ",")); m[1] != itoa(n) {
 		t.Fatalf("array size %s but %d initialisers", m[1], n)
+	}
+	// HTTP/2 的 server 头必须是定制名的 HPACK 编码（文本扫描看不到哈夫曼编码，曾经漏掉过）
+	if m[2] != hexList(HPACK("SyEdge")) {
+		t.Fatalf("HTTP/2 server header bytes %q, want HPACK(\"SyEdge\") %q", m[2], hexList(HPACK("SyEdge")))
 	}
 	// 每个 hunk 的行数不变（只替换行内容），patch 仍可应用
 	if strings.Count(s, "\n@@ ") != strings.Count(string(readTmpl(t)), "\n@@ ") {

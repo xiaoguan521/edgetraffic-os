@@ -38,6 +38,11 @@ grep -q "Enable_ntls" /opt/syapp/conf/releases/r900001/conf.d/site-shop.conf
 echo "== 启动"
 sudo mkdir -p /srv/syapp
 sudo ln -sfn releases/r900001 /opt/syapp/conf/current
+# 运行时不使用 root（设计 0001 D5）：单元以 syapp 运行；运行时目录归 syapp，版本目录与私钥按 agent 的方式组可读（0640，组 syapp）
+id syapp >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin syapp
+sudo chown -R syapp:syapp /run/syapp /var/log/syapp /var/cache/syapp
+sudo chgrp -R syapp /opt/syapp/conf && sudo chmod -R g+rX /opt/syapp/conf
+sudo find /opt/syapp/conf -name '*.key' -exec chmod 0640 {} +
 sudo cp dataplane/packaging/systemd/syapp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl start syapp || { sudo journalctl -u syapp --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }

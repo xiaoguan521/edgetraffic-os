@@ -171,6 +171,21 @@ func TestEnsure(t *testing.T) {
 	if len(f.cmds) != 0 || len(*sp) != 0 {
 		t.Fatalf("ensure touched running processes: %v %v", f.cmds, *sp)
 	}
+	// 热升级后 master 运行 versions/<版本>/ 下的二进制，agent 自升级后运行状态目录中的版本：仍是我们的进程
+	fakeProc("4242", uroot+"/versions/9.1.0/sbin/syapp")
+	fakeProc("777", l.AgentState()+"/agent/0.3.1/syapp-agent")
+	f.cmds, *sp = nil, nil
+	if err := f.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cmds) != 0 || len(*sp) != 0 {
+		t.Fatalf("upgraded processes treated as stopped: %v %v", f.cmds, *sp)
+	}
+	// 版本库之外、名字相同的程序不算
+	fakeProc("4242", uroot+"/versions/9.1.0/other/syapp")
+	if f.alive(l.PidFile(), dataplaneExe(l)) {
+		t.Fatal("binary outside the versions layout accepted")
+	}
 	// 重启后 pid 被本用户的其他程序复用：不能当成数据面在运行
 	fakeProc("4242", "/usr/bin/vim")
 	f.cmds, *sp = nil, nil
@@ -197,8 +212,17 @@ func TestUserRemove(t *testing.T) {
 	}
 	b, _ := layout.User(uroot, "blue")
 	_ = os.WriteFile(f.path(b.AccessLog()), []byte("x\n"), 0o644)
+	// blue 已热升级：master 运行版本库中的二进制，删除时仍须让它优雅退出
+	_ = os.MkdirAll(f.path(b.RunDir()), 0o755)
+	_ = os.WriteFile(f.path(b.PidFile()), []byte("5150\n"), 0o644)
+	_ = os.MkdirAll(f.path("/proc/5150"), 0o755)
+	_ = os.Symlink(uroot+"/versions/9.1.0/sbin/syapp", f.path("/proc/5150/exe"))
+	f.cmds = nil
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
+	}
+	if !f.ran(uroot + "/sbin/syapp -e " + b.ErrorLog() + " -c " + b.CurrentConf() + " -s quit") {
+		t.Fatalf("upgraded master not asked to quit: %v", f.cmds)
 	}
 	if _, err := os.Stat(f.path(b.Prefix())); err == nil {
 		t.Fatal("prefix not removed")

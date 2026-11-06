@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -67,6 +68,18 @@ func TestEnrollCommand(t *testing.T) {
 	inst := enrollCommand(render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}, "c:9443", "tok", "fp")
 	if inst != "sudo syapp-instance add blue --http 18080 --https 18443 --status 8082 --console c:9443 --token tok --ca-fingerprint fp" {
 		t.Fatalf("instance = %q", inst)
+	}
+	// user 模式：不用 sudo，命令带安装根目录
+	ud := enrollCommand(render.Profile{Mode: "user", Root: "/home/ops/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8081}, "c:9443", "tok", "fp")
+	if ud != "/home/ops/edge/bin/syapp-agent enroll -root /home/ops/edge -server c:9443 -token tok -ca-fingerprint fp && /home/ops/edge/bin/syapp-instance --root /home/ops/edge ensure" {
+		t.Fatalf("user default = %q", ud)
+	}
+	ui := enrollCommand(render.Profile{Instance: "blue", Mode: "user", Root: "/home/ops/edge", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 18082}, "c:9443", "tok", "fp")
+	if ui != "/home/ops/edge/bin/syapp-instance --root /home/ops/edge add blue --http 18080 --https 18443 --status 18082 --console c:9443 --token tok --ca-fingerprint fp" {
+		t.Fatalf("user instance = %q", ui)
+	}
+	if strings.Contains(ud+ui, "sudo") {
+		t.Fatal("user mode command uses sudo")
 	}
 }
 
