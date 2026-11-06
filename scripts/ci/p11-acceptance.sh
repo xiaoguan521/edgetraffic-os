@@ -196,14 +196,19 @@ system_phase() {
   echo "== MI-02 端口冲突"
   out=$(syapp-instance add red --http 18080 --https 38443 --status 8084 2>&1) && bad "与 blue 端口冲突未被拒绝" \
     || { [[ "$out" == *18080* ]] && ok "与 blue 的端口冲突被拒绝并指出端口" || bad "冲突信息不明：$out"; }
-  python3 -m http.server -b 0.0.0.0 38080 >/dev/null 2>&1 & local hp=$!
-  # 等占用端口的程序真正开始监听再测（CI 机器负载高时 python 启动可能超过 1 秒）
-  for _ in $(seq 1 50); do (exec 3<>/dev/tcp/127.0.0.1/38080) 2>/dev/null && break; sleep 0.2; done
-  if out=$(syapp-instance add red --http 38080 --https 38443 --status 8084 2>&1); then
-    bad "被其他程序占用的端口未被拒绝"
-    syapp-instance remove red >/dev/null 2>&1
+  # 占用端口的程序：-I 不从当前目录导入模块；确认它出现在 /proc/net/tcp 的监听表中（add 正是读这张表）再测
+  python3 -I -c 'import socket,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 38080)); s.listen(); time.sleep(120)' \
+    >/tmp/occupier.log 2>&1 & local hp=$!
+  local lst=0
+  for _ in $(seq 1 50); do grep -qiE "^ *[0-9]+: [0-9A-F]+:$(printf '%04X' 38080) [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp && { lst=1; break; }; sleep 0.2; done
+  if [[ $lst == 0 ]]; then
+    bad "占用 38080 的测试程序没有开始监听：$(tr '\n' ' ' </tmp/occupier.log)"
+  elif out=$(syapp-instance add red --http 38080 --https 38443 --status 8084 2>&1); then
+    bad "被其他程序占用的端口未被拒绝：$(grep -iE ":$(printf '%04X' 38080) " /proc/net/tcp | head -2 | tr '\n' ' ')"
+    syapp-instance remove red --yes >/dev/null 2>&1
   else
-    ok "被其他程序占用的端口被拒绝"
+    [[ "$out" == *38080* ]] && ok "被其他程序占用的端口被拒绝并指出端口" || bad "占用端口的拒绝信息不明：$out"
   fi
   kill $hp 2>/dev/null
   out=$(syapp-instance check 2>&1) && ok "syapp-instance check 未发现问题" || bad "check：$out"

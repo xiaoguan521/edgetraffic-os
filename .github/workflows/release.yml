@@ -191,7 +191,7 @@ jobs:
           # 节点包其余内容（syapp、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
           ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
           CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syapp-console
-          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/edgetraffic-os-node-*.tar.gz
+          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz   # 不能用 node-*：会同时匹配 node-user
           CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syapp-agent ./cmd/syapp-agent
           tar -C /tmp/smoke-pkg -czf /tmp/smoke-node.tar.gz .
           LIC_TOOL=/tmp/lic LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral \
