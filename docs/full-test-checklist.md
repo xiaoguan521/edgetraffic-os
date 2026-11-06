@@ -584,7 +584,7 @@
 | 告警 SSRF 与重定向防护 (`ALERT-04`) | `TestRejectsPrivateAlertTargets`、`TestBlockedAlertAddr`、`TestAlertRedirectLimit`、`TestSMTPTargetGuard` 通过：拦截 loopback、RFC1918、RFC6598、链路本地、云元数据（169.254.169.254 / 100.100.100.200 / fd00:ec2::254）、NAT64/6to4/Teredo 及重定向链 |
 | 备份全模型覆盖与校验 (`BKP-07`) | `backup.tables()` 补齐全部 29 个持久化模型（含 `static_bundles` 等 14 张新增表），`TestTablesCoverAllStoreModels` 自动守卫 `store.Models()`，`TestBackupRestoreRoundTrip` 验证静态资源包等数据在恢复后完整保留（恢复后站点的预览与发布暂无自动化用例，需按 BKP-07 手工执行）；新增 `verify-backup`、`restore -dry-run`、`backup-prune`；跨 PostgreSQL 17 实例迁移待在 PG 环境复跑确认 |
 | 过期授权应急通道 (`CERT-05`、`DRF-03`、`LIC-07`) | Agent 持久化受控版本基线与文件清单（`.approved/`），`TestExpiredLicenseEmergencyOperations` 与 `TestRestoreClearsDriftStateImmediately` 验证过期授权下回滚、手动/国密证书续期与漂移恢复（含 `MANIFEST.json` 被篡改场景）均被允许且立即清除漂移状态，普通配置变更仍被拒绝 |
-| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]`。**同机多实例未达到发布要求，v0.2 不提供**：`--instance` 通配 sudoers 与 `syapp@` / `syapp-agent@` 单元已从安装包移除（`TestSudoersContract` 守卫），按 `docs/design/0001-deploy-layout.md` 在 v0.3 重做 |
+| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]`。同机多实例当时未达到发布要求、v0.2 未提供；已在 P11 按 `docs/design/0001-deploy-layout.md` 重做并随安装包提供（`syapp@` / `syapp-agent@` 单元、按实例生成的 sudoers，CI 验收 `scripts/ci/p11-acceptance.sh`） |
 
 ### 2026-11-02 本聊天实际执行记录
 

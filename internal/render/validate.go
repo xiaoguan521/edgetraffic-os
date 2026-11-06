@@ -2,8 +2,6 @@
 //
 // 规则：任何用户输入都必须先经本文件的校验器，再经模板输出；
 // 禁止用字符串拼接把用户输入写进配置。
-//
-// P1 待实现：Site/Route/UpstreamGroup 模型、模板渲染、MANIFEST、控制台侧 syapp -t 预检。
 package render
 
 import (
