@@ -11,7 +11,7 @@
 #   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}，linux/amd64 + linux/arm64
 #
 # syedge 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（manylinux2014 容器，glibc 2.17，OpenSSL / PCRE2 / zlib 静态链接），不用 QEMU；
-# Go 程序 CGO_ENABLED=0 交叉编译。产物直接上传到 Release（不占用 Actions artifact 存储）。
+# Go 程序 CGO_ENABLED=0 交叉编译；构建任务先上传 Actions artifact，由 x86_64 发布任务统一上传到 Release 并生成 SHA256SUMS。
 # 发布构建绝不注入 CI 临时授权公钥；冒烟测试用的控制台单独构建，不进入任何发布物。
 name: release
 
