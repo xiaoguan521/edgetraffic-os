@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -824,17 +823,5 @@ func (s *Service) statDiskUsage() (usedPct, inodePct float64, err error) {
 	if s.DiskUsage != nil {
 		return s.DiskUsage(s.DataDir)
 	}
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(s.DataDir, &st); err != nil {
-		return 0, 0, err
-	}
-	if st.Blocks > 0 {
-		used := st.Blocks - st.Bavail
-		usedPct = float64(used) * 100 / float64(st.Blocks)
-	}
-	if st.Files > 0 {
-		usedInodes := st.Files - st.Ffree
-		inodePct = float64(usedInodes) * 100 / float64(st.Files)
-	}
-	return usedPct, inodePct, nil
+	return diskUsage(s.DataDir)
 }
