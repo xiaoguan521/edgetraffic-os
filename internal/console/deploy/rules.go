@@ -113,7 +113,7 @@ func (d *Service) IPSets(groupID uint) ([]render.IPSet, error) {
 	return out, nil
 }
 
-// CheckLua：含 JWT 规则的版本只能下发到装有 syapp-lua 附加包、且附加包与基础变体匹配的节点。
+// CheckLua：含 JWT 规则的版本只能下发到装有 syedge-lua 附加包、且附加包与基础变体匹配的节点。
 func (d *Service) CheckLua(groupID uint) error {
 	if d.Feature != nil && !d.Feature("lua") {
 		return ErrLuaNotLicensed

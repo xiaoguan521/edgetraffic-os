@@ -11,7 +11,7 @@ func TestRenderDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"table inet syapp_fw",
+		"table inet syedge_fw",
 		"policy drop;",
 		"ct state established,related accept",
 		"ct state invalid drop",
@@ -30,7 +30,7 @@ func TestRenderDefault(t *testing.T) {
 		t.Fatal("must only filter input")
 	}
 	// 自己的表：先建再删，重复执行不叠加规则，也不清空别人的表
-	if !strings.HasPrefix(out, "#") || !strings.Contains(out, "add table inet syapp_fw\ndelete table inet syapp_fw\n") || strings.Contains(out, "flush ruleset") {
+	if !strings.HasPrefix(out, "#") || !strings.Contains(out, "add table inet syedge_fw\ndelete table inet syedge_fw\n") || strings.Contains(out, "flush ruleset") {
 		t.Fatalf("not idempotent / touches other tables:\n%s", out)
 	}
 }

@@ -1,6 +1,6 @@
 package pkgsig
 
-// builtinKeys 是正式的升级包签名公钥（离线签名机上 syapp-license-signer keygen -kid etos-pkg-<年份> 生成）。
+// builtinKeys 是正式的升级包签名公钥（离线签名机上 syedge-license-signer keygen -kid etos-pkg-<年份> 生成）。
 // 只放公钥（2026-11-06 密钥仪式）。
 // 仪式同时生成主密钥与备用密钥（etos-pkg-<年份>-b，分开保管、平时不用），两把公钥都内置：
 // 主密钥丢失或泄露时改用备用密钥签名，已部署的节点无需先升级就能验证（docs/license-ops.md 第 3.3 节）。

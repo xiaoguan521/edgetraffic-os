@@ -7,7 +7,13 @@ func init() {
 	if id == "" {
 		id = Default
 	}
+	if proc == "" {
+		proc = DefaultProc
+	}
 	if product == "" {
-		product = "EdgeTraffic OS"
+		product = "SyEdge"
+	}
+	if fullName == "" {
+		fullName = "神玥企业级动态网关与负载均衡引擎"
 	}
 }

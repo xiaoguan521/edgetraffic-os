@@ -17,7 +17,7 @@ func TestEnrollRejectsOtherBrand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.s.GW.Enroll(context.Background(), &agentv1.EnrollRequest{EnrollToken: tok, Hostname: "edge-x", Brand: "syedge"})
+	_, err = f.s.GW.Enroll(context.Background(), &agentv1.EnrollRequest{EnrollToken: tok, Hostname: "edge-x", Brand: "sytest"})
 	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "BRAND_MISMATCH") {
 		t.Fatalf("other brand: %v", err)
 	}

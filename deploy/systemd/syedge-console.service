@@ -1,0 +1,16 @@
+[Unit]
+Description=SyEdge console (syedge-console)
+After=network-online.target postgresql.service
+
+[Service]
+User=syedge-console
+EnvironmentFile=/etc/syedge-console/console.env
+ExecStart=/usr/bin/syedge-console
+Restart=always
+StateDirectory=syedge-console
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

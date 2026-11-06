@@ -56,7 +56,7 @@ func LoadOrCreate(dir string) (*CA, error) {
 	}
 	tpl := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "EdgeTraffic OS Internal CA", Organization: []string{"EdgeTraffic OS"}},
+		Subject:               pkix.Name{CommonName: brand.Product() + " Internal CA", Organization: []string{brand.Product()}},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		IsCA:                  true,

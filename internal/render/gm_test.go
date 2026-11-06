@@ -47,10 +47,10 @@ func TestGMRender(t *testing.T) {
 	site := string(b.Files["conf.d/site-shop.conf"])
 	for _, want := range []string{
 		"ssl_conf_command  Enable_ntls  on;",
-		"ssl_conf_command  SignCertificate  /opt/syapp/conf/releases/r000002/certs/site-shop.sm2-sign.crt;",
-		"ssl_conf_command  SignPrivateKey   /opt/syapp/conf/releases/r000002/certs/site-shop.sm2-sign.key;",
-		"ssl_conf_command  EncCertificate   /opt/syapp/conf/releases/r000002/certs/site-shop.sm2-enc.crt;",
-		"ssl_conf_command  EncPrivateKey    /opt/syapp/conf/releases/r000002/certs/site-shop.sm2-enc.key;",
+		"ssl_conf_command  SignCertificate  /opt/syedge/conf/releases/r000002/certs/site-shop.sm2-sign.crt;",
+		"ssl_conf_command  SignPrivateKey   /opt/syedge/conf/releases/r000002/certs/site-shop.sm2-sign.key;",
+		"ssl_conf_command  EncCertificate   /opt/syedge/conf/releases/r000002/certs/site-shop.sm2-enc.crt;",
+		"ssl_conf_command  EncPrivateKey    /opt/syedge/conf/releases/r000002/certs/site-shop.sm2-enc.key;",
 		"ECC-SM2-SM4-GCM-SM3",
 		"ssl_certificate      certs/site-shop.crt;", // 标准证书继续服务不支持国密的客户端
 	} {
@@ -59,7 +59,7 @@ func TestGMRender(t *testing.T) {
 		}
 	}
 	// 默认 443 server 持有握手最初的 SSL 对象：国密握手在 SNI 切换前识别，必须同样开启
-	if !strings.Contains(string(b.Files["syapp.conf"]), "ssl_conf_command  Enable_ntls  on;") {
+	if !strings.Contains(string(b.Files["syedge.conf"]), "ssl_conf_command  Enable_ntls  on;") {
 		t.Error("default 443 server lacks Enable_ntls")
 	}
 	if strings.Contains(string(b.Files["conf.d/site-blog.conf"]), "ssl_conf_command") {
@@ -121,19 +121,19 @@ func TestGMCertOnlyChange(t *testing.T) {
 	}
 }
 
-// 国密变体（铜锁构建）的 syapp -t：SYAPP_GM_BIN 指向国密版 syapp 时执行（CI 的 dataplane-gm 任务）。
-// ssl_conf_command 的文件路径是绝对路径，因此版本必须写到 /opt/syapp/conf/releases/<版本> 下。
-func TestRenderGMSyappSyntax(t *testing.T) {
-	bin := os.Getenv("SYAPP_GM_BIN")
+// 国密变体（铜锁构建）的 syedge -t：SYEDGE_GM_BIN 指向国密版 syedge 时执行（CI 的 dataplane-gm 任务）。
+// ssl_conf_command 的文件路径是绝对路径，因此版本必须写到 /opt/syedge/conf/releases/<版本> 下。
+func TestRenderGMSyedgeSyntax(t *testing.T) {
+	bin := os.Getenv("SYEDGE_GM_BIN")
 	if bin == "" {
-		t.Skip("SYAPP_GM_BIN not set")
+		t.Skip("SYEDGE_GM_BIN not set")
 	}
 	if os.Geteuid() != 0 {
 		t.Skip("needs root")
 	}
 	in := gmInput(t)
 	in.Revision = "r900001"
-	if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
+	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
 		in.MimeTypes = mt
 	}
 	// 两个国密站点共用 443：SNI 切换后各自的双证书都要加载
@@ -147,13 +147,13 @@ func TestRenderGMSyappSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join("/opt/syapp/conf/releases", in.Revision)
+	dir := filepath.Join("/opt/syedge/conf/releases", in.Revision)
 	_ = os.RemoveAll(dir)
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput(); err != nil {
-		t.Fatalf("syapp -t failed: %v\n%s", err, out)
+	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 	if os.Getenv("GM_KEEP") == "" {
 		_ = os.RemoveAll(dir)

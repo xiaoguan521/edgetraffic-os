@@ -38,13 +38,13 @@ echo "== 控制台就绪"
 for _ in $(seq 1 90); do curl -sf --noproxy '*' "$B/setup/status" >/dev/null && break; sleep 2; done
 st=$(curl -s --noproxy '*' "$B/setup/status")
 expect "控制台 API 可访问" "$st" "initialized"
-expect "前端页面可访问" "$(curl -s --noproxy '*' "http://127.0.0.1:${CONSOLE_PORT:-8443}/login")" "EdgeTraffic OS"
+expect "前端页面可访问" "$(curl -s --noproxy '*' "http://127.0.0.1:${CONSOLE_PORT:-8443}/login")" "SyEdge"
 
 echo "== 初始化与授权"
 "${C[@]}" -X POST "$B/setup" -d '{"username":"admin","password":"Demo@2026!"}' >/dev/null
 "${C[@]}" -X POST "$B/auth/login" -d '{"username":"admin","password":"Demo@2026!"}' >/dev/null
 expect "管理员登录" "$("${C[@]}" "$B/auth/me")" '"admin"'
-INST=$($DC exec -T console sh -c 'cat /var/lib/syapp-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
+INST=$($DC exec -T console sh -c 'cat /var/lib/syedge-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
 issue() { # $@ = extra args; prints license text
   if [[ -n "${LIC_TOOL:-}" ]]; then
     "$LIC_TOOL" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only \
@@ -69,8 +69,8 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 expect "两台节点上线" "$online" "2"
-expect "节点进程名为 syapp" "$($DC exec -T node1 ps -eo args)" "syapp: master process"
-if $DC exec -T node1 sh -c 'ps -eo args; syapp -v 2>&1; syapp -h 2>&1' | grep -qi 'ngi''nx'; then bad "节点进程与命令行中出现上游名"; else ok "节点进程与命令行中无上游名"; fi
+expect "节点进程名为 syedge" "$($DC exec -T node1 ps -eo args)" "SyEdge: master process"
+if $DC exec -T node1 sh -c 'ps -eo args; syedge -v 2>&1; syedge -h 2>&1' | grep -qi 'ngi''nx'; then bad "节点进程与命令行中出现上游名"; else ok "节点进程与命令行中无上游名"; fi
 
 echo "== 建上游与站点并发布"
 "${C[@]}" -X POST "$B/upstreams" -d '{"group_id":1,"spec":{"name":"order-api","algorithm":"least_conn","servers":[{"addr":"172.30.0.31:9001"},{"addr":"172.30.0.32:9001"}]}}' >/dev/null
@@ -84,10 +84,10 @@ expect "反向代理到后端" "$("${H[@]}" "http://127.0.0.1:$P1/api/orders")" 
 expect "拒绝访问路由" "$("${H[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$P2/admin/")" "403"
 expect "发布后无待发布变更" "$("${C[@]}" "$B/node-groups/1/preview")" '"changed":false'
 expect "无变更时文件列表为空数组" "$("${C[@]}" "$B/node-groups/1/preview")" '"files":[]'
-expect "响应头 Server 为 syapp" "$("${H[@]}" -I "http://127.0.0.1:$P1/")" "Server: syapp"
+expect "响应头 Server 为 SyEdge" "$("${H[@]}" -I "http://127.0.0.1:$P1/")" "Server: SyEdge"
 
 echo "== 漂移检测：有人登录节点手工改了配置"
-$DC exec -T node1 sh -c 'echo "# manual edit" >> /opt/syapp/conf/current/syapp.conf'
+$DC exec -T node1 sh -c 'echo "# manual edit" >> /opt/syedge/conf/current/syedge.conf'
 drift=""
 for _ in $(seq 1 40); do
   drift=$("${C[@]}" "$B/nodes" | j "','.join(n['name']+'='+str(n['drifted']) for n in sorted(d, key=lambda n: n['name']))")
@@ -106,8 +106,8 @@ for _ in $(seq 1 25); do
   sleep 2
 done
 expect "恢复后漂移标记消除" "$drift" "edge-sg-01=False"
-if $DC exec -T node1 grep -q "manual edit" /opt/syapp/conf/current/syapp.conf; then bad "恢复后仍是手改的配置"; else ok "恢复后配置为控制台版本"; fi
-expect "手工改动已备份" "$($DC exec -T node1 sh -c 'ls -a /opt/syapp/conf/releases')" ".drift-r000001-"
+if $DC exec -T node1 grep -q "manual edit" /opt/syedge/conf/current/syedge.conf; then bad "恢复后仍是手改的配置"; else ok "恢复后配置为控制台版本"; fi
+expect "手工改动已备份" "$($DC exec -T node1 sh -c 'ls -a /opt/syedge/conf/releases')" ".drift-r000001-"
 expect "恢复不改变组版本" "$("${C[@]}" "$B/node-groups" | j "d[0]['current_revision_id']")" "r000001"
 expect "恢复后流量正常" "$("${H[@]}" "http://127.0.0.1:$P1/")" "演示商城 v1"
 expect "无漂移时拒绝恢复" "$("${C[@]}" -X POST "$B/nodes/$n1/restore")" "NOT_DRIFTED"
@@ -168,7 +168,7 @@ ACME=0
 if $DC ps --status running --services 2>/dev/null | grep -qx pebble; then
   ACME=1
   echo "== ACME 自动申请证书（Pebble 测试 CA）"
-  $DC cp pebble:/test/certs/pebble.minica.pem "$CT/pebble.pem" >/dev/null && $DC cp "$CT/pebble.pem" console:/var/lib/syapp-console/acme-ca.pem >/dev/null
+  $DC cp pebble:/test/certs/pebble.minica.pem "$CT/pebble.pem" >/dev/null && $DC cp "$CT/pebble.pem" console:/var/lib/syedge-console/acme-ca.pem >/dev/null
   "${C[@]}" -X PUT "$B/acme" -d '{"directory":"https://pebble:14000/dir","email":"ops@demo.local"}' >/dev/null
   wait_order() { # $1 = order id -> prints the order json
     local st=""
@@ -185,7 +185,7 @@ if $DC ps --status running --services 2>/dev/null | grep -qx pebble; then
   expect "ACME 签发成功" "$o" '"status": "valid"'
   acid=$("${C[@]}" "$B/certificates" | j "[c['id'] for c in d if c['name']=='shop-acme'][0]")
   expect "ACME 证书入库并开启自动续期" "$("${C[@]}" "$B/certificates" | j "[(c['source'],c['auto_renew']) for c in d if c['name']=='shop-acme'][0]")" "('acme', True)"
-  if $DC exec -T node1 grep -q "location" /opt/syapp/conf/current/snippets/acme-challenge.conf; then bad "签发后节点上仍有挑战"; else ok "签发后挑战已从节点清除"; fi
+  if $DC exec -T node1 grep -q "location" /opt/syedge/conf/current/snippets/acme-challenge.conf; then bad "签发后节点上仍有挑战"; else ok "签发后挑战已从节点清除"; fi
 fi
 
 echo "== 授权过期：只读但回滚与流量不受影响"

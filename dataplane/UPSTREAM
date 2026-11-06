@@ -4,7 +4,7 @@ UPSTREAM_VERSION=1.30.6
 UPSTREAM_GIT=https://github.com/nginx/nginx.git
 UPSTREAM_TAG=release-1.30.6
 UPSTREAM_COMMIT=fb0e979c6dd63c018958b41eeb844947c5c21264
-# 国密变体（P8，-t tongsuo）：铜锁（Apache-2.0）开启 NTLS 静态链接；syapp 源码与改名 patch 不变，
+# 国密变体（P8，-t tongsuo）：铜锁（Apache-2.0）开启 NTLS 静态链接；syedge 源码与改名 patch 不变，
 # 国密双证书通过已有的 ssl_conf_command 指令交给铜锁的 SSL_CONF 命令（Enable_ntls / SignCertificate / EncCertificate …）。
 TONGSUO_VERSION=8.5.0
 TONGSUO_GIT=https://github.com/Tongsuo-Project/Tongsuo.git

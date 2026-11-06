@@ -2,13 +2,13 @@
 # 定制品牌构建检查（设计 0001 第 4.4 节），在本地运行（make brand-matrix），不占用 GitHub Actions。
 #
 # 用一个测试品牌完整走一遍：生成改名 patch 并核对 → 以 -tags brand 构建全部 Go 程序并扫描二进制 →
-# 用替身数据面打节点发布包（真实的改名构建与 syapp -t 由 ci 工作流的 dataplane 任务覆盖）。
+# 用替身数据面打节点发布包（真实的改名构建与 syedge -t 由 ci 工作流的 dataplane 任务覆盖）。
 # 任何位置残留默认品牌名（Go 模块路径与协议 / 数据库字段名除外）即失败。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 ID="${1:-sytest}"; PROC="${2:-SyTest}"
-DEFAULT_BRAND=syapp
+DEFAULT_BRAND=syedge
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 export GOFLAGS=-mod=vendor CGO_ENABLED=0
 

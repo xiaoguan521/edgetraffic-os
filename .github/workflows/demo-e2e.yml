@@ -26,7 +26,7 @@ jobs:
           node-version: 22
       - name: ephemeral license key (CI only)
         run: |
-          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys | tee /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           echo "EXTRA_LICENSE_KEY=$pub" >> "$GITHUB_ENV"
@@ -34,7 +34,7 @@ jobs:
         working-directory: demo
         env:
           COMPOSE_PROFILES: ${{ matrix.db == 'postgres' && 'acme,postgres' || 'acme' }}
-          ETOS_ACME_CA_FILE: /var/lib/syapp-console/acme-ca.pem
+          ETOS_ACME_CA_FILE: /var/lib/syedge-console/acme-ca.pem
           ETOS_DB: ${{ matrix.db == 'postgres' && 'postgres://etos:etos@postgres:5432/etos?sslmode=disable' || '' }}
         run: ./demo.sh up
       - name: end-to-end

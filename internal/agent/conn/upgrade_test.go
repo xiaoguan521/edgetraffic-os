@@ -53,7 +53,7 @@ func TestHandleUpgrade(t *testing.T) {
 
 	pkg := []byte("package")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", "1.30.7-1", runtime.GOARCH, "standard", pkg)
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", "1.30.7-1", runtime.GOARCH, "standard", pkg)
 	sb, _ := json.Marshal(sig)
 	var got []agentv1.CommandResult_Status
 	reply := func(st agentv1.CommandResult_Status, msg, _ string) { got = append(got, st) }
@@ -64,10 +64,10 @@ func TestHandleUpgrade(t *testing.T) {
 	if got[0] != agentv1.CommandResult_APPLIED {
 		t.Fatalf("start: %v", got)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "upgrade/syapp-1.30.7-1.tar.gz")); string(b) != "package" {
+	if b, _ := os.ReadFile(filepath.Join(dir, "upgrade/syedge-1.30.7-1.tar.gz")); string(b) != "package" {
 		t.Fatal("package not written to the drop directory")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "upgrade/syapp-1.30.7-1.tar.gz.sig")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "upgrade/syedge-1.30.7-1.tar.gz.sig")); err != nil {
 		t.Fatal("signature not written")
 	}
 	// 控制台给的哈希与签名不符、版本号非法、包被替换：都拒绝且不调用 wrapper

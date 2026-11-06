@@ -9,7 +9,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
-// 独立模式（未接入控制台）随 syapp 软件包分发的文件。内容是固定文本，不含任何用户输入。
+// 独立模式（未接入控制台）随 syedge 软件包分发的文件。内容是固定文本，不含任何用户输入。
 
 //go:embed standalone/example.conf
 var standaloneExample []byte
@@ -17,7 +17,7 @@ var standaloneExample []byte
 //go:embed standalone/STANDALONE.txt
 var standaloneGuide []byte
 
-// BaselineRevision 是安装时写入的初始版本号（agent bootstrap 与 syapp 软件包使用同一版本）。
+// BaselineRevision 是安装时写入的初始版本号（agent bootstrap 与 syedge 软件包使用同一版本）。
 const BaselineRevision = "r000000"
 
 // Baseline 渲染没有任何站点的初始版本。
@@ -30,7 +30,7 @@ func BaselineFor(p Profile) (*Bundle, error) {
 	return Render(Input{Revision: BaselineRevision, MimeTypes: DefaultMimeTypes(), Profile: p})
 }
 
-// StandaloneFiles 返回独立模式的附带文件，键为相对 /opt/syapp 的路径。
+// StandaloneFiles 返回独立模式的附带文件，键为相对 /opt/syedge 的路径。
 func StandaloneFiles() map[string][]byte {
 	return map[string][]byte{
 		"share/defaults/standalone-example.conf": branded(standaloneExample),
@@ -38,7 +38,7 @@ func StandaloneFiles() map[string][]byte {
 	}
 }
 
-// WritePackageDefaults 在 root（打包时的 /opt/syapp 暂存目录）下写入：
+// WritePackageDefaults 在 root（打包时的 /opt/syedge 暂存目录）下写入：
 // share/defaults/baseline/（初始版本，含 MANIFEST.json）与独立模式的示例和说明。
 func WritePackageDefaults(root string) error {
 	b, err := Baseline()

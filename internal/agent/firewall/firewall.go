@@ -1,7 +1,7 @@
 // Package firewall 生成边缘节点可选的 nftables 入站防火墙（规格书 P6-6）。
 //
-// 只由管理员在节点上显式启用（syapp-firewall enable），agent 守护进程与控制台协议都不涉及防火墙。
-// 规则只放在自己的表 inet syapp_fw 中，只过滤入站：
+// 只由管理员在节点上显式启用（syedge-firewall enable），agent 守护进程与控制台协议都不涉及防火墙。
+// 规则只放在自己的表 inet syedge_fw 中，只过滤入站：
 //   - 放行已建立连接、回环、ICMP/ICMPv6（PMTU 与邻居发现必需）
 //   - 所有来源可访问 HTTP/HTTPS（以及管理员追加的端口）
 //   - SSH 只对明确指定的来源开放；其余入站丢弃

@@ -34,10 +34,10 @@ cleanup() {
   rm -rf "$W"
 }
 trap cleanup EXIT
-go build -mod=vendor -o "$W/lic" ./cmd/syapp-license-server
+go build -mod=vendor -o "$W/lic" ./cmd/syedge-license-server
 "$W/lic" keygen -kid etos-ci-ephemeral -out "$W/keys" > "$W/keygen.txt"
 pub=$(python3 -c 'import re,sys;print(re.findall(r"\"([A-Za-z0-9+/=]{44})\"",open(sys.argv[1]).read())[-1])' "$W/keygen.txt")
-go build -mod=vendor -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" -o "$W/console" ./cmd/syapp-console
+go build -mod=vendor -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" -o "$W/console" ./cmd/syedge-console
 console_args=(-listen "127.0.0.1:$CONSOLE_PORT" -grpc-listen "0.0.0.0:$GRPC_PORT" -grpc-hosts host.docker.internal,localhost,127.0.0.1 -grpc-advertise "host.docker.internal:$GRPC_PORT" -data "$W/data")
 if [[ -n "${IMPORT_TEST_DB:-}" ]]; then console_args+=(-db "$IMPORT_TEST_DB"); fi
 "$W/console" "${console_args[@]}" > "$W/console.log" 2>&1 &
@@ -61,7 +61,7 @@ if [[ "$LIVE" == 1 ]]; then
   NET="etos-import-$(basename "$W" | tr '[:upper:].' '[:lower:]-')"
   docker image inspect "$NODE_IMAGE" >/dev/null 2>&1 || docker pull "$NODE_IMAGE"
   arch=$(docker image inspect "$NODE_IMAGE" --format '{{.Architecture}}')
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -mod=vendor -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" -o "$W/agent" ./cmd/syapp-agent
+  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -mod=vendor -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" -o "$W/agent" ./cmd/syedge-agent
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -mod=vendor -o "$W/backend" ./demo/backend
   docker network create --subnet "${IMPORT_TEST_SUBNET:-172.29.231.0/24}" "$NET" >/dev/null
   docker run -d --name "$NET-backend" --network "$NET" -v "$W/backend:/usr/bin/demo-backend:ro" --entrypoint /usr/bin/demo-backend "$NODE_IMAGE" >/dev/null
@@ -70,7 +70,7 @@ if [[ "$LIVE" == 1 ]]; then
   if [[ "$(uname -s)" == Linux ]]; then host_args+=(--add-host host.docker.internal:host-gateway); fi
   for n in 1 2; do
     if [[ "$n" == 1 ]]; then port=$NODE1_PORT; else port=$NODE2_PORT; fi
-    docker run -d --name "$NET-node$n" --hostname "import-node$n" --network "$NET" "${host_args[@]}" -p "127.0.0.1:$port:80" -v "$W/agent:/usr/bin/syapp-agent:ro" "$NODE_IMAGE" >/dev/null
+    docker run -d --name "$NET-node$n" --hostname "import-node$n" --network "$NET" "${host_args[@]}" -p "127.0.0.1:$port:80" -v "$W/agent:/usr/bin/syedge-agent:ro" "$NODE_IMAGE" >/dev/null
   done
   BASE="http://127.0.0.1:$CONSOLE_PORT" TEST_NET="$NET" python3 - <<'PYLIVE'
 import os,json,http.cookiejar,urllib.request,subprocess,time
@@ -82,11 +82,11 @@ call('/auth/login',{'username':'admin','password':'Demo@2026!'})
 for n in [1,2]:
  name=os.environ['TEST_NET']+'-node'+str(n)
  for attempt in range(60):
-  if subprocess.run(['docker','exec',name,'test','-e','/opt/syapp/conf/current'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:break
+  if subprocess.run(['docker','exec',name,'test','-e','/opt/syedge/conf/current'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:break
   time.sleep(.5)
  else:raise RuntimeError('node bootstrap timed out')
  e=call('/node-groups/1/enroll',{})
- result=subprocess.run(['docker','exec',name,'syapp-agent','enroll','-server',e['server'],'-token',e['token'],'-ca-fingerprint',e['ca_fingerprint']],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ result=subprocess.run(['docker','exec',name,'syedge-agent','enroll','-server',e['server'],'-token',e['token'],'-ca-fingerprint',e['ca_fingerprint']],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  if result.returncode:raise RuntimeError('node enrollment failed; enrollment token suppressed')
 for attempt in range(120):
  if sum(n['status']=='online' for n in call('/nodes'))==2:break

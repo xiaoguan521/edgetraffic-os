@@ -2,40 +2,40 @@
 # 发布打包：交叉编译 Go 程序并生成可直接下载使用的发布包。
 #
 #   scripts/release/package.sh console <goos> <goarch>
-#       控制台包：syapp-console（前端已嵌入，须先构建 web/dist）；开发构建另带演示用的 syapp-license-server
-#       产物 edgetraffic-os-console-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
+#       控制台包：syedge-console（前端已嵌入，须先构建 web/dist）；开发构建另带演示用的 syedge-license-server
+#       产物 syedge-console-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
 #
-#   scripts/release/package.sh node <goarch> <syapp tarball>
-#       节点包（仅 Linux）：syapp 数据面 + syapp-agent + syapp-wrapper + systemd 单元 + install.sh
-#       产物 edgetraffic-os-node-<ver>-linux-<goarch>.tar.gz
+#   scripts/release/package.sh node <goarch> <syedge tarball>
+#       节点包（仅 Linux）：syedge 数据面 + syedge-agent + syedge-wrapper + systemd 单元 + install.sh
+#       产物 syedge-node-<ver>-linux-<goarch>.tar.gz
 #
-#   scripts/release/package.sh node-user <goarch> <syapp tarball>
+#   scripts/release/package.sh node-user <goarch> <syedge tarball>
 #       user 模式节点包（不需要 root，设计 0001 第 6 节）：bin/ + sbin/ + modules/ + install-user.sh
-#       产物 edgetraffic-os-node-user-<ver>-linux-<goarch>.tar.gz
+#       产物 syedge-node-user-<ver>-linux-<goarch>.tar.gz
 #
-#   scripts/release/package.sh pkg <goarch> <syapp tarball>
-#       RPM / DEB 软件包（需要 nfpm）：syapp、syapp-agent、syapp-console（控制台须先构建 web/dist）
+#   scripts/release/package.sh pkg <goarch> <syedge tarball>
+#       RPM / DEB 软件包（需要 nfpm）：syedge、syedge-agent、syedge-console（控制台须先构建 web/dist）
 #
 #   scripts/release/package.sh vendor-tools <goos> <goarch>
-#       厂商工具（不交付客户）：离线签名工具 syapp-license-signer + 运维手册
-#       产物 edgetraffic-os-vendor-tools-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
+#       厂商工具（不交付客户）：离线签名工具 syedge-license-signer + 运维手册
+#       产物 syedge-vendor-tools-<ver>-<goos>-<goarch>.tar.gz（windows 为 .zip）
 #
 #   scripts/release/package.sh license-portal <goarch>
-#       厂商授权后台（不交付客户，部署在厂商内网）：syapp-license-server（内嵌 Web）+ systemd 单元 + 运维手册
-#       只持有签名公钥；产物 edgetraffic-os-license-portal-<ver>-linux-<goarch>.tar.gz
+#       厂商授权后台（不交付客户，部署在厂商内网）：syedge-license-server（内嵌 Web）+ systemd 单元 + 运维手册
+#       只持有签名公钥；产物 syedge-license-portal-<ver>-linux-<goarch>.tar.gz
 #
-#   scripts/release/package.sh syapp-upgrade <goarch> <syapp tarball>
-#       数据面升级包（规格书 12.6）：sbin/syapp + VERSION，产物 syapp-<ver>-<goarch>.tar.gz（未签名；
-#       正式发布前在离线签名机上 syapp-license-signer sign-package 生成 .sig，与包一起导入控制台版本库）
+#   scripts/release/package.sh syedge-upgrade <goarch> <syedge tarball>
+#       数据面升级包（规格书 12.6）：sbin/syedge + VERSION，产物 syedge-<ver>-<goarch>.tar.gz（未签名；
+#       正式发布前在离线签名机上 syedge-license-signer sign-package 生成 .sig，与包一起导入控制台版本库）
 #
 #   scripts/release/package.sh agent-upgrade <goarch>
-#       agent 自升级包：bin/syapp-agent，产物 syapp-agent-<ver>-<goarch>.tar.gz（未签名）
+#       agent 自升级包：bin/syedge-agent，产物 syedge-agent-<ver>-<goarch>.tar.gz（未签名）
 #
 #   scripts/release/package.sh backend <goarch>
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
 # 环境变量：VERSION（默认 0.0.0-dev）、COMMIT、BUILD_DATE、OUT（默认 dist/release）、
-#           GOTAGS（v* 正式版本为 release：不含演示签名密钥，也不带演示用的 syapp-license-server）
+#           GOTAGS（v* 正式版本为 release：不含演示签名密钥，也不带演示用的 syedge-license-server）
 # 正式与演示构建绝不注入 CI 临时授权公钥（license.ciKey）。
 # 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。定制品牌时 Go 程序以 -tags brand 注入品牌，
 #       暂存目录中的文件名与文本按品牌改写，打包前检查没有残留默认品牌名；默认品牌的产物与以前完全相同。
@@ -52,16 +52,15 @@ LDFLAGS="-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.BuildDate
 GOTAGS="${GOTAGS:-}"
 # shellcheck disable=SC1090
 source "${BRAND_ENV:-$ROOT/brand.env}"
-DEFAULT_BRAND=syapp
-B="${BRAND_ID:?brand.env: BRAND_ID required}"; P="${BRAND_PROC:-$B}"; PRODUCT="${BRAND_PRODUCT:-EdgeTraffic OS}"
+DEFAULT_BRAND=syedge DEFAULT_PROC=SyEdge DEFAULT_PRODUCT=SyEdge DEFAULT_FULLNAME="神玥企业级动态网关与负载均衡引擎"
+B="${BRAND_ID:?brand.env: BRAND_ID required}"; P="${BRAND_PROC:-$B}"; PRODUCT="${BRAND_PRODUCT:-$B}"; FULLNAME="${BRAND_FULLNAME:-$PRODUCT}"
 [[ "$B" =~ ^[a-z][a-z0-9]{2,6}$ ]] || { echo "BRAND_ID must match ^[a-z][a-z0-9]{2,6}\$" >&2; exit 2; }
-SLUG=edgetraffic-os   # 发布包文件名前缀
-if [[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_BRAND" || "$PRODUCT" != "EdgeTraffic OS" ]]; then
+SLUG="$B"   # 发布包文件名前缀
+if [[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_PROC" || "$PRODUCT" != "$DEFAULT_PRODUCT" || "$FULLNAME" != "$DEFAULT_FULLNAME" ]]; then
   BP=github.com/xiaoguan521/edgetraffic-os/internal/brand
-  LDFLAGS+=" -X $BP.id=$B -X $BP.proc=$P -X '$BP.product=$PRODUCT'"
+  LDFLAGS+=" -X $BP.id=$B -X $BP.proc=$P -X '$BP.product=$PRODUCT' -X '$BP.fullName=$FULLNAME'"
   GOTAGS="${GOTAGS:+$GOTAGS,}brand"
 fi
-[[ "$B" != "$DEFAULT_BRAND" ]] && SLUG="$B"
 export CGO_ENABLED=0 GOFLAGS=-mod=vendor
 
 gobuild() { # goos goarch outdir pkgs...
@@ -78,7 +77,7 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 rebrand() {
   [[ "$B" == "$DEFAULT_BRAND" ]] && return 0
   local up=${B^^} dup=${DEFAULT_BRAND^^}
-  grep -rlIZ -e "$DEFAULT_BRAND" -e "$dup" "$1" | xargs -0 -r sed -i -e "s/$DEFAULT_BRAND/$B/g" -e "s/$dup/$up/g"
+  grep -rlIZ -e "$DEFAULT_BRAND" -e "$dup" -e "$DEFAULT_PROC" "$1" | xargs -0 -r sed -i -e "s/$DEFAULT_PROC/$P/g" -e "s/$DEFAULT_BRAND/$B/g" -e "s/$dup/$up/g"
   find "$1" -depth -name "*$DEFAULT_BRAND*" -print0 | while IFS= read -r -d '' p; do
     mv "$p" "$(dirname "$p")/$(basename "$p" | sed "s/$DEFAULT_BRAND/$B/g")"
   done
@@ -108,16 +107,16 @@ case "${1:-}" in
     ls web/dist/index.html >/dev/null 2>&1 || { echo "web/dist 未构建：先执行 make web" >&2; exit 2; }
     name="$SLUG-console-$VERSION-$os-$arch"
     d="$WORK/$name"; mkdir -p "$d"
-    gobuild "$os" "$arch" "$d" ./cmd/syapp-console
+    gobuild "$os" "$arch" "$d" ./cmd/syedge-console
     # 演示脚本在控制台容器里用它签发演示授权；正式版本不带（正式 License 由离线签名机签发）
-    [[ "$GOTAGS" == *release* ]] || gobuild "$os" "$arch" "$d" ./cmd/syapp-license-server
+    [[ "$GOTAGS" == *release* ]] || gobuild "$os" "$arch" "$d" ./cmd/syedge-license-server
     cp docs/NOTICE "$d/NOTICE"
     cp scripts/release/README-console.txt "$d/README.txt"
     if [[ $os == windows ]]; then
       (cd "$WORK" && zip -qr "$OUT/$name.zip" "$name")
       echo "$OUT/$name.zip"
     else
-      [[ $os == linux ]] && cp deploy/systemd/syapp-console.service "$d/"
+      [[ $os == linux ]] && cp deploy/systemd/syedge-console.service "$d/"
       rebrand "$d"; brand_scan "$d"
       tar -C "$WORK" -czf "$OUT/$name.tar.gz" "$name"
       echo "$OUT/$name.tar.gz"
@@ -127,7 +126,7 @@ case "${1:-}" in
     os=${2:?goos}; arch=${3:?goarch}
     name="$SLUG-vendor-tools-$VERSION-$os-$arch"
     d="$WORK/$name"; mkdir -p "$d"
-    gobuild "$os" "$arch" "$d" ./cmd/syapp-license-signer
+    gobuild "$os" "$arch" "$d" ./cmd/syedge-license-signer
     cp docs/license-ops.md "$d/license-ops.md"
     cp docs/NOTICE "$d/NOTICE"
     rebrand "$d"; brand_scan "$d"
@@ -139,14 +138,14 @@ case "${1:-}" in
       echo "$OUT/$name.tar.gz"
     fi
     ;;
-  syapp-upgrade)
-    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+  syedge-upgrade)
+    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}
     x="$WORK/x"; mkdir -p "$x" "$WORK/up/sbin"
-    tar -C "$x" -xzf "$syapp_tgz"
+    tar -C "$x" -xzf "$syedge_tgz"
     bin=$(find "$x" -type f -path "*/sbin/$B" | head -1)
-    [[ -n "$bin" ]] || { echo "no sbin/$B in $syapp_tgz" >&2; exit 2; }
+    [[ -n "$bin" ]] || { echo "no sbin/$B in $syedge_tgz" >&2; exit 2; }
     install -m 0755 "$bin" "$WORK/up/sbin/$B"
-    up_ver="${SYAPP_UPGRADE_VERSION:-$VERSION}"
+    up_ver="${SYEDGE_UPGRADE_VERSION:-$VERSION}"
     [[ "$up_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "upgrade version $up_ver is not N.N.N[-N]" >&2; exit 2; }
     echo "$up_ver" > "$WORK/up/VERSION"
     cp docs/NOTICE "$WORK/up/NOTICE"
@@ -155,10 +154,10 @@ case "${1:-}" in
     echo "$OUT/$B-$up_ver-$arch.tar.gz"
     ;;
   agent-upgrade)
-    # agent 自升级包：bin/syapp-agent（未签名，离线签名后导入控制台版本库）
+    # agent 自升级包：bin/syedge-agent（未签名，离线签名后导入控制台版本库）
     arch=${2:?goarch}
     mkdir -p "$WORK/ag/bin"
-    gobuild linux "$arch" "$WORK/ag/bin" ./cmd/syapp-agent
+    gobuild linux "$arch" "$WORK/ag/bin" ./cmd/syedge-agent
     cp docs/NOTICE "$WORK/ag/NOTICE"
     rebrand "$WORK/ag"; brand_scan "$WORK/ag"
     tar -C "$WORK/ag" --owner=0 --group=0 -czf "$OUT/$B-agent-$VERSION-$arch.tar.gz" "bin/$B-agent" NOTICE
@@ -169,8 +168,8 @@ case "${1:-}" in
     ls web/portal/dist/index.html >/dev/null 2>&1 || { echo "web/portal/dist 未构建：先执行 make web" >&2; exit 2; }
     name="$SLUG-license-portal-$VERSION-linux-$arch"
     d="$WORK/$name"; mkdir -p "$d"
-    gobuild linux "$arch" "$d" ./cmd/syapp-license-server
-    cp deploy/systemd/syapp-license-server.service "$d/"
+    gobuild linux "$arch" "$d" ./cmd/syedge-license-server
+    cp deploy/systemd/syedge-license-server.service "$d/"
     cp docs/license-ops.md "$d/license-ops.md"
     cp docs/NOTICE "$d/NOTICE"
     rebrand "$d"; brand_scan "$d"
@@ -178,24 +177,24 @@ case "${1:-}" in
     echo "$OUT/$name.tar.gz"
     ;;
   node)
-    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}
     name="$SLUG-node-$VERSION-linux-$arch"
     d="$WORK/$name"; r="$d/rootfs"
-    mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syapp" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
-    tar -C "$r" -xzf "$syapp_tgz"
-    [[ -x "$r/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
-    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syapp-agent package-defaults -out "$r/opt/$B"   # 初始版本与独立模式示例
-    gobuild linux "$arch" "$r/usr/bin" ./cmd/syapp-agent
-    gobuild linux "$arch" "$r/usr/libexec/syapp" ./cmd/syapp-wrapper
-    gobuild linux "$arch" "$r/usr/sbin" ./cmd/syapp-instance
-    cp dataplane/packaging/sudoers/syapp-agent "$r/etc/sudoers.d/syapp-agent"
-    cp dataplane/packaging/systemd/syapp.service dataplane/packaging/systemd/syapp@.service \
-       dataplane/packaging/systemd/syapp-agent.service dataplane/packaging/systemd/syapp-agent@.service \
-       dataplane/packaging/systemd/syapp-firewall.service dataplane/packaging/systemd/syapp-firewall-refresh.service \
-       dataplane/packaging/systemd/syapp-firewall-refresh.path "$r/etc/systemd/system/"
-    install -m 0755 dataplane/packaging/firewall/syapp-firewall "$r/usr/sbin/syapp-firewall"
-    cp dataplane/packaging/logrotate/syapp "$r/etc/logrotate.d/syapp"
-    mkdir -p "$r/etc/tmpfiles.d" && cp dataplane/packaging/tmpfiles/syapp.conf "$r/etc/tmpfiles.d/syapp.conf"
+    mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syedge" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
+    tar -C "$r" -xzf "$syedge_tgz"
+    [[ -x "$r/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$r/opt/$B"   # 初始版本与独立模式示例
+    gobuild linux "$arch" "$r/usr/bin" ./cmd/syedge-agent
+    gobuild linux "$arch" "$r/usr/libexec/syedge" ./cmd/syedge-wrapper
+    gobuild linux "$arch" "$r/usr/sbin" ./cmd/syedge-instance
+    cp dataplane/packaging/sudoers/syedge-agent "$r/etc/sudoers.d/syedge-agent"
+    cp dataplane/packaging/systemd/syedge.service dataplane/packaging/systemd/syedge@.service \
+       dataplane/packaging/systemd/syedge-agent.service dataplane/packaging/systemd/syedge-agent@.service \
+       dataplane/packaging/systemd/syedge-firewall.service dataplane/packaging/systemd/syedge-firewall-refresh.service \
+       dataplane/packaging/systemd/syedge-firewall-refresh.path "$r/etc/systemd/system/"
+    install -m 0755 dataplane/packaging/firewall/syedge-firewall "$r/usr/sbin/syedge-firewall"
+    cp dataplane/packaging/logrotate/syedge "$r/etc/logrotate.d/syedge"
+    mkdir -p "$r/etc/tmpfiles.d" && cp dataplane/packaging/tmpfiles/syedge.conf "$r/etc/tmpfiles.d/syedge.conf"
     cp deploy/node/install.sh "$d/install.sh"
     cp deploy/node/uninstall.sh "$d/uninstall.sh"
     cp docs/NOTICE "$d/NOTICE"
@@ -206,15 +205,15 @@ case "${1:-}" in
     echo "$OUT/$name.tar.gz"
     ;;
   node-user)
-    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}
     name="$SLUG-node-user-$VERSION-linux-$arch"
     d="$WORK/$name"; x="$WORK/node-user-src"
     mkdir -p "$d/bin" "$d/sbin" "$d/modules" "$x"
-    tar -C "$x" -xzf "$syapp_tgz"
-    [[ -x "$x/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    tar -C "$x" -xzf "$syedge_tgz"
+    [[ -x "$x/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
     cp -p "$x/opt/$B/sbin/$B" "$d/sbin/$B"
     if compgen -G "$x/opt/$B/modules/*" >/dev/null; then cp -p "$x/opt/$B/modules/"* "$d/modules/"; fi
-    gobuild linux "$arch" "$d/bin" ./cmd/syapp-agent ./cmd/syapp-wrapper ./cmd/syapp-instance
+    gobuild linux "$arch" "$d/bin" ./cmd/syedge-agent ./cmd/syedge-wrapper ./cmd/syedge-instance
     cp deploy/node/install-user.sh "$d/install-user.sh"
     cp docs/NOTICE "$d/NOTICE"
     cp scripts/release/README-node-user.txt "$d/README.txt"
@@ -224,28 +223,28 @@ case "${1:-}" in
     echo "$OUT/$name.tar.gz"
     ;;
   pkg)
-    arch=${2:?goarch}; syapp_tgz=${3:?syapp tarball}
+    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}
     command -v nfpm >/dev/null || { echo "需要 nfpm：go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0" >&2; exit 2; }
     ls web/dist/index.html >/dev/null 2>&1 || { echo "web/dist 未构建：先执行 make web" >&2; exit 2; }
     st="$WORK/stage"
-    mkdir -p "$st/syapp" "$st/agent" "$st/console" "$st/scripts"
-    tar -C "$st/syapp" -xzf "$syapp_tgz"
-    [[ -x "$st/syapp/opt/$B/sbin/$B" ]] || { echo "$syapp_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
-    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syapp-agent package-defaults -out "$st/syapp/opt/$B"   # 数据面软件包可独立使用
-    cp dataplane/packaging/systemd/syapp.service "$st/syapp/syapp.service"
-    cp dataplane/packaging/systemd/syapp@.service "$st/syapp/syapp@.service"
-    cp dataplane/packaging/logrotate/syapp "$st/syapp/logrotate"
-    cp dataplane/packaging/tmpfiles/syapp.conf "$st/syapp/tmpfiles.conf"
-    gobuild linux "$arch" "$st/agent" ./cmd/syapp-agent ./cmd/syapp-wrapper ./cmd/syapp-instance
-    cp dataplane/packaging/sudoers/syapp-agent "$st/agent/sudoers"
-    cp dataplane/packaging/systemd/syapp-agent.service "$st/agent/syapp-agent.service"
-    cp dataplane/packaging/systemd/syapp-agent@.service "$st/agent/syapp-agent@.service"
-    cp dataplane/packaging/systemd/syapp-firewall.service "$st/agent/syapp-firewall.service"
-    cp dataplane/packaging/systemd/syapp-firewall-refresh.service "$st/agent/syapp-firewall-refresh.service"
-    cp dataplane/packaging/systemd/syapp-firewall-refresh.path "$st/agent/syapp-firewall-refresh.path"
-    install -m 0755 dataplane/packaging/firewall/syapp-firewall "$st/agent/syapp-firewall"
-    gobuild linux "$arch" "$st/console" ./cmd/syapp-console
-    cp deploy/systemd/syapp-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"
+    mkdir -p "$st/syedge" "$st/agent" "$st/console" "$st/scripts"
+    tar -C "$st/syedge" -xzf "$syedge_tgz"
+    [[ -x "$st/syedge/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$st/syedge/opt/$B"   # 数据面软件包可独立使用
+    cp dataplane/packaging/systemd/syedge.service "$st/syedge/syedge.service"
+    cp dataplane/packaging/systemd/syedge@.service "$st/syedge/syedge@.service"
+    cp dataplane/packaging/logrotate/syedge "$st/syedge/logrotate"
+    cp dataplane/packaging/tmpfiles/syedge.conf "$st/syedge/tmpfiles.conf"
+    gobuild linux "$arch" "$st/agent" ./cmd/syedge-agent ./cmd/syedge-wrapper ./cmd/syedge-instance
+    cp dataplane/packaging/sudoers/syedge-agent "$st/agent/sudoers"
+    cp dataplane/packaging/systemd/syedge-agent.service "$st/agent/syedge-agent.service"
+    cp dataplane/packaging/systemd/syedge-agent@.service "$st/agent/syedge-agent@.service"
+    cp dataplane/packaging/systemd/syedge-firewall.service "$st/agent/syedge-firewall.service"
+    cp dataplane/packaging/systemd/syedge-firewall-refresh.service "$st/agent/syedge-firewall-refresh.service"
+    cp dataplane/packaging/systemd/syedge-firewall-refresh.path "$st/agent/syedge-firewall-refresh.path"
+    install -m 0755 dataplane/packaging/firewall/syedge-firewall "$st/agent/syedge-firewall"
+    gobuild linux "$arch" "$st/console" ./cmd/syedge-console
+    cp deploy/systemd/syedge-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"
     # 每个脚本 = shebang + 共用函数 + 本体（软件包脚本不能引用包外文件）
     for f in deploy/nfpm/scripts/*.sh; do
       [[ $(basename "$f") == common.sh ]] && continue
@@ -253,7 +252,7 @@ case "${1:-}" in
       chmod 0755 "$st/scripts/$(basename "$f")"
     done
     # 先把 ${VERSION} / ${ARCH} / ${STAGE} 代入配置，不依赖 nfpm 对各字段的环境变量展开
-    for p in syapp syapp-agent syapp-console; do
+    for p in syedge syedge-agent syedge-console; do
       sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "deploy/nfpm/$p.yaml" > "$st/$p.yaml"
     done
     rebrand "$st"; brand_scan "$st"

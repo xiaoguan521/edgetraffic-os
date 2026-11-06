@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 规格书 12.3 P6 验收：“从 v0.1.0 升级数据库无数据丢失”。
 # 用真实的 v0.1.0 控制台建库并写入数据，停掉后用当前控制台打开同一个数据库与数据目录，逐项核对。
-# 用法：scripts/ci/upgrade-from-v010.sh <v0.1.0 syapp-console> <当前 syapp-console> <syapp-license-server> [数据库 DSN，默认 SQLite]
+# 用法：scripts/ci/upgrade-from-v010.sh <v0.1.0 syedge-console> <当前 syedge-console> <syedge-license-server> [数据库 DSN，默认 SQLite]
 # 两个控制台都须是注入了同一个 CI 临时公钥的测试构建；LIC_KEY / LIC_KID 指向对应私钥。
-# OLD_LIC：v0.1.0 的 syapp-license-server（签发 v0.1.0 能识别的授权；升级后当前控制台须照常认可它）。
+# OLD_LIC：v0.1.0 的 syedge-license-server（签发 v0.1.0 能识别的授权；升级后当前控制台须照常认可它）。
 set -uo pipefail
 OLD=$(realpath "$1"); NEW=$(realpath "$2"); LIC=$(realpath "$3"); DB=${4:-}
 OLD_LIC=$(realpath "${OLD_LIC:-$LIC}")

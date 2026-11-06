@@ -12,7 +12,7 @@ func TestSignVerify(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	keys := map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	data := []byte("package bytes")
-	s, err := Sign(priv, "etos-ci-pkg-test", "syapp", "1.30.6-1", "amd64", "standard", data)
+	s, err := Sign(priv, "etos-ci-pkg-test", "syedge", "1.30.6-1", "amd64", "standard", data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestSignVerify(t *testing.T) {
 		"version": func(x *Sig) { x.Version = "1.30.7" },
 		"arch":    func(x *Sig) { x.Arch = "arm64" },
 		"variant": func(x *Sig) { x.Variant = "gmssl" },
-		"name":    func(x *Sig) { x.Name = "syapp-agent" },
+		"name":    func(x *Sig) { x.Name = "syedge-agent" },
 		"kid":     func(x *Sig) { x.KID = "etos-pkg-2099" },
 	} {
 		c := *s
@@ -37,10 +37,10 @@ func TestSignVerify(t *testing.T) {
 		t.Fatal("content tampering not detected")
 	}
 	// 非法字段在签名时就被拒绝
-	if _, err := Sign(priv, "etos-ci-pkg-test", "syapp", "1.30.6;rm", "amd64", "standard", data); err == nil {
+	if _, err := Sign(priv, "etos-ci-pkg-test", "syedge", "1.30.6;rm", "amd64", "standard", data); err == nil {
 		t.Fatal("bad version accepted")
 	}
-	if _, err := Sign(priv, "etos-prod-2027", "syapp", "1.30.6", "amd64", "standard", data); err == nil {
+	if _, err := Sign(priv, "etos-prod-2027", "syedge", "1.30.6", "amd64", "standard", data); err == nil {
 		t.Fatal("license key id accepted for packages")
 	}
 }

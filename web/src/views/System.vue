@@ -375,7 +375,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
 
     <section class="panel about">
       <h2>关于</h2>
-      <p>{{ brand.product }}，数据面 {{ brand.proc }}。</p>
+      <p>{{ brand.product }}（{{ brand.fullname }}），数据面 {{ brand.proc }}。</p>
       <p class="sub">The {{ brand.proc }} data plane is based on NGINX Open Source (BSD-2-Clause). 完整的第三方许可声明见安装目录 /opt/{{ brand.id }}/share/doc/NOTICE。</p>
     </section>
 

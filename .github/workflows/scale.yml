@@ -25,7 +25,7 @@ jobs:
       - name: tools and ephemeral CI keys (license + package signing)
         run: |
           sudo apt-get install -y -qq wrk >/dev/null
-          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           CGO_ENABLED=0 go build -mod=vendor -o /tmp/loadgen ./cmd/etos-loadgen
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt

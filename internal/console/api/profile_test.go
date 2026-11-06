@@ -62,20 +62,20 @@ func TestProfileHTTP(t *testing.T) {
 
 func TestEnrollCommand(t *testing.T) {
 	def := enrollCommand(render.Profile{}, "c:9443", "tok", "fp")
-	if def != "sudo syapp-agent enroll -server c:9443 -token tok -ca-fingerprint fp && sudo systemctl enable --now syapp-agent" {
+	if def != "sudo syedge-agent enroll -server c:9443 -token tok -ca-fingerprint fp && sudo systemctl enable --now syedge-agent" {
 		t.Fatalf("default = %q", def)
 	}
 	inst := enrollCommand(render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}, "c:9443", "tok", "fp")
-	if inst != "sudo syapp-instance add blue --http 18080 --https 18443 --status 8082 --console c:9443 --token tok --ca-fingerprint fp" {
+	if inst != "sudo syedge-instance add blue --http 18080 --https 18443 --status 8082 --console c:9443 --token tok --ca-fingerprint fp" {
 		t.Fatalf("instance = %q", inst)
 	}
 	// user 模式：不用 sudo，命令带安装根目录
 	ud := enrollCommand(render.Profile{Mode: "user", Root: "/home/ops/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8081}, "c:9443", "tok", "fp")
-	if ud != "/home/ops/edge/bin/syapp-agent enroll -root /home/ops/edge -server c:9443 -token tok -ca-fingerprint fp && /home/ops/edge/bin/syapp-instance --root /home/ops/edge ensure" {
+	if ud != "/home/ops/edge/bin/syedge-agent enroll -root /home/ops/edge -server c:9443 -token tok -ca-fingerprint fp && /home/ops/edge/bin/syedge-instance --root /home/ops/edge ensure" {
 		t.Fatalf("user default = %q", ud)
 	}
 	ui := enrollCommand(render.Profile{Instance: "blue", Mode: "user", Root: "/home/ops/edge", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 18082}, "c:9443", "tok", "fp")
-	if ui != "/home/ops/edge/bin/syapp-instance --root /home/ops/edge add blue --http 18080 --https 18443 --status 18082 --console c:9443 --token tok --ca-fingerprint fp" {
+	if ui != "/home/ops/edge/bin/syedge-instance --root /home/ops/edge add blue --http 18080 --https 18443 --status 18082 --console c:9443 --token tok --ca-fingerprint fp" {
 		t.Fatalf("user instance = %q", ui)
 	}
 	if strings.Contains(ud+ui, "sudo") {
@@ -91,7 +91,7 @@ func TestBrandEndpoint(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"id": "syapp", "proc": "syapp", "product": "EdgeTraffic OS", "agent": "syapp-agent", "lua": "syapp-lua", "instance": "syapp-instance"}
+	want := map[string]string{"id": "syedge", "proc": "SyEdge", "product": "SyEdge", "fullname": "神玥企业级动态网关与负载均衡引擎", "agent": "syedge-agent", "lua": "syedge-lua", "instance": "syedge-instance"}
 	for k, v := range want {
 		if b[k] != v {
 			t.Errorf("%s = %q, want %q", k, b[k], v)

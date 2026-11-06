@@ -102,7 +102,7 @@ var errStandby = status.Error(codes.Unavailable, "standby console: connect to th
 
 func (s *Server) standby() bool { return s.Ready != nil && !s.Ready() }
 
-// TLSLib 从 syapp -V 输出判断数据面的 TLS 库：国密变体由 build-syapp.sh -t tongsuo 构建，
+// TLSLib 从 syedge -V 输出判断数据面的 TLS 库：国密变体由 build-syedge.sh -t tongsuo 构建，
 // 配置参数中带 enable-ntls（铜锁的版本文本与 OpenSSL 相同，不能用来区分）。
 func TLSLib(versionOutput string) string {
 	if strings.Contains(versionOutput, "enable-ntls") {
@@ -113,7 +113,7 @@ func TLSLib(versionOutput string) string {
 
 var luaAddonRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?/(standard|gmssl)$`)
 
-// LuaAddon 校验 agent 上报的 syapp-lua 附加包（<包版本>/<基础变体>），格式不对时视为未安装。
+// LuaAddon 校验 agent 上报的 syedge-lua 附加包（<包版本>/<基础变体>），格式不对时视为未安装。
 func LuaAddon(v string) string {
 	if luaAddonRe.MatchString(v) {
 		return v

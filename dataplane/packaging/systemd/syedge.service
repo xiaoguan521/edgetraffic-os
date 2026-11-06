@@ -1,0 +1,28 @@
+[Unit]
+Description=SyEdge data plane (syedge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+# 运行时不使用 root（设计 0001 第 6.1 节方式 B，D5）：master 与 worker 都以 syedge 运行，只带绑定 80/443 的能力；
+# 能力为 ambient，二进制热升级（USR2 重新执行）后的新 master 同样保留
+User=syedge
+Group=syedge
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+PIDFile=/run/syedge/syedge.pid
+RuntimeDirectory=syedge
+# 停止服务时保留 /run/syedge，管理员随后手工执行 syedge -t 不会因缺少 pid 目录失败
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/opt/syedge/sbin/syedge -t -q
+ExecStart=/opt/syedge/sbin/syedge
+ExecReload=/opt/syedge/sbin/syedge -s reload
+ExecStop=/opt/syedge/sbin/syedge -s quit
+LimitNOFILE=65535
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

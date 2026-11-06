@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { brand } from '../brand'
-// 访问规则（P10 规则积木）：条件全部满足时执行动作。原生规则所有版本可用；JWT 需要 lua 授权与节点的 syapp-lua 附加包。
+// 访问规则（P10 规则积木）：条件全部满足时执行动作。原生规则所有版本可用；JWT 需要 lua 授权与节点的 syedge-lua 附加包。
 import { computed } from 'vue'
 import { useSession } from '../stores/session'
 import RuleAction from './RuleAction.vue'

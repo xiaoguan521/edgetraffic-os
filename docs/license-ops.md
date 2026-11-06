@@ -5,25 +5,25 @@
 ## 1. 原则
 
 - **License 签名私钥只存在于一台物理断网的离线签名机上**，以口令加密的文件形式保存。它不进入云端、CI、代码仓库、授权后台，也不通过网络传输。
-- 在线侧（授权后台，或它上线前的 `syapp-license-server` 命令）只持有公钥：生成“签名请求”、核对“签名结果”。
+- 在线侧（授权后台，或它上线前的 `syedge-license-server` 命令）只持有公钥：生成“签名请求”、核对“签名结果”。
 - 两侧之间只用 U 盘传递两种文件：`sign-request-<批次>.json`（待签内容，不含密钥）与 `signed-<批次>.json`（签名结果）。
 - 每一份待签内容都由签名员在离线机上逐条核对后才签名；离线机保留只追加的本地签发日志。
-- 演示密钥 `etos-demo-2026` 与 CI 临时密钥只用于演示与测试。正式版本（v* 标签）不包含演示公钥；`syapp-license-server keygen / issue` 拒绝正式密钥编号。
+- 演示密钥 `etos-demo-2026` 与 CI 临时密钥只用于演示与测试。正式版本（v* 标签）不包含演示公钥；`syedge-license-server keygen / issue` 拒绝正式密钥编号。
 
 | 工具 | 运行位置 | 用途 |
 |---|---|---|
-| `syapp-license-signer` | 离线签名机 | 生成密钥（keygen）、核对与签名（inspect / sign）、核对结果（verify）、查看公钥（pubkey） |
-| `syapp-license-server request / crl-request / import` | 厂商内网 | 生成签名请求、导入并核对签名结果、写出 `.lic` / `.crl` |
-| `syapp-license-server serve`（授权后台 Web） | 厂商内网 | 以上在线侧步骤的界面化，加上客户、订单、审批、吊销与审计哈希链 |
+| `syedge-license-signer` | 离线签名机 | 生成密钥（keygen）、核对与签名（inspect / sign）、核对结果（verify）、查看公钥（pubkey） |
+| `syedge-license-server request / crl-request / import` | 厂商内网 | 生成签名请求、导入并核对签名结果、写出 `.lic` / `.crl` |
+| `syedge-license-server serve`（授权后台 Web） | 厂商内网 | 以上在线侧步骤的界面化，加上客户、订单、审批、吊销与审计哈希链 |
 
-`syapp-license-signer` 在发布页的 `edgetraffic-os-vendor-tools-<版本>-<系统>-<架构>` 包中（Linux / Windows / macOS），不包含在任何客户安装包里。程序不含网络代码（CI 用 `TestNoNetworkCode` 检查依赖）。
-授权后台在 `edgetraffic-os-license-portal-<版本>-linux-<架构>` 包中，同样不交付客户。
+`syedge-license-signer` 在发布页的 `syedge-vendor-tools-<版本>-<系统>-<架构>` 包中（Linux / Windows / macOS），不包含在任何客户安装包里。程序不含网络代码（CI 用 `TestNoNetworkCode` 检查依赖）。
+授权后台在 `syedge-license-portal-<版本>-linux-<架构>` 包中，同样不交付客户。
 
 ## 2. 准备离线签名机（一次性）
 
 1. 选一台专用电脑（笔记本即可），全盘加密，安装干净的操作系统。
 2. 拔掉网线，在 BIOS / 系统中关闭无线与蓝牙。此后永不联网。
-3. 在一台联网电脑上从发布页下载 `edgetraffic-os-vendor-tools-…` 与 `SHA256SUMS`，核对校验和，用一个**专用的传输 U 盘**拷入离线机。
+3. 在一台联网电脑上从发布页下载 `syedge-vendor-tools-…` 与 `SHA256SUMS`，核对校验和，用一个**专用的传输 U 盘**拷入离线机。
 4. 准备两个**备份 U 盘**（标记为 A、B），只用于存放加密私钥文件。
 5. Linux 上签名工具会读取 `/sys/class/net` 检查网卡状态：检测到联网会警告；加 `-require-offline` 则直接拒绝运行，建议始终加上。
    **macOS / Windows 上该检查不生效**（参数可加但不起作用），务必人工确认已关闭 Wi-Fi、蓝牙并拔掉网线。
@@ -51,7 +51,7 @@
 ```bash
 # 双人规则：两人各输入自己的一半口令（每半至少 8 个字符），另一人回避；四把密钥各用不同的口令
 for kid in etos-prod-2027 etos-prod-2027-b etos-pkg-2027 etos-pkg-2027-b; do
-  ./syapp-license-signer keygen -kid $kid -out /media/backup-a -two-person -require-offline
+  ./syedge-license-signer keygen -kid $kid -out /media/backup-a -two-person -require-offline
 done
 ```
 
@@ -66,7 +66,7 @@ done
 1. 主密钥：`.key.json` 复制到备份 U 盘 A、B，分放两个保险柜；离线机本地保留一份（全盘加密）。
 2. 备用密钥：复制到另外两个 U 盘 C、D，**与主密钥不放在同一个保险柜**，离线机上不保留。只在 3.3 的应急情况下取出。
 3. 口令（双人规则时是两半口令）分别写在纸上密封，与 U 盘分开保管。**口令丢失则私钥不可恢复。**
-4. 每半年按第 7 节抽查一次：取出一份备份，在离线机上 `syapp-license-signer pubkey -key …` 能解密并显示同一指纹（备份 U 盘会坏，口令信封会丢，抽查才能提前发现）。
+4. 每半年按第 7 节抽查一次：取出一份备份，在离线机上 `syedge-license-signer pubkey -key …` 能解密并显示同一指纹（备份 U 盘会坏，口令信封会丢，抽查才能提前发现）。
 5. 用传输 U 盘把四个 `.pub.txt` 带出，提交 PR：
 
    ```go
@@ -115,17 +115,17 @@ done
 部署（厂商内网的一台 Linux 服务器，**不放任何私钥**）：
 
 ```bash
-tar xzf edgetraffic-os-license-portal-<版本>-linux-amd64.tar.gz && cd edgetraffic-os-license-portal-*
-install -m 0755 syapp-license-server /usr/bin/
-useradd -r -s /sbin/nologin syapp-license
-install -m 0644 syapp-license-server.service /etc/systemd/system/
-mkdir -p /etc/syapp-license-server
-# 可选：/etc/syapp-license-server/portal.env
+tar xzf syedge-license-portal-<版本>-linux-amd64.tar.gz && cd syedge-license-portal-*
+install -m 0755 syedge-license-server /usr/bin/
+useradd -r -s /sbin/nologin syedge-license
+install -m 0644 syedge-license-server.service /etc/systemd/system/
+mkdir -p /etc/syedge-license-server
+# 可选：/etc/syedge-license-server/portal.env
 #   ETOS_PORTAL_LISTEN=0.0.0.0:8600          默认只监听 127.0.0.1:8600
 #   ETOS_PORTAL_DB=postgres://...            默认 SQLite（数据目录下 portal.db）
 # 对内网开放时务必启用 HTTPS：在 ExecStart 追加 -tls-auto（内置 Web CA，浏览器导入 /web-ca.crt）
 # 或 -tls-cert / -tls-key 使用公司证书
-systemctl daemon-reload && systemctl enable --now syapp-license-server
+systemctl daemon-reload && systemctl enable --now syedge-license-server
 ```
 
 首次打开页面创建管理员，再由管理员创建其他账号。角色：
@@ -158,7 +158,7 @@ systemctl daemon-reload && systemctl enable --now syapp-license-server
 客户在控制台“系统 → 授权”下载 `activation-request.json` 发给厂商。商务审批通过后：
 
 ```bash
-syapp-license-server request -batch B0001 -kid etos-prod-2027 \
+syedge-license-server request -batch B0001 -kid etos-prod-2027 \
     -request activation-request.json -customer "某某公司" -customer-id C0001 \
     -edition professional -nodes 50 -sites 2000 -days 365 -out sign-request-B0001.json
 # 同一批次可以多次执行追加（同一 -out）；容器部署用 -installation-id inst_... -binding installation_only
@@ -170,8 +170,8 @@ syapp-license-server request -batch B0001 -kid etos-prod-2027 \
 ### 4.2 离线签名机：核对并签名
 
 ```bash
-./syapp-license-signer inspect -in sign-request-B0001.json          # 先看清单
-./syapp-license-signer sign -key etos-prod-2027.key.json -in sign-request-B0001.json \
+./syedge-license-signer inspect -in sign-request-B0001.json          # 先看清单
+./syedge-license-signer sign -key etos-prod-2027.key.json -in sign-request-B0001.json \
     -log signer-log.jsonl -two-person -require-offline
 ```
 
@@ -185,7 +185,7 @@ syapp-license-server request -batch B0001 -kid etos-prod-2027 \
 ### 4.3 在线侧：核对并导入
 
 ```bash
-syapp-license-server import -request sign-request-B0001.json -signed signed-B0001.json -out licenses/
+syedge-license-server import -request sign-request-B0001.json -signed signed-B0001.json -out licenses/
 ```
 
 导入时逐条验签，并核对签名内容与请求中批准的 payload **完全一致**、条目一一对应、请求 SHA-256 一致；任何一项不符都拒绝。通过后写出 `licenses/<License 编号>.lic`，发给客户在控制台导入。
@@ -195,7 +195,7 @@ syapp-license-server import -request sign-request-B0001.json -signed signed-B000
 吊销列表（CRL）是累积的：每份新列表包含之前全部吊销项，序号加 1。控制台只接受序号更大的列表（不能用旧列表“撤销吊销”），并拒绝列表中的 License 与 kid。
 
 ```bash
-syapp-license-server crl-request -batch B0002 -kid etos-prod-2027 \
+syedge-license-server crl-request -batch B0002 -kid etos-prod-2027 \
     -base crl-3.crl -revoke LIC-20261102-0002 -reason "合同终止" -out sign-request-B0002.json
 # 离线签名同 4.2；导入同 4.3，写出 crl-4.crl
 ```
@@ -217,6 +217,6 @@ syapp-license-server crl-request -batch B0002 -kid etos-prod-2027 \
 
 ## 7. 演练
 
-正式启用前，用一个测试 kid（例如 `etos-prod-2099`，不合入代码）完整演练一遍：keygen → `request -kid etos-prod-2099` → sign → 在离线机上用 `syapp-license-signer verify -key … -request … -signed …` 核对（测试 kid 未内置，命令行 `import` 会按设计拒绝它）。
+正式启用前，用一个测试 kid（例如 `etos-prod-2099`，不合入代码）完整演练一遍：keygen → `request -kid etos-prod-2099` → sign → 在离线机上用 `syedge-license-signer verify -key … -request … -signed …` 核对（测试 kid 未内置，命令行 `import` 会按设计拒绝它）。
 也可以用一套独立的演练授权后台（单独的数据目录）走完整流程：登记测试公钥 → 起草、审批 → 导出批次 → 离线签名 → 导入 → 吊销 → 再签发吊销列表。演练产生的 License 只用于核对流程，客户控制台不会接受（公钥未内置）。
 确认人员熟悉流程后，销毁演练产生的私钥文件与演练后台的数据目录。

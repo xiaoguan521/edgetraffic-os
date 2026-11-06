@@ -1,7 +1,7 @@
 // hpack-gen 输出一个小写 ASCII 字符串的 HPACK 字面量编码（RFC 7541 5.2 / 附录 B），
 // 用于替换 HTTP/2 filter 中预编码的 server 响应头值。
 //
-//	go run ./dataplane/hpack-gen syapp
+//	go run ./dataplane/hpack-gen syedge
 //	{ 0x84, 0x47, 0xa1, 0xd7, 0x5f }
 //
 // 只收录产品名可能用到的字符；新增字符时按 RFC 7541 附录 B 补表，并在测试中加入已知样例。

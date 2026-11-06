@@ -1,4 +1,4 @@
-# EdgeTraffic OS 完整功能测试清单（MVP 回归 + P6–P10）
+# SyEdge 完整功能测试清单（MVP 回归 + P6–P10）
 
 更新日期：2026-11-05。源码基线：`main`（含 `scripts/ci/release-gate.sh` 发布门禁与 29 表备份全覆盖）。
 
@@ -16,7 +16,7 @@
 | --- | --- |
 | 本轮编号 / 日期 / 执行人 | 待填写 |
 | 源码与镜像 | console、node、demo-backend 各自提交、标签及不可变 digest |
-| 数据面与附加包 | syapp 版本、standard/gmssl、agent 版本、Lua 附加包版本 |
+| 数据面与附加包 | syedge 版本、standard/gmssl、agent 版本、Lua 附加包版本 |
 | 系统与架构 | Linux 发行版、内核、amd64/arm64、容器或实机 |
 | 数据库 | SQLite/PostgreSQL 版本、全新库或升级库 |
 | 授权 | 版本、功能位、节点/站点配额、有效期与维护期；不记录私钥 |
@@ -99,7 +99,7 @@
 | MVP-19 | 节点吊销重接入 | 吊销节点，观察业务，再使用新令牌接入 | 旧身份不再受信；现有数据面不停；新身份可接入 | 待执行 |
 | MVP-20 | 审计追踪 | 查看以上成功与失败的变更记录并校验哈希链 | 人、时间、对象、结果可追溯，哈希链完整 | 待执行 |
 | MVP-21 | 并发发布 | 并发发起 20 次发布并检查各目标版本 | 无串扰、无错配；冲突明确返回，业务保持可用 | 待执行 |
-| MVP-22 | 品牌与声明 | 检查版本、进程、Server 头、关于页与 NOTICE | 产品标识为 syapp，保留规定的上游版权声明 | 待执行 |
+| MVP-22 | 品牌与声明 | 检查版本、进程、Server 头、关于页与 NOTICE | 产品标识为 syedge，保留规定的上游版权声明 | 待执行 |
 
 <a id="ui"></a>
 
@@ -165,7 +165,7 @@
 | SITE-06 | 上游策略 | 对页面支持的负载策略、权重和节点失效分别发流量 | 选路符合配置，可用后端继续服务 | 待执行 |
 | SITE-07 | 代理请求头 | 核对 Host、客户端 IP、协议头及 location 覆盖行为 | 基线五条代理头保持完整，真实客户端信息正确 | 待执行 |
 | SITE-08 | 渲染安全 | 换行、引号、变量、路径穿越与配置注入输入 | 校验或转义有效，不能注入额外指令 | 待执行 |
-| SITE-09 | 包确定性 | 同输入重复渲染打包并执行真实 syapp -t | 输出确定、校验通过；版本目录自包含，include 相对引用 | 待执行 |
+| SITE-09 | 包确定性 | 同输入重复渲染打包并执行真实 syedge -t | 输出确定、校验通过；版本目录自包含，include 相对引用 | 待执行 |
 | SITE-10 | 线上与草稿隔离 | 未发布草稿存在时执行回滚或证书续期 | 应急操作基于线上版本，不夹带草稿 | 待执行 |
 
 <a id="cert"></a>
@@ -193,7 +193,7 @@
 
 | 编号 | 场景 | 操作 / 输入 | 预期结果 | 本轮状态 |
 | --- | --- | --- | --- | --- |
-| IMP-01 | 配置文本导入 | 上传 nginx -T 或 syapp -T 的完整输出及支持的 .conf 文本样本 | 支持内容转为站点、上游；报告与源配置对应 | 待执行 |
+| IMP-01 | 配置文本导入 | 上传 nginx -T 或 syedge -T 的完整输出及支持的 .conf 文本样本 | 支持内容转为站点、上游；报告与源配置对应 | 待执行 |
 | IMP-02 | 目录归档导入 | 上传含主配置、include、证书的 tar.gz/tgz | 解析依赖与证书，保留可转换内容 | 待执行 |
 | IMP-03 | 转换完整性 | 样本包含多 server、upstream、location、HTTPS 与重复名称 | 逐项核对转换值与冲突处理，不静默覆盖现有业务 | 待执行 |
 | IMP-04 | 逐行报告 | 混入不支持、部分支持及非法指令 | 区分完全、部分、无法转换，定位源文件与行号；可下载报告 | 待执行 |
@@ -256,13 +256,13 @@
 
 | 编号 | 场景 | 操作 / 输入 | 预期结果 | 本轮状态 |
 | --- | --- | --- | --- | --- |
-| UPG-01 | 签名包入库 | 导入合法 syapp、agent 包和重复包 | 元数据、架构、版本、变体与签名一致；重复行为明确 | 待执行 |
+| UPG-01 | 签名包入库 | 导入合法 syedge、agent 包和重复包 | 元数据、架构、版本、变体与签名一致；重复行为明确 | 待执行 |
 | UPG-02 | 非法包拦截 | 篡改包、错签名、未知 KID、路径穿越、错误架构与错误变体 | 控制台与 wrapper 验签均拒绝，线上无变化 | 待执行 |
 | UPG-03 | 分批升级 | 按 1/5/其余规划批次，观察批内并发与批间串行 | 执行顺序、进度、目标节点正确 | 待执行 |
 | UPG-04 | 失败停止 | 任一节点升级失败或超时 | 停止后续批次，失败节点恢复旧版，原因可追踪 | 待执行 |
 | UPG-05 | 真实热升级 | 持续短请求与长连接时升级数据面 | USR2/WINCH 协议正确，无 restart，旧连接完成 | 待执行 |
 | UPG-06 | 升级中止与回退 | 在新 master 就绪前后触发支持的中止；升级后回退原版 | 二进制、配置与进程恢复一致，业务保持可用 | 待执行 |
-| UPG-07 | agent 自升级 | 合法签名 agent 包升级，再测失败与控制连接恢复 | 新 agent 运行并重连，失败可恢复，不停止 syapp | 待执行 |
+| UPG-07 | agent 自升级 | 合法签名 agent 包升级，再测失败与控制连接恢复 | 新 agent 运行并重连，失败可恢复，不停止 syedge | 待执行 |
 | UPG-08 | 维护期门禁 | 授权维护期不足、只读授权、节点变体不兼容时升级 | 按许可与兼容性要求拒绝 | 待执行 |
 | UPG-09 | wrapper 参数边界 | test/reload/reopen/quit/upgrade-start/commit/abort 合法及注入参数 | 仅受限命令与格式通过，无法执行任意命令 | 待执行 |
 
@@ -439,7 +439,7 @@
 | LIC-05 | 时钟与维护期 | 时钟回拨、跨过到期和宽限期、超维护期限升级 | 状态变化及升级约束符合策略，数据面持续运行 | 待执行 |
 | LIC-06 | 吊销列表 | 导入合法更新、旧序列、错签名与含当前授权的 CRL | 合法吊销生效，回退与伪造列表被拒 | 待执行 |
 | LIC-07 | 应急例外矩阵 | 在失效/过期状态下回滚、恢复漂移、续期、导入授权与 CRL | 应急接口可用且不允许夹带普通配置变更 | 待执行 |
-| LIC-08 | agent 本地门禁 | 节点与控制台对授权判断不一致或节点离线后到期 | agent 独立校验，永远不停止 syapp | 待执行 |
+| LIC-08 | agent 本地门禁 | 节点与控制台对授权判断不一致或节点离线后到期 | agent 独立校验，永远不停止 syedge | 待执行 |
 
 <a id="bkp"></a>
 
@@ -492,7 +492,7 @@
 
 ## PORTAL：厂商授权后台与离线签名工具
 
-关联实现与测试入口：`internal/portal/`、`cmd/syapp-license-signer/`、`docs/license-ops.md`。需逐项核实覆盖范围。
+关联实现与测试入口：`internal/portal/`、`cmd/syedge-license-signer/`、`docs/license-ops.md`。需逐项核实覆盖范围。
 
 | 编号 | 场景 | 操作 / 输入 | 预期结果 | 本轮状态 |
 | --- | --- | --- | --- | --- |
@@ -584,7 +584,7 @@
 | 告警 SSRF 与重定向防护 (`ALERT-04`) | `TestRejectsPrivateAlertTargets`、`TestBlockedAlertAddr`、`TestAlertRedirectLimit`、`TestSMTPTargetGuard` 通过：拦截 loopback、RFC1918、RFC6598、链路本地、云元数据（169.254.169.254 / 100.100.100.200 / fd00:ec2::254）、NAT64/6to4/Teredo 及重定向链 |
 | 备份全模型覆盖与校验 (`BKP-07`) | `backup.tables()` 补齐全部 29 个持久化模型（含 `static_bundles` 等 14 张新增表），`TestTablesCoverAllStoreModels` 自动守卫 `store.Models()`，`TestBackupRestoreRoundTrip` 验证静态资源包等数据在恢复后完整保留（恢复后站点的预览与发布暂无自动化用例，需按 BKP-07 手工执行）；新增 `verify-backup`、`restore -dry-run`、`backup-prune`；跨 PostgreSQL 17 实例迁移待在 PG 环境复跑确认 |
 | 过期授权应急通道 (`CERT-05`、`DRF-03`、`LIC-07`) | Agent 持久化受控版本基线与文件清单（`.approved/`），`TestExpiredLicenseEmergencyOperations` 与 `TestRestoreClearsDriftStateImmediately` 验证过期授权下回滚、手动/国密证书续期与漂移恢复（含 `MANIFEST.json` 被篡改场景）均被允许且立即清除漂移状态，普通配置变更仍被拒绝 |
-| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syapp-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]`。同机多实例当时未达到发布要求、v0.2 未提供；已在 P11 按 `docs/design/0001-deploy-layout.md` 重做并随安装包提供（`syapp@` / `syapp-agent@` 单元、按实例生成的 sudoers，CI 验收 `scripts/ci/p11-acceptance.sh`） |
+| 探针、指标、卸载与多实例 | 新增 `/livez`、`/readyz`、`/metrics`（保持 `/healthz` 与 `/api/v1/metrics` 语义不变）；扩展 `deployment_rolled_back`、`backup_stale`、`disk_usage` 告警规则；补齐磁盘空间预检、发布并发上限、`syedge-preremove.sh` 非交互停止、`deploy/node/uninstall.sh [--purge]`。同机多实例当时未达到发布要求、v0.2 未提供；已在 P11 按 `docs/design/0001-deploy-layout.md` 重做并随安装包提供（`syedge@` / `syedge-agent@` 单元、按实例生成的 sudoers，CI 验收 `scripts/ci/p11-acceptance.sh`） |
 
 ### 2026-11-02 本聊天实际执行记录
 
@@ -627,4 +627,4 @@
 
 ## 发布判定
 
-P0 问题必须清零；范围内 P1 用例通过且失败项闭环；未执行/阻塞/不适用须逐项列明，不计作通过。涉及条件门禁必须同时核对 UI 与直接 API；涉及热升级必须用真实 syapp 和业务流量；涉及应急操作必须覆盖过期/无效授权下的行为。发布报告应附测试环境、固定制品摘要、通过/失败/阻塞数量及已知限制。
+P0 问题必须清零；范围内 P1 用例通过且失败项闭环；未执行/阻塞/不适用须逐项列明，不计作通过。涉及条件门禁必须同时核对 UI 与直接 API；涉及热升级必须用真实 syedge 和业务流量；涉及应急操作必须覆盖过期/无效授权下的行为。发布报告应附测试环境、固定制品摘要、通过/失败/阻塞数量及已知限制。

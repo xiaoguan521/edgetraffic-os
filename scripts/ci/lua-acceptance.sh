@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# P10 验收（规格书 12.5）：在一台干净的机器上，以生产路径验证规则积木与 syapp-lua 附加包。
+# P10 验收（规格书 12.5）：在一台干净的机器上，以生产路径验证规则积木与 syedge-lua 附加包。
 #   用法：scripts/ci/lua-acceptance.sh <dist-lua 目录> <standard|gmssl>
 #   需要：sudo、go、python3、openssl、curl、wrk；PKG_KEY / PKG_KID 为 CI 升级包签名私钥与编号，
-#         WRAPPER 为注入了对应公钥（pkgsig.ciKey）的 syapp-wrapper，LIC 为 syapp-license-server。
+#         WRAPPER 为注入了对应公钥（pkgsig.ciKey）的 syedge-wrapper，LIC 为 syedge-license-server。
 #         PERF_GATE=0 时 QPS 门槛只报告不拦截（默认 1，拦截）。
-# 覆盖：模块加载与真实 syapp -t；原生规则（IP / UA / 路径 / 跳转 / 限速 / 外部鉴权）；JWT HS256 / RS256；
+# 覆盖：模块加载与真实 syedge -t；原生规则（IP / UA / 路径 / 跳转 / 限速 / 外部鉴权）；JWT HS256 / RS256；
 #      Lua 沙箱；reload；带附加包的热升级与中止；标准 HTTPS 与国密 NTLS；附加包安装与卸载；品牌检查；
 #      三条常用规则下 QPS 下降不超过 15%。
 set -uo pipefail
 DIST=$(realpath "$1"); BASE=$2
 : "${PKG_KEY:?}" "${PKG_KID:?}" "${WRAPPER:?}" "${LIC:?}"
 # wrapper 按自身的安装位置确定运行方式（system 模式只接受固定路径）：装到正式位置后调用
-sudo install -D -m 0755 "$WRAPPER" /usr/libexec/syapp/syapp-wrapper
-WRAPPER=/usr/libexec/syapp/syapp-wrapper
-# 与 syapp-instance nonroot 设置的相同：wrapper 以 syapp 运行，带 CAP_NET_BIND_SERVICE（permitted / inheritable）供 -t 绑定 80/443
+sudo install -D -m 0755 "$WRAPPER" /usr/libexec/syedge/syedge-wrapper
+WRAPPER=/usr/libexec/syedge/syedge-wrapper
+# 与 syedge-instance nonroot 设置的相同：wrapper 以 syedge 运行，带 CAP_NET_BIND_SERVICE（permitted / inheritable）供 -t 绑定 80/443
 command -v setcap >/dev/null || sudo apt-get install -y -qq libcap2-bin >/dev/null
-id syapp >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin syapp
-sudo chown root:syapp "$WRAPPER" && sudo chmod 0750 "$WRAPPER" && sudo setcap cap_net_bind_service=ip "$WRAPPER"
+id syedge >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin syedge
+sudo chown root:syedge "$WRAPPER" && sudo chmod 0750 "$WRAPPER" && sudo setcap cap_net_bind_service=ip "$WRAPPER"
 ARCH=$(uname -m); GOARCH=amd64; [[ $ARCH == aarch64 ]] && GOARCH=arm64
 W=$(mktemp -d); chmod 755 "$W"
 # 意外退出（例如命令不存在、变量未定义）时也留下注解：原始日志不一定能下载
@@ -35,22 +35,22 @@ req() {
 }
 body() { cat "$W/body"; }
 
-SY=/opt/syapp/sbin/syapp
-basepkg=$(ls "$DIST"/base/syapp-*-"$ARCH".tar.gz | grep -v gmssl | head -1)
-[[ $BASE == gmssl ]] && basepkg=$(ls "$DIST"/base/syapp-*-gmssl-"$ARCH".tar.gz | head -1)
-luapkg=$(ls "$DIST"/syapp-lua-*-"$ARCH".tar.gz | head -1)
+SY=/opt/syedge/sbin/syedge
+basepkg=$(ls "$DIST"/base/syedge-*-"$ARCH".tar.gz | grep -v gmssl | head -1)
+[[ $BASE == gmssl ]] && basepkg=$(ls "$DIST"/base/syedge-*-gmssl-"$ARCH".tar.gz | head -1)
+luapkg=$(ls "$DIST"/syedge-lua-*-"$ARCH".tar.gz | head -1)
 [[ -f "$basepkg" && -f "$luapkg" ]] || die "missing packages in $DIST"
 echo "== 基础包 $(basename "$basepkg")，附加包 $(basename "$luapkg")"
 
 echo "== 安装基础包"
 sudo tar -C / -xzf "$basepkg"
-sudo useradd -r -s /usr/sbin/nologin syapp 2>/dev/null || true
-sudo mkdir -p /run/syapp /var/log/syapp /var/cache/syapp /var/lib/syapp-agent/upgrade /opt/syapp/conf/releases /opt/syapp/versions /opt/syapp/modules
-# 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syapp 运行
-sudo chown -R syapp:syapp /run/syapp /var/log/syapp /var/cache/syapp /opt/syapp/versions
-sudo chown syapp:syapp /opt/syapp/sbin /opt/syapp/modules
+sudo useradd -r -s /usr/sbin/nologin syedge 2>/dev/null || true
+sudo mkdir -p /run/syedge /var/log/syedge /var/cache/syedge /var/lib/syedge-agent/upgrade /opt/syedge/conf/releases /opt/syedge/versions /opt/syedge/modules
+# 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行
+sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge /opt/syedge/versions
+sudo chown syedge:syedge /opt/syedge/sbin /opt/syedge/modules
 sudo ip addr add 10.99.0.1/32 dev lo 2>/dev/null || true
-VER=$($SY -v 2>&1 | sed -n 's|.*syapp/\([0-9.]*\).*|\1|p')
+VER=$($SY -v 2>&1 | sed -n 's|.*syedge/\([0-9.]*\).*|\1|p')
 bin_sha=$(sha256sum "$SY" | cut -c1-64)
 check "基础包 -V 带 auth_request" "$($SY -V 2>&1)" "http_auth_request_module"
 [[ $BASE == gmssl ]] && check "国密基础包 -V 带 enable-ntls" "$($SY -V 2>&1)" "enable-ntls"
@@ -60,16 +60,16 @@ for s in EVP_sha256 HMAC CRYPTO_memcmp BIO_new_mem_buf BIO_free PEM_read_bio_PUB
   grep -qx "$s" "$W/exports" || missing+=" $s"
 done
 [[ -z "$missing" ]] && ok "基础包导出 etos.jwt 需要的 OpenSSL 函数" || bad "基础包没有导出:$missing"
-# 渲染器黄金用例（含规则积木、外部鉴权；国密版另跑国密双证书）过真实基础包的 syapp -t
-golden='TestRenderSyappSyntax$|TestRulesSyappSyntax$'
-gmenv0=(); [[ $BASE == gmssl ]] && { golden+='|TestRenderGMSyappSyntax$'; gmenv0=(SYAPP_GM_BIN=$SY); }
+# 渲染器黄金用例（含规则积木、外部鉴权；国密版另跑国密双证书）过真实基础包的 syedge -t
+golden='TestRenderSyedgeSyntax$|TestRulesSyedgeSyntax$'
+gmenv0=(); [[ $BASE == gmssl ]] && { golden+='|TestRenderGMSyedgeSyntax$'; gmenv0=(SYEDGE_GM_BIN=$SY); }
 if out=$(sudo env "PATH=$PATH" CI=1 GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" "${gmenv0[@]}" go test -count=1 -run "$golden" ./internal/render/ 2>&1); then
-  ok "渲染器黄金用例（基线、规则积木、外部鉴权$([[ $BASE == gmssl ]] && echo '、国密')）通过真实 syapp -t"
+  ok "渲染器黄金用例（基线、规则积木、外部鉴权$([[ $BASE == gmssl ]] && echo '、国密')）通过真实 syedge -t"
 else
-  bad "golden syapp -t: $(grep -E 'emerg|FAIL|failed' <<<"$out" | head -3 | tr '\n' ' ')"
+  bad "golden syedge -t: $(grep -E 'emerg|FAIL|failed' <<<"$out" | head -3 | tr '\n' ' ')"
 fi
 
-echo "== 后端（第二个 syapp 实例，测试替身：业务后端与鉴权服务）"
+echo "== 后端（第二个 syedge 实例，测试替身：业务后端与鉴权服务）"
 mkdir -p "$W/backend"
 cat > "$W/backend/b.conf" <<EOF
 worker_processes 2;
@@ -86,14 +86,14 @@ head -c 4096 /dev/urandom > "$W/backend/4k.bin"   # 压测用的 4 KB 响应（�
 chmod 0644 "$W/backend/4k.bin"; chmod o+x "$W" "$W/backend"
 sudo $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
 
-echo "== 安装 syapp-lua 附加包"
+echo "== 安装 syedge-lua 附加包"
 mkdir -p "$W/lua" && tar -C "$W/lua" -xzf "$luapkg"
 out=$(sudo bash "$W/lua/install.sh" 2>&1) || die "install.sh failed: $out"
 check "附加包安装（自检通过）" "$out" "已安装（$BASE）"
-check "模块软链指向本版本" "$(readlink /opt/syapp/modules/lua)" "lua-$VER"
+check "模块软链指向本版本" "$(readlink /opt/syedge/modules/lua)" "lua-$VER"
 [[ "$(sha256sum "$SY" | cut -c1-64)" == "$bin_sha" ]] && ok "安装附加包不改动基础包二进制" || bad "基础包二进制被改动"
 
-echo "== 生成验收配置（真实渲染器 + 真实 syapp -t）"
+echo "== 生成验收配置（真实渲染器 + 真实 syedge -t）"
 HS=$(head -c 64 /dev/urandom | base64 -w0 | tr -d '/+=' | head -c 48)   # 渲染器要求至少 32 个字符
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$W/rs.key" 2>/dev/null
 openssl pkey -in "$W/rs.key" -pubout -out "$W/rs.pub"
@@ -112,17 +112,17 @@ render() { # <版本> <是否含 Lua>
     ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" \
     go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1 || return 1
   # 与 agent 写出的版本一致：数据面用户所在组可读（私钥 0640）
-  sudo chgrp -R syapp /opt/syapp/conf && sudo chmod -R g+rX /opt/syapp/conf
+  sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf
 }
-render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
-ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
-sudo ln -sfn releases/r900100 /opt/syapp/conf/current
-# 前面以 root 执行的 syapp -t（渲染器黄金用例）可能创建了属于 root 的日志：交还给 syapp
-sudo chown -R syapp:syapp /var/log/syapp /var/cache/syapp /run/syapp
-# 与 syapp.service 相同的身份：syapp 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
-sudo setpriv --reuid=syapp --regid=syapp --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- $SY \
-  || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
-m=$(cat /run/syapp/syapp.pid); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syapp)" ]] && ok "master 以 syapp 运行（不是 root）" || bad "master 以 root 运行"
+render r900100 1 || die "render/syedge -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
+ok "含 Lua 规则的版本通过真实 syedge -t（加载 ndk / lua 模块）"
+sudo ln -sfn releases/r900100 /opt/syedge/conf/current
+# 前面以 root 执行的 syedge -t（渲染器黄金用例）可能创建了属于 root 的日志：交还给 syedge
+sudo chown -R syedge:syedge /var/log/syedge /var/cache/syedge /run/syedge
+# 与 syedge.service 相同的身份：syedge 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
+sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- $SY \
+  || die "syedge did not start: $(sudo tail -5 /var/log/syedge/error.log)"
+m=$(cat /run/syedge/syedge.pid); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syedge)" ]] && ok "master 以 syedge 运行（不是 root）" || bad "master 以 root 运行"
 sleep 1
 
 TOK() { python3 scripts/ci/jwtgen.py "$@"; }
@@ -163,13 +163,13 @@ mkdir -p "$W/sb"
 cat > "$W/sb/sb.conf" <<EOF
 pid $W/sb/pid;
 error_log $W/sb/error.log;
-load_module /opt/syapp/modules/lua/ndk_http_module.so;
-load_module /opt/syapp/modules/lua/ngx_http_lua_module.so;
+load_module /opt/syedge/modules/lua/ndk_http_module.so;
+load_module /opt/syedge/modules/lua/ngx_http_lua_module.so;
 events { worker_connections 64; }
 http {
     access_log off;
-    lua_package_path  "/opt/syapp/modules/lua/lualib/?.lua";
-    lua_package_cpath "/opt/syapp/modules/lua/lualib/?.disabled";
+    lua_package_path  "/opt/syedge/modules/lua/lualib/?.lua";
+    lua_package_cpath "/opt/syedge/modules/lua/lualib/?.disabled";
     init_by_lua_block { require("etos.init").setup({}) }
     server {
         listen 127.0.0.1:18099;
@@ -201,7 +201,7 @@ if [[ $BASE == gmssl ]]; then
 fi
 
 echo "== reload"
-out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "wrapper reload failed: $out"
+out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "wrapper reload failed: $out"
 sleep 1
 check "reload 后 JWT 仍然生效（init 重新执行）" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/a)$(body)" "200backend user=alice"
 check "reload 后拒绝无令牌请求" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
@@ -212,39 +212,39 @@ mkpkgs() { # <版本>
   local v=$1
   local d="$W/up-$v"
   mkdir -p "$d/s/sbin" "$d/l"
-  sudo cat "$(readlink -f "$SY")" > "$d/s/sbin/syapp"; chmod 755 "$d/s/sbin/syapp"
+  sudo cat "$(readlink -f "$SY")" > "$d/s/sbin/syedge"; chmod 755 "$d/s/sbin/syedge"
   echo "$v" > "$d/s/VERSION"; cp docs/NOTICE "$d/s/NOTICE"
-  tar -C "$d/s" --owner=0 --group=0 -czf "$d/syapp-$v.tar.gz" sbin/syapp VERSION NOTICE
+  tar -C "$d/s" --owner=0 --group=0 -czf "$d/syedge-$v.tar.gz" sbin/syedge VERSION NOTICE
   tar -C "$d/l" -xzf "$luapkg"
   sed -i "s/\"version\":\"[^\"]*\"/\"version\":\"$v\"/" "$d/l/addon/VERSION"
-  tar -C "$d/l" --owner=0 --group=0 -czf "$d/syapp-lua-$v.tar.gz" install.sh uninstall.sh addon
-  "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syapp-$v.tar.gz" -name syapp -version "$v" -arch "$GOARCH" -variant "$variant" >/dev/null
-  "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syapp-lua-$v.tar.gz" -name syapp-lua -version "$v" -arch "$GOARCH" -variant lua >/dev/null
-  sudo cp "$d"/syapp-*"$v".tar.gz* /var/lib/syapp-agent/upgrade/
+  tar -C "$d/l" --owner=0 --group=0 -czf "$d/syedge-lua-$v.tar.gz" install.sh uninstall.sh addon
+  "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syedge-$v.tar.gz" -name syedge -version "$v" -arch "$GOARCH" -variant "$variant" >/dev/null
+  "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syedge-lua-$v.tar.gz" -name syedge-lua -version "$v" -arch "$GOARCH" -variant lua >/dev/null
+  sudo cp "$d"/syedge-*"$v".tar.gz* /var/lib/syedge-agent/upgrade/
 }
 up2="$VER-2"; up3="$VER-3"
 mkpkgs "$up2"
-sudo rm -f "/var/lib/syapp-agent/upgrade/syapp-lua-$up2.tar.gz"
-out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up2" 2>&1)
+sudo rm -f "/var/lib/syedge-agent/upgrade/syedge-lua-$up2.tar.gz"
+out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up2" 2>&1)
 check "缺少附加包时拒绝升级（未改动任何东西）" "$out" "add-on"
-check "拒绝后模块软链不变" "$(readlink /opt/syapp/modules/lua)" "lua-$VER"
+check "拒绝后模块软链不变" "$(readlink /opt/syedge/modules/lua)" "lua-$VER"
 mkpkgs "$up2"
-out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up2" 2>&1) || bad "upgrade-start $up2 failed: $out"
-check "升级后模块软链指向新版本" "$(readlink /opt/syapp/modules/lua)" "lua-$up2"
+out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up2" 2>&1) || bad "upgrade-start $up2 failed: $out"
+check "升级后模块软链指向新版本" "$(readlink /opt/syedge/modules/lua)" "lua-$up2"
 sleep 1
 check "升级中（新 worker）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/a)$(body)" "200backend user=alice"
-out=$(sudo -n -u syapp "$WRAPPER" upgrade-commit 2>&1) || bad "upgrade-commit failed: $out"
+out=$(sudo -n -u syedge "$WRAPPER" upgrade-commit 2>&1) || bad "upgrade-commit failed: $out"
 sleep 1
 check "提交后 JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/x)" "200"
 mkpkgs "$up3"
-out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up3" 2>&1) || bad "upgrade-start $up3 failed: $out"
-out=$(sudo -n -u syapp "$WRAPPER" upgrade-abort 2>&1) || bad "upgrade-abort failed: $out"
-check "中止后模块软链切回" "$(readlink /opt/syapp/modules/lua)" "lua-$up2"
+out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up3" 2>&1) || bad "upgrade-start $up3 failed: $out"
+out=$(sudo -n -u syedge "$WRAPPER" upgrade-abort 2>&1) || bad "upgrade-abort failed: $out"
+check "中止后模块软链切回" "$(readlink /opt/syedge/modules/lua)" "lua-$up2"
 sleep 1
 check "中止后（旧 master 重载配置）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/y)$(body)" "200backend user=alice"
-out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload after abort failed: $out"
+out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload after abort failed: $out"
 check "中止后 reload 正常" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
-check "进程名为 syapp" "$(ps -eo comm | sort -u | grep -i syapp | tr '\n' ' ')" "syapp"
+check "进程名为 syedge" "$(ps -eo comm | sort -u | grep -i syedge | tr '\n' ' ')" "syedge"
 nocheck "没有上游名进程" "$(ps -eo comm,args | grep -vi ' grep' | grep -i 'ngi''nx' || true)" "ngi"
 
 echo "== 性能：三条常用规则（IP 拒绝、UA 拒绝、JWT 校验）下 QPS 下降不超过 15%"
@@ -295,40 +295,40 @@ else
   ok "QPS 下降 $(pct "$drop")，超过 15%，但本机器上不作门槛（PERF_GATE=0）"
 fi
 
-# 参考（不作门槛）：隔离最坏情况——前端 syapp 绑 0-1、后端 2、wrk 3，前端是唯一瓶颈，Lua 固定开销占比被放大
+# 参考（不作门槛）：隔离最坏情况——前端 syedge 绑 0-1、后端 2、wrk 3，前端是唯一瓶颈，Lua 固定开销占比被放大
 if (( $(nproc) >= 4 )); then
-  for p in $(pgrep -x syapp); do sudo taskset -a -p -c 0,1 "$p" >/dev/null || true; done
+  for p in $(pgrep -x syedge); do sudo taskset -a -p -c 0,1 "$p" >/dev/null || true; done
   bp=$(cat "$W/backend/pid")
   for p in "$bp" $(pgrep -P "$bp"); do sudo taskset -a -p -c 2 "$p" >/dev/null || true; done
   read -r wdrop _ wraw <<<"$(abba 2 taskset -c 3)"
   echo "::notice title=perf-isolated $BASE/$ARCH::隔离最坏情况（参考，不作门槛）ABBA ×2：$wraw；中位下降 $(pct "$wdrop")"
-  for p in $(pgrep -x syapp); do sudo taskset -a -p -c "0-$(( $(nproc) - 1 ))" "$p" >/dev/null || true; done
+  for p in $(pgrep -x syedge); do sudo taskset -a -p -c "0-$(( $(nproc) - 1 ))" "$p" >/dev/null || true; done
 fi
 
 echo "== 附加包卸载"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) && bad "配置仍使用 Lua 时卸载被允许" || check "配置仍使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
 render r900101 0 || bad "render without Lua failed"
-sudo ln -sfn releases/r900101 /opt/syapp/conf/current
-out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
+sudo ln -sfn releases/r900101 /opt/syedge/conf/current
+out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
 sleep 1
 check "切换到不含 Lua 的配置后原生规则仍生效" "$(req -H "$H" -A BadBot http://127.0.0.1/)" "403"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) || bad "uninstall failed: $out"
-[[ ! -e /opt/syapp/modules/lua ]] && ! ls -d /opt/syapp/modules/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
-out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"
+[[ ! -e /opt/syedge/modules/lua ]] && ! ls -d /opt/syedge/modules/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
+out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"
 sleep 1
-check "卸载后 syapp 正常服务" "$(req -H "$H" http://127.0.0.1/)" "200"
-check "卸载后（未装附加包）含 Lua 的版本被 syapp -t 拒绝（agent 会回滚）" "$(sudo $SY -t -q -c /opt/syapp/conf/releases/r900100/syapp.conf 2>&1)" "modules/lua"
+check "卸载后 syedge 正常服务" "$(req -H "$H" http://127.0.0.1/)" "200"
+check "卸载后（未装附加包）含 Lua 的版本被 syedge -t 拒绝（agent 会回滚）" "$(sudo $SY -t -q -c /opt/syedge/conf/releases/r900100/syedge.conf 2>&1)" "modules/lua"
 
-echo "== 品牌：上游名只允许出现在 /opt/syapp/modules/lua-*/（附加包模块与其 Lua 库）"
+echo "== 品牌：上游名只允许出现在 /opt/syedge/modules/lua-*/（附加包模块与其 Lua 库）"
 out=$(sudo bash "$W/lua/install.sh" 2>&1) || bad "re-install failed: $out"
 # NOTICE 等文件中 BSD 许可要求保留的归因句 “Based on NGINX Open Source (BSD-2-Clause)” 不算泄漏
 leaks=""
 # NOTICE 文件保留 BSD 许可要求的上游版权与归因，属于允许范围
-for f in $(sudo grep -rlai 'ngi''nx' /opt/syapp /var/log/syapp 2>/dev/null | grep -v '^/opt/syapp/modules/lua-[^/]*/' | grep -v '/NOTICE$'); do
+for f in $(sudo grep -rlai 'ngi''nx' /opt/syedge /var/log/syedge 2>/dev/null | grep -v '^/opt/syedge/modules/lua-[^/]*/' | grep -v '/NOTICE$'); do
   sudo grep -ai 'ngi''nx' "$f" | grep -vq 'NGINX Open Source (BSD-2-Clause)' && leaks+=" $f"
 done
 [[ -z "$leaks" ]] && ok "模块目录之外没有上游名（二进制、配置、日志、脚本）" || bad "上游名出现在：$(echo $leaks)"
-leaks=$(sudo grep -rlai 'ngi''nx' /opt/syapp/modules/lua/lualib/etos /opt/syapp/modules/lua/VERSION /opt/syapp/modules/lua/BASE 2>/dev/null || true)
+leaks=$(sudo grep -rlai 'ngi''nx' /opt/syedge/modules/lua/lualib/etos /opt/syedge/modules/lua/VERSION /opt/syedge/modules/lua/BASE 2>/dev/null || true)
 [[ -z "$leaks" ]] && ok "etos 规则库与附加包元数据没有上游名" || bad "上游名出现在：$(echo $leaks)"
 [[ "$(sha256sum "$(readlink -f "$SY")" | cut -c1-64)" == "$bin_sha" ]] && ok "基础包二进制自始至终未改变" || bad "base binary changed"
 

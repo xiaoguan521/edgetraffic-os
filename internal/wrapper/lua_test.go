@@ -31,7 +31,7 @@ func luaPackage(t *testing.T, ver string, extra map[string]string) []byte {
 		"addon/gmssl/ngx_http_lua_module.so":    "gm-lua",
 		"addon/lualib/resty/core.lua":           "return {}",
 		"addon/lualib/etos/jwt.lua":             "return {}",
-		"addon/VERSION":                         fmt.Sprintf(`{"name":"syapp-lua","version":%q}`, ver),
+		"addon/VERSION":                         fmt.Sprintf(`{"name":"syedge-lua","version":%q}`, ver),
 		"addon/NOTICE":                          "notice",
 	}
 	for k, v := range extra {
@@ -51,26 +51,26 @@ func luaPackage(t *testing.T, ver string, extra map[string]string) []byte {
 
 func dropLua(t *testing.T, p Paths, priv ed25519.PrivateKey, ver, variant string, pkg []byte) {
 	t.Helper()
-	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-lua", ver, p.Arch, variant, pkg)
+	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge-lua", ver, p.Arch, variant, pkg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sb, _ := json.Marshal(sig)
-	base := filepath.Join(p.Incoming, "syapp-lua-"+ver+".tar.gz")
+	base := filepath.Join(p.Incoming, "syedge-lua-"+ver+".tar.gz")
 	_ = os.WriteFile(base, pkg, 0o644)
 	_ = os.WriteFile(base+".sig", sb, 0o644)
 }
 
-// 节点装有 syapp-lua 时的热升级：缺附加包时在任何改动前拒绝；附加包坏 / 签名不符被拒绝；
+// 节点装有 syedge-lua 时的热升级：缺附加包时在任何改动前拒绝；附加包坏 / 签名不符被拒绝；
 // 正常升级把模块软链切到目标版本（只取对应基础变体的模块）；中止时先切回再让旧 master 重载。
 func TestHotUpgradeWithLuaAddon(t *testing.T) {
-	src := os.Getenv("SYAPP_BIN")
+	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
 		src = DataplaneBin
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 || runtime.GOOS != "linux" {
 		t.Skip("needs root on linux")
@@ -92,9 +92,9 @@ func TestHotUpgradeWithLuaAddon(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := freePort(t)
-	conf := filepath.Join(dir, "conf/syapp.conf")
+	conf := filepath.Join(dir, "conf/syedge.conf")
 	_ = os.WriteFile(conf, []byte(fmt.Sprintf(`worker_processes 1;
-pid %[1]s/run/syapp.pid;
+pid %[1]s/run/syedge.pid;
 error_log %[1]s/logs/error.log;
 events { worker_connections 64; }
 http {
@@ -107,13 +107,13 @@ http {
     server { listen 127.0.0.1:%[2]d; return 200 "ok\n"; }
 }
 `, dir, port)), 0o644)
-	p := Paths{Bin: filepath.Join(dir, "sbin/syapp"), Modules: filepath.Join(dir, "modules"), Versions: filepath.Join(dir, "versions"),
-		Incoming: filepath.Join(dir, "incoming"), PidFile: filepath.Join(dir, "run/syapp.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
+	p := Paths{Bin: filepath.Join(dir, "sbin/syedge"), Modules: filepath.Join(dir, "modules"), Versions: filepath.Join(dir, "versions"),
+		Incoming: filepath.Join(dir, "incoming"), PidFile: filepath.Join(dir, "run/syedge.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
 	_ = os.WriteFile(p.Bin, bin, 0o755)
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	if out, err := exec.Command(p.Bin, "-p", dir, "-c", conf).CombinedOutput(); err != nil {
-		t.Fatalf("start syapp: %v %s", err, out)
+		t.Fatalf("start syedge: %v %s", err, out)
 	}
 	t.Cleanup(func() {
 		for _, f := range []string{p.PidFile + ".oldbin", p.PidFile} {
@@ -142,17 +142,17 @@ http {
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {
 		t.Fatalf("traversal: %v", err)
 	}
-	// 签名是 syapp 包的（名称不符）：拒绝
+	// 签名是 syedge 包的（名称不符）：拒绝
 	wrong := luaPackage(t, "9.2.0", nil)
-	ws, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", "9.2.0", p.Arch, "standard", wrong)
+	ws, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", "9.2.0", p.Arch, "standard", wrong)
 	wb, _ := json.Marshal(ws)
-	_ = os.WriteFile(filepath.Join(p.Incoming, "syapp-lua-9.2.0.tar.gz"), wrong, 0o644)
-	_ = os.WriteFile(filepath.Join(p.Incoming, "syapp-lua-9.2.0.tar.gz.sig"), wb, 0o644)
+	_ = os.WriteFile(filepath.Join(p.Incoming, "syedge-lua-9.2.0.tar.gz"), wrong, 0o644)
+	_ = os.WriteFile(filepath.Join(p.Incoming, "syedge-lua-9.2.0.tar.gz.sig"), wb, 0o644)
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {
 		t.Fatalf("wrong package name: %v", err)
 	}
-	if _, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-lua", "9.2.0", p.Arch, "standard", wrong); err == nil {
-		t.Fatal("syapp-lua signed with a non-lua variant")
+	if _, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge-lua", "9.2.0", p.Arch, "standard", wrong); err == nil {
+		t.Fatal("syedge-lua signed with a non-lua variant")
 	}
 	dropLua(t, p, priv, "9.2.0", "lua", luaPackage(t, "9.1.9", nil))
 	if err := UpgradeStart(p, "9.2.0"); !errors.Is(err, ErrUpgrade) {
@@ -190,7 +190,7 @@ http {
 	}
 
 	// 5. 再次升级（附加包已安装，不需要重新投放）并提交
-	_ = os.Remove(filepath.Join(p.Incoming, "syapp-lua-9.2.0.tar.gz"))
+	_ = os.Remove(filepath.Join(p.Incoming, "syedge-lua-9.2.0.tar.gz"))
 	if err := UpgradeStart(p, "9.2.0"); err != nil {
 		t.Fatal(err)
 	}

@@ -18,15 +18,15 @@ import (
 
 // 同机两个实例共用一个数据面二进制（设计 0001 第 5.6 节）：
 // 第一个实例升级并提交后软链已是新版本，第二个实例仍能升级自己的 master；第二个实例中止时软链不切回；
-// 回退第一个实例再中止时，软链回到它切换之前的版本。需要 root 与真实的 syapp（SYAPP_BIN）。
-func TestHostUpgradeSharedBinaryRealSyapp(t *testing.T) {
-	src := os.Getenv("SYAPP_BIN")
+// 回退第一个实例再中止时，软链回到它切换之前的版本。需要 root 与真实的 syedge（SYEDGE_BIN）。
+func TestHostUpgradeSharedBinaryRealSyedge(t *testing.T) {
+	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
 		src = DataplaneBin
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 || runtime.GOOS != "linux" {
 		t.Skip("hot upgrade test needs root on linux")
@@ -41,7 +41,7 @@ func TestHostUpgradeSharedBinaryRealSyapp(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(dir, "html/index.html"), []byte("ok\n"), 0o644)
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	binPath := filepath.Join(dir, "sbin/syapp")
+	binPath := filepath.Join(dir, "sbin/syedge")
 	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ http {
 		return masterExe(pid)
 	}
 	link := func() string { l, _ := os.Readlink(binPath); return l }
-	newBin := filepath.Join(dir, "versions/9.1.0/sbin/syapp")
+	newBin := filepath.Join(dir, "versions/9.1.0/sbin/syedge")
 	drop(t, a.p, priv, "9.1.0", makePackage(t, bin, map[string]string{"VERSION": "9.1.0"}))
 
 	// 第一个实例：切换软链并提交
@@ -182,7 +182,7 @@ http {
 	if err := UpgradeStart(a.p, baseVer); err != nil {
 		t.Fatalf("rollback start: %v", err)
 	}
-	if link() != filepath.Join(dir, "versions", baseVer, "sbin/syapp") {
+	if link() != filepath.Join(dir, "versions", baseVer, "sbin/syedge") {
 		t.Fatalf("rollback did not switch the link: %q", link())
 	}
 	if err := UpgradeAbort(a.p); err != nil {

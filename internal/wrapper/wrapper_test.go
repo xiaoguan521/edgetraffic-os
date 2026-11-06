@@ -12,15 +12,15 @@ func TestBuildAllowed(t *testing.T) {
 		argv []string
 		want []string
 	}{
-		{[]string{"test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syapp/conf/releases/r000123/syapp.conf"}},
-		{[]string{"test", "r123456789012"}, []string{"-t", "-q", "-c", "/opt/syapp/conf/releases/r123456789012/syapp.conf"}},
+		{[]string{"test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syedge/conf/releases/r000123/syedge.conf"}},
+		{[]string{"test", "r123456789012"}, []string{"-t", "-q", "-c", "/opt/syedge/conf/releases/r123456789012/syedge.conf"}},
 		{[]string{"reload"}, []string{"-s", "reload"}},
 		{[]string{"reopen"}, []string{"-s", "reopen"}},
 		{[]string{"quit"}, []string{"-s", "quit"}},
-		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syapp/instances/edge-a/conf/releases/r000123/syapp.conf"}},
-		{[]string{"--instance", "edge-2", "reload"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "reload"}},
-		{[]string{"--instance", "edge-2", "reopen"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "reopen"}},
-		{[]string{"--instance", "edge-2", "quit"}, []string{"-c", "/opt/syapp/instances/edge-2/conf/current/syapp.conf", "-s", "quit"}},
+		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syedge/instances/edge-a/conf/releases/r000123/syedge.conf"}},
+		{[]string{"--instance", "edge-2", "reload"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "reload"}},
+		{[]string{"--instance", "edge-2", "reopen"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "reopen"}},
+		{[]string{"--instance", "edge-2", "quit"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "quit"}},
 	}
 	for _, c := range cases {
 		cmd, err := Build(c.argv)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 软件包冒烟测试：在多个发行版容器里安装 RPM / DEB，验证依赖可解析、二进制能在该发行版的 glibc 上运行、
-# 安装脚本写入初始配置且 syapp 能以基线配置启动。容器内没有 systemd，安装脚本会跳过 systemctl。
+# 安装脚本写入初始配置且 syedge 能以基线配置启动。容器内没有 systemd，安装脚本会跳过 systemctl。
 #
 # 用法：scripts/release/smoke-packages.sh <软件包目录> <goarch>
 # 环境变量：SMOKE_SET=full（默认，main 与正式发布）| pr（拉取请求：代表性子集）；SMOKE_JOBS 并行数（默认 6）
@@ -30,22 +30,22 @@ run() { # 发行版名 镜像 安装命令
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
     $install
-    syapp -v 2>&1
-    test -x /usr/libexec/syapp/syapp-wrapper
-    test -x /usr/sbin/syapp-firewall && test -f /usr/lib/systemd/system/syapp-firewall.service
-    test ! -e /var/lib/syapp-firewall/firewall.nft   # 防火墙默认不启用
-    id syapp-agent >/dev/null && id syapp-console >/dev/null
-    test -L /opt/syapp/conf/current
-    /opt/syapp/sbin/syapp -t -q
-    /opt/syapp/sbin/syapp
+    syedge -v 2>&1
+    test -x /usr/libexec/syedge/syedge-wrapper
+    test -x /usr/sbin/syedge-firewall && test -f /usr/lib/systemd/system/syedge-firewall.service
+    test ! -e /var/lib/syedge-firewall/firewall.nft   # 防火墙默认不启用
+    id syedge-agent >/dev/null && id syedge-console >/dev/null
+    test -L /opt/syedge/conf/current
+    /opt/syedge/sbin/syedge -t -q
+    /opt/syedge/sbin/syedge
     sleep 1
-    grep -qs 'syapp: master process' /proc/[0-9]*/cmdline
-    test -f /etc/syapp-console/console.env
-    syapp-console -version
-    test ! -e /usr/bin/syapp-license-server
+    grep -qs 'SyEdge: master process' /proc/[0-9]*/cmdline
+    test -f /etc/syedge-console/console.env
+    syedge-console -version
+    test ! -e /usr/bin/syedge-license-server
   " 2>&1)
   if [[ $? -eq 0 ]]; then
-    echo "ok   $name: $(echo "$out" | grep -m1 'syapp version')"
+    echo "ok   $name: $(echo "$out" | grep -m1 'SyEdge version')"
   else
     echo "FAIL $name"
     echo "$out" | tail -15 | sed 's/^/     /'
@@ -53,38 +53,38 @@ run() { # 发行版名 镜像 安装命令
     return 1
   fi
 }
-deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq /pkgs/syapp_*.deb /pkgs/syapp-agent_*.deb /pkgs/syapp-console_*.deb >/dev/null'
-dnf='dnf install -y -q /pkgs/syapp-[0-9]*.rpm /pkgs/syapp-agent-*.rpm /pkgs/syapp-console-*.rpm >/dev/null'
+deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq /pkgs/syedge_*.deb /pkgs/syedge-agent_*.deb /pkgs/syedge-console_*.deb >/dev/null'
+dnf='dnf install -y -q /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm >/dev/null'
 # openEuler 默认启用 everything / EPOL / update 等大仓库，从 CI 所在地区拉取元数据常常超过场景超时：
 # 只启用 OS 基础仓库（依赖都在其中），并对慢速镜像设置超时与最低速率，失败重试而不是卡住
-dnf_oe='dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=20k --setopt=retries=3 /pkgs/syapp-[0-9]*.rpm /pkgs/syapp-agent-*.rpm /pkgs/syapp-console-*.rpm >/dev/null'
+dnf_oe='dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=20k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm >/dev/null'
 # CentOS 7 的官方软件源已下线：只安装本产品的软件包（sudo 依赖跳过），重点验证 glibc 2.17 兼容
-el7='rpm -i /pkgs/syapp-[0-9]*.rpm && rpm -i --nodeps /pkgs/syapp-agent-*.rpm /pkgs/syapp-console-*.rpm'
+el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm'
 
-# 独立模式：只装 syapp 软件包，按说明加一个站点后能直接服务；之后装 syapp-agent，
+# 独立模式：只装 syedge 软件包，按说明加一个站点后能直接服务；之后装 syedge-agent，
 # 注册时因为有本机自定义配置而被拒绝（不会被控制台静默替换）。
-standalone() { # 发行版名 镜像 安装 syapp 的命令 安装 agent 的命令
+standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命令
   local name=$1 image=$2 install=$3 agent=$4 out
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
     $install
-    test \"\$(readlink /opt/syapp/conf/current)\" = releases/r000000
-    test -f /opt/syapp/share/doc/STANDALONE.txt
-    /opt/syapp/sbin/syapp -t -q
-    cp /opt/syapp/share/defaults/standalone-example.conf /opt/syapp/conf/current/conf.d/www.conf
-    /opt/syapp/sbin/syapp -t -q
-    /opt/syapp/sbin/syapp
+    test \"\$(readlink /opt/syedge/conf/current)\" = releases/r000000
+    test -f /opt/syedge/share/doc/STANDALONE.txt
+    /opt/syedge/sbin/syedge -t -q
+    cp /opt/syedge/share/defaults/standalone-example.conf /opt/syedge/conf/current/conf.d/www.conf
+    /opt/syedge/sbin/syedge -t -q
+    /opt/syedge/sbin/syedge
     sleep 1
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: www.example.com' http://127.0.0.1/)\" = 200
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: other.example.com' http://127.0.0.1/ || true)\" = 000
-    sed -i 's/www.example.com;/www.example.com shop.example.com;/' /opt/syapp/conf/current/conf.d/www.conf
-    /opt/syapp/sbin/syapp -t -q && /opt/syapp/sbin/syapp -s reload
+    sed -i 's/www.example.com;/www.example.com shop.example.com;/' /opt/syedge/conf/current/conf.d/www.conf
+    /opt/syedge/sbin/syedge -t -q && /opt/syedge/sbin/syedge -s reload
     sleep 1
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: shop.example.com' http://127.0.0.1/)\" = 200
     $agent
-    test \"\$(readlink /opt/syapp/conf/current)\" = releases/r000000
-    test -f /opt/syapp/conf/current/conf.d/www.conf
-    if timeout 60 syapp-agent enroll -server 127.0.0.1:1 -token t -ca-fingerprint f 2>/tmp/e; then echo enroll-accepted; exit 1; fi
+    test \"\$(readlink /opt/syedge/conf/current)\" = releases/r000000
+    test -f /opt/syedge/conf/current/conf.d/www.conf
+    if timeout 60 syedge-agent enroll -server 127.0.0.1:1 -token t -ca-fingerprint f 2>/tmp/e; then echo enroll-accepted; exit 1; fi
     grep -q replace-local-config /tmp/e
     echo standalone-ok
   " 2>&1)
@@ -97,10 +97,10 @@ standalone() { # 发行版名 镜像 安装 syapp 的命令 安装 agent 的命�
     return 1
   fi
 }
-sa_dnf='dnf install -y -q /pkgs/syapp-[0-9]*.rpm >/dev/null'
-sa_dnf_agent='dnf install -y -q /pkgs/syapp-agent-*.rpm >/dev/null'
-sa_deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq curl /pkgs/syapp_*.deb >/dev/null'
-sa_deb_agent='apt-get install -y -qq /pkgs/syapp-agent_*.deb >/dev/null'
+sa_dnf='dnf install -y -q /pkgs/syedge-[0-9]*.rpm >/dev/null'
+sa_dnf_agent='dnf install -y -q /pkgs/syedge-agent-*.rpm >/dev/null'
+sa_deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq curl /pkgs/syedge_*.deb >/dev/null'
+sa_deb_agent='apt-get install -y -qq /pkgs/syedge-agent_*.deb >/dev/null'
 
 # 场景表：集合（full = 只在完整集合中；pr = 两个集合都包含）| 函数 | 参数……
 scenarios=(

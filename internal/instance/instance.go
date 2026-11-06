@@ -134,7 +134,7 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 		{l.LogDir(), 0o755, dp},
 		{l.CacheDir(), 0o755, dp},
 		{l.AgentState(), 0o750, user},
-		// syapp -t 会检查 pid 文件所在目录；平时由服务单元的 RuntimeDirectory= 与 tmpfiles 创建，启动前先建好
+		// syedge -t 会检查 pid 文件所在目录；平时由服务单元的 RuntimeDirectory= 与 tmpfiles 创建，启动前先建好
 		{l.RunDir(), 0o755, dp},
 	} {
 		if err := os.MkdirAll(e.path(d.dir), d.mode); err != nil {

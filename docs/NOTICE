@@ -1,7 +1,7 @@
-EdgeTraffic OS
-Copyright (c) 2026 EdgeTraffic OS authors.
+SyEdge（神玥企业级动态网关与负载均衡引擎）
+Copyright (c) 2026 SyEdge authors.
 
-The syapp data plane is based on NGINX Open Source (BSD-2-Clause).
+The SyEdge data plane is based on NGINX Open Source (BSD-2-Clause).
 
   Copyright (C) 2002-2021 Igor Sysoev
   Copyright (C) 2011-2026 Nginx, Inc.

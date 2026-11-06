@@ -28,7 +28,7 @@ func fixture(t *testing.T) (KeyRing, ed25519.PrivateKey, *Payload, Env) {
 		MaintenanceUntil: issued.Add(365 * day),
 		GraceDays:        15,
 		Binding:          Binding{Type: "installation", InstallationID: "inst_abc"},
-		Product:          Product{Name: "EdgeTraffic OS", MinVersion: "1.0.0", MaxVersion: "1.*"},
+		Product:          Product{Name: "SyEdge", MinVersion: "1.0.0", MaxVersion: "1.*"},
 	}
 	env := Env{Now: issued.Add(10 * day), InstallationID: "inst_abc", FingerprintMatch: true, BuildDate: issued}
 	return KeyRing{"etos-test": pub}, priv, p, env
@@ -149,16 +149,16 @@ func TestUnlicensed(t *testing.T) {
 // D3（设计 0001 第 11 节）：指定品牌的 License 只对该品牌的控制台有效；未指定品牌的 License 通用。
 func TestBrandBinding(t *testing.T) {
 	keys, priv, p, env := fixture(t)
-	env.Brand = "syapp"
+	env.Brand = "syedge"
 	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateValid {
 		t.Fatalf("universal license: %s (%s)", s.State, s.Reason)
 	}
-	p.Product.Brand = "syapp"
+	p.Product.Brand = "syedge"
 	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateValid {
 		t.Fatalf("same brand: %s (%s)", s.State, s.Reason)
 	}
-	p.Product.Brand = "syedge"
-	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateInvalid || !strings.Contains(s.Reason, "syedge") {
+	p.Product.Brand = "sytest"
+	if s := Evaluate(mustSign(t, p, priv), keys, env); s.State != StateInvalid || !strings.Contains(s.Reason, "sytest") {
 		t.Fatalf("other brand: %s (%s)", s.State, s.Reason)
 	}
 	// 签发：品牌写入 payload，格式与 brand.env 一致

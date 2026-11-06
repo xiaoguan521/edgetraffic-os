@@ -71,7 +71,7 @@ func LoadOrCreateWebCA(dir string) (*WebCA, error) {
 	}
 	tpl := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "EdgeTraffic OS Console Web CA"},
+		Subject:               pkix.Name{CommonName: brand.Product() + " Console Web CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,

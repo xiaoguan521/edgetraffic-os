@@ -106,22 +106,22 @@ func TestAddCreatesInstance(t *testing.T) {
 		t.Fatalf("sudoers rules = %d:\n%s", len(rules), sb)
 	}
 	for _, r := range rules {
-		if !strings.HasPrefix(r, "syapp-agent-blue ALL=(syapp) NOPASSWD: /usr/libexec/syapp/syapp-wrapper --instance blue ") {
+		if !strings.HasPrefix(r, "syedge-agent-blue ALL=(syedge) NOPASSWD: /usr/libexec/syedge/syedge-wrapper --instance blue ") {
 			t.Errorf("rule not pinned to the instance: %q", r)
 		}
 	}
 	if strings.Count(string(sb), "*") != 2 {
 		t.Errorf("only test and upgrade-start may take a wildcard:\n%s", sb)
 	}
-	// 命令顺序：建用户 → visudo 校验 → 初始版本 → syapp -t → 启动数据面 → 注册 → 启动 agent
+	// 命令顺序：建用户 → visudo 校验 → 初始版本 → syedge -t → 启动数据面 → 注册 → 启动 agent
 	want := []string{
-		"useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp-agent-blue",
+		"useradd -r -g syedge -d /nonexistent -s /usr/sbin/nologin syedge-agent-blue",
 		"visudo -cf ",
-		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent bootstrap -instance blue",
-		"runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper --instance blue test r000000",
-		"systemctl enable --now syapp@blue.service",
-		"runuser -u syapp-agent-blue -- /usr/bin/syapp-agent enroll -instance blue -server console.example.com:9443 -token tok -ca-fingerprint abc",
-		"systemctl enable --now syapp-agent@blue.service",
+		"runuser -u syedge-agent-blue -- /usr/bin/syedge-agent bootstrap -instance blue",
+		"runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper --instance blue test r000000",
+		"systemctl enable --now syedge@blue.service",
+		"runuser -u syedge-agent-blue -- /usr/bin/syedge-agent enroll -instance blue -server console.example.com:9443 -token tok -ca-fingerprint abc",
+		"systemctl enable --now syedge-agent@blue.service",
 	}
 	i := 0
 	for _, c := range f.cmds {
@@ -143,7 +143,7 @@ func TestAddWithoutConsoleDoesNotStartAgent(t *testing.T) {
 	if err := f.Add(AddOptions{Profile: blue}); err != nil {
 		t.Fatal(err)
 	}
-	if f.ran("enroll") || f.ran("syapp-agent@blue.service") {
+	if f.ran("enroll") || f.ran("syedge-agent@blue.service") {
 		t.Fatalf("agent started without enrollment:\n%s", strings.Join(f.cmds, "\n"))
 	}
 	if !strings.Contains(f.Out.(*bytes.Buffer).String(), "-instance blue") {
@@ -217,7 +217,7 @@ func TestRemove(t *testing.T) {
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"systemctl disable --now syapp-agent@blue.service", "systemctl disable --now syapp@blue.service", "userdel syapp-agent-blue"} {
+	for _, want := range []string{"systemctl disable --now syedge-agent@blue.service", "systemctl disable --now syedge@blue.service", "userdel syedge-agent-blue"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q", want)
 		}
@@ -238,7 +238,7 @@ func TestRemove(t *testing.T) {
 			t.Errorf("green lost %s", keep)
 		}
 	}
-	if f.ran("syapp@green") || f.ran("syapp-agent-green") {
+	if f.ran("syedge@green") || f.ran("syedge-agent-green") {
 		t.Fatal("removing blue touched green")
 	}
 	// --purge 同时删日志与缓存
@@ -347,11 +347,11 @@ func TestReopenAll(t *testing.T) {
 	if err := f.ReopenAll(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/syapp/sbin/syapp -s reopen", "/opt/syapp/sbin/syapp -c /opt/syapp/instances/blue/conf/current/syapp.conf -s reopen"}
+	want := []string{"/opt/syedge/sbin/syedge -s reopen", "/opt/syedge/sbin/syedge -c /opt/syedge/instances/blue/conf/current/syedge.conf -s reopen"}
 	// 运行时不使用 root（D5）：以 root 执行时经 runuser 以数据面用户发送信号，`-s` 打开的日志不会变成 root 所有
 	if os.Geteuid() == 0 {
 		for i := range want {
-			want[i] = "runuser -u syapp -- " + want[i]
+			want[i] = "runuser -u syedge -- " + want[i]
 		}
 	}
 	if strings.Join(f.cmds, "|") != strings.Join(want, "|") {
@@ -362,7 +362,7 @@ func TestReopenAll(t *testing.T) {
 // 实例增删后：防火墙 path 单元监视各具名实例的配置目录，并刷新规则（防火墙已安装时）。
 func TestAddRemoveSyncsFirewall(t *testing.T) {
 	f := newFake(t)
-	fw := f.path("/usr/sbin/syapp-firewall")
+	fw := f.path("/usr/sbin/syedge-firewall")
 	_ = os.MkdirAll(filepath.Dir(fw), 0o755)
 	_ = os.WriteFile(fw, []byte("#!/bin/sh\n"), 0o755)
 	if err := f.Add(AddOptions{Profile: blue}); err != nil {
@@ -372,14 +372,14 @@ func TestAddRemoveSyncsFirewall(t *testing.T) {
 	if err := f.Add(AddOptions{Profile: green}); err != nil {
 		t.Fatal(err)
 	}
-	dropIn := f.path("/etc/systemd/system/syapp-firewall-refresh.path.d/instances.conf")
+	dropIn := f.path("/etc/systemd/system/syedge-firewall-refresh.path.d/instances.conf")
 	b, _ := os.ReadFile(dropIn)
-	for _, want := range []string{"PathChanged=/opt/syapp/instances/blue/conf\n", "PathChanged=/opt/syapp/instances/green/conf\n"} {
+	for _, want := range []string{"PathChanged=/opt/syedge/instances/blue/conf\n", "PathChanged=/opt/syedge/instances/green/conf\n"} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("drop-in missing %q:\n%s", want, b)
 		}
 	}
-	if !f.ran("systemctl start syapp-firewall-refresh.service") || !f.ran("systemctl try-restart syapp-firewall-refresh.path") {
+	if !f.ran("systemctl start syedge-firewall-refresh.service") || !f.ran("systemctl try-restart syedge-firewall-refresh.path") {
 		t.Fatalf("firewall not refreshed: %v", f.cmds)
 	}
 	f.cmds = nil
@@ -390,11 +390,11 @@ func TestAddRemoveSyncsFirewall(t *testing.T) {
 	if strings.Contains(string(b), "/blue/") || !strings.Contains(string(b), "/green/") {
 		t.Fatalf("drop-in after remove:\n%s", b)
 	}
-	if !f.ran("systemctl start syapp-firewall-refresh.service") {
+	if !f.ran("systemctl start syedge-firewall-refresh.service") {
 		t.Fatal("firewall not refreshed after remove")
 	}
 	// 刷新失败只提示，不影响实例操作
-	f.failOn = "start syapp-firewall-refresh.service"
+	f.failOn = "start syedge-firewall-refresh.service"
 	if err := f.Add(AddOptions{Profile: blue}); err != nil {
 		t.Fatalf("firewall failure broke add: %v", err)
 	}
@@ -408,20 +408,20 @@ func TestAddNonRootRuntime(t *testing.T) {
 	if err := f.Add(AddOptions{Profile: p}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"chown syapp:syapp /var/log/syapp-blue", "chown syapp:syapp /var/cache/syapp-blue", "chown syapp:syapp /run/syapp-blue",
-		"runuser -u syapp -- /usr/libexec/syapp/syapp-wrapper --instance blue test r000000"} {
+	for _, want := range []string{"chown syedge:syedge /var/log/syedge-blue", "chown syedge:syedge /var/cache/syedge-blue", "chown syedge:syedge /run/syedge-blue",
+		"runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper --instance blue test r000000"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q in %v", want, f.cmds)
 		}
 	}
-	b, err := os.ReadFile(f.path("/etc/systemd/system/syapp@blue.service.d/nofile.conf"))
+	b, err := os.ReadFile(f.path("/etc/systemd/system/syedge@blue.service.d/nofile.conf"))
 	if err != nil || !strings.Contains(string(b), "LimitNOFILE=200000") {
 		t.Fatalf("nofile drop-in: %q %v", b, err)
 	}
 	if err := f.Remove("blue", true, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(f.path("/etc/systemd/system/syapp@blue.service.d")); err == nil {
+	if _, err := os.Stat(f.path("/etc/systemd/system/syedge@blue.service.d")); err == nil {
 		t.Fatal("drop-in left after remove")
 	}
 }
@@ -438,11 +438,11 @@ func TestNonroot(t *testing.T) {
 		_ = os.MkdirAll(f.path(l.RunDir()), 0o755)
 		_ = os.WriteFile(f.path(l.PidFile()), []byte("100\n"), 0o644)
 	}
-	w := f.path("/usr/libexec/syapp/syapp-wrapper")
+	w := f.path("/usr/libexec/syedge/syedge-wrapper")
 	_ = os.MkdirAll(filepath.Dir(w), 0o755)
 	_ = os.WriteFile(w, []byte("x"), 0o755)
 	// 升级前生成的 sudoers：以 root 运行 wrapper
-	_ = os.WriteFile(f.path(layout.System("blue").SudoersFile()), []byte("syapp-agent-blue ALL=(root) NOPASSWD: x\n"), 0o440)
+	_ = os.WriteFile(f.path(layout.System("blue").SudoersFile()), []byte("syedge-agent-blue ALL=(root) NOPASSWD: x\n"), 0o440)
 	var handed []string
 	f.Handover = func(name string) error {
 		handed = append(handed, name)
@@ -458,9 +458,9 @@ func TestNonroot(t *testing.T) {
 	if fmt.Sprint(handed) != "[ blue]" {
 		t.Fatalf("handover calls %q", handed)
 	}
-	for _, want := range []string{"chown -R syapp:syapp /opt/syapp/versions", "chown syapp:syapp /opt/syapp/sbin", "chown syapp:syapp /opt/syapp/modules",
-		"chown -R syapp:syapp /run/syapp", "chown -R syapp:syapp /var/log/syapp", "chown -R syapp:syapp /var/cache/syapp-blue",
-		"systemctl try-restart syapp-agent.service syapp-agent@blue.service"} {
+	for _, want := range []string{"chown -R syedge:syedge /opt/syedge/versions", "chown syedge:syedge /opt/syedge/sbin", "chown syedge:syedge /opt/syedge/modules",
+		"chown -R syedge:syedge /run/syedge", "chown -R syedge:syedge /var/log/syedge", "chown -R syedge:syedge /var/cache/syedge-blue",
+		"systemctl try-restart syedge-agent.service syedge-agent@blue.service"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q in %v", want, f.cmds)
 		}
@@ -468,7 +468,7 @@ func TestNonroot(t *testing.T) {
 	// 版本库在切换之后再交一次（切换以 root 执行，会留下 root 所有的升级锁与首次收入的原二进制）
 	last := -1
 	for i, c := range f.cmds {
-		if c == "chown -R syapp:syapp /opt/syapp/versions" {
+		if c == "chown -R syedge:syedge /opt/syedge/versions" {
 			last = i
 		}
 	}
@@ -481,11 +481,11 @@ func TestNonroot(t *testing.T) {
 		}
 	}
 	// wrapper 带 CAP_NET_BIND_SERVICE 文件能力，只允许数据面组执行
-	if len(f.caps) == 0 || f.caps[len(f.caps)-1] != w || !f.ran("chmod 0750 /usr/libexec/syapp/syapp-wrapper") || !f.ran("chown root:syapp /usr/libexec/syapp/syapp-wrapper") {
+	if len(f.caps) == 0 || f.caps[len(f.caps)-1] != w || !f.ran("chmod 0750 /usr/libexec/syedge/syedge-wrapper") || !f.ran("chown root:syedge /usr/libexec/syedge/syedge-wrapper") {
 		t.Fatalf("wrapper capability not set: caps=%v cmds=%v", f.caps, f.cmds)
 	}
 	b, _ := os.ReadFile(f.path(layout.System("blue").SudoersFile()))
-	if strings.Contains(string(b), "(root)") || !strings.Contains(string(b), "ALL=(syapp) NOPASSWD:") {
+	if strings.Contains(string(b), "(root)") || !strings.Contains(string(b), "ALL=(syedge) NOPASSWD:") {
 		t.Fatalf("sudoers not rewritten:\n%s", b)
 	}
 	// 切换失败：返回错误（数据面一直在服务）

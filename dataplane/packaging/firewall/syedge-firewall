@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# syedge-firewall：边缘节点可选的 nftables 入站防火墙（规格书 P6-6）。默认不启用。
+#
+#   syedge-firewall enable --ssh-from 10.0.0.0/8,203.0.113.5 [--ssh-port 22] [--allow-tcp 9100] [--allow-udp 443] [--force]
+#   syedge-firewall disable
+#   syedge-firewall status
+#   syedge-firewall refresh      按本机实例的当前配置重新生成规则（未启用时什么都不做）
+#
+# 启用后：所有来源可访问本机全部实例当前配置中对外监听的端口（各实例的 HTTP/HTTPS 与四层代理端口；
+# 读不到实例配置时为 80/443），以及 --allow-tcp/--allow-udp；SSH 只对 --ssh-from 开放，其余入站丢弃；出站不限制。
+# 实例增删（syedge-instance）与每次发布（syedge-firewall-refresh.path 监视各实例的配置目录）后自动 refresh。
+# 规则只在独立的表 inet syedge_fw 中，不修改其他表；开机由 syedge-firewall.service 加载。
+set -euo pipefail
+# 规则与参数归防火墙专用用户 syedge-firewall 所有：开机加载与自动刷新都以该用户运行，只带 CAP_NET_ADMIN（运行时不使用 root，设计 0001 D5）
+RULES=${SYEDGE_FW_RULES:-/var/lib/syedge-firewall/firewall.nft}
+ARGS="$RULES.args"   # enable 的参数（refresh 时沿用）
+FW_USER=${SYEDGE_FW_USER:-syedge-firewall}
+# own <文件...>：以 root 执行（enable）时把文件交给防火墙用户；以该用户执行（refresh）时文件本来就属于它
+own() { if [[ $EUID -eq 0 ]] && id "$FW_USER" >/dev/null 2>&1; then chown "$FW_USER:" "$@"; fi; }
+UNIT=syedge-firewall.service
+REFRESH=syedge-firewall-refresh.path
+AGENT=${SYEDGE_AGENT:-/usr/bin/syedge-agent}
+NFT=${SYEDGE_NFT:-nft}
+SYSTEMCTL=${SYEDGE_SYSTEMCTL:-systemctl}   # 测试时替换为 true
+
+die() { echo "syedge-firewall: $*" >&2; exit 1; }
+usage() { sed -n '4,7p' "$0" | sed 's/^# \{0,3\}//'; exit 2; }
+
+# load <规则文件>：校验后原子替换并加载
+load() {
+  "$NFT" -c -f "$1" || die "nft 校验失败"
+  mkdir -p "$(dirname "$RULES")"
+  install -m 0600 "$1" "$RULES.new"
+  own "$RULES.new"
+  mv -f "$RULES.new" "$RULES"
+  "$NFT" -f "$RULES"
+}
+
+cmd=${1:-}; [[ -n "$cmd" ]] || usage; shift
+case "$cmd" in
+  enable)
+    from=""; port=22; tcp=""; udp=""; force=0; anyssh=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --ssh-from)      from="$2"; shift 2 ;;
+        --ssh-port)      port="$2"; shift 2 ;;
+        --allow-tcp)     tcp="$2";  shift 2 ;;
+        --allow-udp)     udp="$2";  shift 2 ;;
+        --allow-any-ssh) anyssh=(-allow-any-ssh); shift ;;
+        --force)         force=1; shift ;;
+        *) die "未知参数：$1" ;;
+      esac
+    done
+    [[ $EUID -eq 0 ]] || die "请以 root 运行"
+    command -v "$NFT" >/dev/null || die "未找到 nft（dnf install nftables / apt install nftables）"
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    saved=(-ssh-from "$from" -ssh-port "$port" -allow-tcp "$tcp" -allow-udp "$udp" ${anyssh[@]+"${anyssh[@]}"})
+    "$AGENT" firewall render "${saved[@]}" -instances > "$tmp" \
+      || die "参数无效（见上）"
+    # 防止把自己锁在外面：当前 SSH 会话的来源必须在 --ssh-from 中
+    client=${SSH_CONNECTION:-}; client=${client%% *}
+    if [[ -n "${SSH_CONNECTION:-}" && $force -eq 0 ]]; then
+      if ! "$AGENT" firewall covers -ssh-from "$from" -ip "$client"; then
+        die "当前 SSH 会话来自 $client，不在 --ssh-from 中，启用后会断开。请把它加入 --ssh-from，或确认后加 --force"
+      fi
+    fi
+    for svc in firewalld ufw; do
+      if $SYSTEMCTL is-active -q "$svc" 2>/dev/null; then
+        echo "警告：$svc 正在运行。nftables 中任一表丢弃的包都会被丢弃，$svc 的规则仍然生效，需要同时在 $svc 中放行业务端口。" >&2
+      fi
+    done
+    load "$tmp"
+    install -m 0600 /dev/null "$ARGS"
+    printf '%s\n' "${saved[@]}" > "$ARGS"
+    own "$ARGS"
+    if [[ $EUID -eq 0 ]] && id "$FW_USER" >/dev/null 2>&1; then chown "$FW_USER:" "$(dirname "$RULES")"; chmod 0700 "$(dirname "$RULES")"; fi
+    $SYSTEMCTL daemon-reload
+    $SYSTEMCTL enable "$UNIT" >/dev/null 2>&1
+    $SYSTEMCTL start "$UNIT"   # oneshot + RemainAfterExit：标记为已启用，规则已在上一步加载
+    $SYSTEMCTL enable --now "$REFRESH" >/dev/null 2>&1 || true
+    open=$(grep -E '^\s*(tcp|udp) dport \{' "$RULES" | sed -E 's/^\s*(tcp|udp) dport \{ (.*) \} accept/\1 \2/' | awk 'NR > 1 { printf "；" } { printf "%s", $0 }')
+    echo "已启用：对所有来源开放 ${open:-无}；SSH($port) 仅允许 $from"
+    ;;
+  refresh)
+    # 由 syedge-firewall-refresh.service 以防火墙用户运行（只带 CAP_NET_ADMIN），也可由 root 手工执行
+    if [[ ! -f "$ARGS" ]] || ! "$NFT" list table inet syedge_fw >/dev/null 2>&1; then
+      echo "防火墙未启用，无需刷新"; exit 0
+    fi
+    mapfile -t saved < "$ARGS"
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    # 生成失败（例如某个实例改为监听 SSH 端口）时保留现有规则
+    "$AGENT" firewall render "${saved[@]}" -instances > "$tmp" || die "生成规则失败，现有规则保持不变"
+    if cmp -s "$tmp" "$RULES"; then echo "规则无变化"; exit 0; fi
+    load "$tmp"
+    echo "已按实例配置刷新规则"
+    ;;
+  disable)
+    [[ $EUID -eq 0 ]] || die "请以 root 运行"
+    $SYSTEMCTL disable --now "$REFRESH" >/dev/null 2>&1 || true
+    $SYSTEMCTL disable --now "$UNIT" >/dev/null 2>&1 || true
+    "$NFT" delete table inet syedge_fw 2>/dev/null || true
+    echo "已停用，规则已移除（$RULES 保留，可再次 enable）"
+    ;;
+  status)
+    if "$NFT" list table inet syedge_fw 2>/dev/null; then
+      echo "状态：已启用（开机加载：$($SYSTEMCTL is-enabled "$UNIT" 2>/dev/null || echo 否)）"
+    else
+      echo "状态：未启用"
+    fi
+    ;;
+  *) usage ;;
+esac

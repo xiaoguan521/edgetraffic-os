@@ -21,22 +21,22 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
-// 集成测试：需要 root、已安装的 /opt/syapp、正在运行的 syapp 与 /usr/libexec/syapp/syapp-wrapper。
-// 运行：sudo SYAPP_IT=1 go test ./internal/agent/apply/
+// 集成测试：需要 root、已安装的 /opt/syedge、正在运行的 syedge 与 /usr/libexec/syedge/syedge-wrapper。
+// 运行：sudo SYEDGE_IT=1 go test ./internal/agent/apply/
 func itApplier(t *testing.T) *Applier {
 	t.Helper()
-	if os.Getenv("SYAPP_IT") != "1" {
-		t.Skip("set SYAPP_IT=1 to run against a live syapp")
+	if os.Getenv("SYEDGE_IT") != "1" {
+		t.Skip("set SYEDGE_IT=1 to run against a live syedge")
 	}
 	return &Applier{C: Config{
-		ConfRoot: "/opt/syapp/conf", PidFile: "/run/syapp/syapp.pid", ErrorLog: "/var/log/syapp/error.log",
-		LockFile: "/run/syapp-agent/apply.lock", Wrapper: []string{"/usr/libexec/syapp/syapp-wrapper"},
+		ConfRoot: "/opt/syedge/conf", PidFile: "/run/syedge/syedge.pid", ErrorLog: "/var/log/syedge/error.log",
+		LockFile: "/run/syedge-agent/apply.lock", Wrapper: []string{"/usr/libexec/syedge/syedge-wrapper"},
 		ConfirmWait: 5 * time.Second,
 	}}
 }
 
 func page(rev, body string) render.Input {
-	mt, _ := os.ReadFile("/opt/syapp/share/defaults/mime.types")
+	mt, _ := os.ReadFile("/opt/syedge/share/defaults/mime.types")
 	return render.Input{
 		Revision: rev, MimeTypes: mt,
 		Sites: []render.Site{{Name: "it", Domains: []string{"it.example.com"},
@@ -140,9 +140,9 @@ func TestLiveLifecycle(t *testing.T) {
 		t.Fatalf("expected conflict: %+v", r)
 	}
 
-	// 3. 语法错误：syapp -t 失败，current 不变
+	// 3. 语法错误：syedge -t 失败，current 不变
 	bad, dgb := tamper(t, tgz2, rev(2), map[string]string{"conf.d/zz-bad.conf": "server { listen 80 }\n"})
-	if r := a.Apply(ctx, rev(2), rev(1), bad, dgb, check); r.Status != Invalid || !strings.Contains(r.Stderr, "syapp:") {
+	if r := a.Apply(ctx, rev(2), rev(1), bad, dgb, check); r.Status != Invalid || !strings.Contains(r.Stderr, "syedge:") {
 		t.Fatalf("expected invalid: %+v", r)
 	}
 	if a.Current() != rev(1) || get(t) != "v1" {
@@ -185,11 +185,11 @@ func TestLiveLifecycle(t *testing.T) {
 		t.Fatalf("tree digest: %s %v", d, err)
 	}
 	// 7. 漂移检测
-	_ = os.WriteFile("/opt/syapp/conf/current/conf.d/hand-edit.conf", []byte("# manual\n"), 0o644)
+	_ = os.WriteFile("/opt/syedge/conf/current/conf.d/hand-edit.conf", []byte("# manual\n"), 0o644)
 	if d, _ := a.TreeDigest(); !strings.HasPrefix(d, "drifted") {
 		t.Fatalf("drift not detected: %s", d)
 	}
-	_ = os.Remove("/opt/syapp/conf/current/conf.d/hand-edit.conf")
+	_ = os.Remove("/opt/syedge/conf/current/conf.d/hand-edit.conf")
 
 	// 恢复测试前的版本
 	if start != "" {

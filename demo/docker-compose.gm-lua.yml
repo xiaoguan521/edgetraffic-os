@@ -27,9 +27,9 @@ services:
     environment:
       ETOS_GRPC_HOSTS: "console,172.31.0.10"
       ETOS_GRPC_ADVERTISE: "console:9443"
-      ETOS_DATA: /var/lib/syapp-console
+      ETOS_DATA: /var/lib/syedge-console
     volumes:
-      - gm-lua-console-data:/var/lib/syapp-console
+      - gm-lua-console-data:/var/lib/syedge-console
       - ${GM_LUA_KEYS_DIR:-./keys-gm-lua}:/keys:ro
     ports:
       - "${GM_LUA_CONSOLE_PORT:-8543}:8443"

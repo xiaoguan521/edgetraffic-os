@@ -1,13 +1,13 @@
 name: lua
 
-# P10 验收：syapp-lua 附加包 × 标准版 / 国密版基础包 × amd64 / arm64。
+# P10 验收：syedge-lua 附加包 × 标准版 / 国密版基础包 × amd64 / arm64。
 # 仅通过 GitHub Actions 的 Run workflow 手动触发。
 on:
   push:
     branches: [main]
     paths:
       - "dataplane/lua/**"
-      - "dataplane/build-syapp-lua.sh"
+      - "dataplane/build-syedge-lua.sh"
       - "internal/render/lua*"
       - "internal/wrapper/lua*"
       - "scripts/ci/lua-acceptance.sh"
@@ -15,7 +15,7 @@ on:
   pull_request:
     paths:
       - "dataplane/lua/**"
-      - "dataplane/build-syapp-lua.sh"
+      - "dataplane/build-syedge-lua.sh"
       - "internal/render/lua*"
       - "internal/wrapper/lua*"
       - "scripts/ci/lua-acceptance.sh"
@@ -43,12 +43,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist-lua
-          key: syapp-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
-      - name: build syapp-lua (standard + Tongsuo bases, static)
+          key: syedge-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+      - name: build syedge-lua (standard + Tongsuo bases, static)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p dist-lua
-          KEEP_TLS_CLI="$PWD/dist-lua/tongsuo" dataplane/build-syapp-lua.sh -o dist-lua
+          KEEP_TLS_CLI="$PWD/dist-lua/tongsuo" dataplane/build-syedge-lua.sh -o dist-lua
           ls -l dist-lua dist-lua/base
 
   accept:
@@ -69,11 +69,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: dist-lua
-          key: syapp-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+          key: syedge-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
           fail-on-cache-miss: true
       - name: refresh etos library and install scripts from source
         run: |
-          p=$(ls dist-lua/syapp-lua-*-${{ matrix.arch }}.tar.gz)
+          p=$(ls dist-lua/syedge-lua-*-${{ matrix.arch }}.tar.gz)
           d=$(mktemp -d); tar -C "$d" -xzf "$p"
           rm -rf "$d/addon/lualib/etos"; cp -r dataplane/lua/lualib/etos "$d/addon/lualib/"
           install -m 0755 dataplane/lua/install.sh dataplane/lua/uninstall.sh "$d/"
@@ -81,15 +81,15 @@ jobs:
       - name: tools (wrk, CI package key, wrapper, license server)
         run: |
           sudo apt-get install -y -qq wrk >/dev/null
-          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
           pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syapp-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syapp-wrapper
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syedge-wrapper
       - name: P10 acceptance (${{ matrix.base }} / ${{ matrix.arch }})
         env:
           PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
           PKG_KID: etos-ci-pkg-ephemeral
-          WRAPPER: /tmp/syapp-wrapper
+          WRAPPER: /tmp/syedge-wrapper
           LIC: /tmp/lic
           # GitHub arm64 共享机器的吞吐抖动过大，QPS 门槛只在 x86_64 上拦截；arm64 只报告，性能验收在专用实机上做
           PERF_GATE: ${{ matrix.arch == 'x86_64' && '1' || '0' }}

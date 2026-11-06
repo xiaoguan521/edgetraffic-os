@@ -79,15 +79,15 @@ func TestUserAddDefaultWithoutSystemd(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		uroot + "/bin/syapp-agent bootstrap -root " + uroot,
-		uroot + "/sbin/syapp -t -q -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syapp.conf",
-		uroot + "/sbin/syapp -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syapp.conf",
+		uroot + "/bin/syedge-agent bootstrap -root " + uroot,
+		uroot + "/sbin/syedge -t -q -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
+		uroot + "/sbin/syedge -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
 	} {
 		if !f.ran(want) {
 			t.Errorf("missing command %q in:\n%s", want, strings.Join(f.cmds, "\n"))
 		}
 	}
-	if out := f.Out.(*bytes.Buffer).String(); !strings.Contains(out, "@reboot "+uroot+"/bin/syapp-instance --root "+uroot+" ensure") {
+	if out := f.Out.(*bytes.Buffer).String(); !strings.Contains(out, "@reboot "+uroot+"/bin/syedge-instance --root "+uroot+" ensure") {
 		t.Errorf("cron instructions missing:\n%s", out)
 	}
 }
@@ -111,21 +111,21 @@ func TestUserAddNamedWithSystemdAndEnroll(t *testing.T) {
 	if err := f.Add(AddOptions{Profile: blueP, Console: "c:9443", Token: "tok", CAFingerprint: "fp"}); err != nil {
 		t.Fatal(err)
 	}
-	unit, err := os.ReadFile(f.path("/home/ops/.config/systemd/user/syapp-blue.service"))
+	unit, err := os.ReadFile(f.path("/home/ops/.config/systemd/user/syedge-blue.service"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(unit), "ExecStart="+uroot+"/sbin/syapp -e "+uroot+"/instances/blue/logs/error.log -c "+uroot+"/instances/blue/conf/current/syapp.conf") {
+	if !strings.Contains(string(unit), "ExecStart="+uroot+"/sbin/syedge -e "+uroot+"/instances/blue/logs/error.log -c "+uroot+"/instances/blue/conf/current/syedge.conf") {
 		t.Fatalf("unit:\n%s", unit)
 	}
-	ag, _ := os.ReadFile(f.path("/home/ops/.config/systemd/user/syapp-agent-blue.service"))
-	if !strings.Contains(string(ag), "ExecStart="+uroot+"/bin/syapp-agent run -root "+uroot+" -instance blue") || strings.Contains(string(ag), "User=") {
+	ag, _ := os.ReadFile(f.path("/home/ops/.config/systemd/user/syedge-agent-blue.service"))
+	if !strings.Contains(string(ag), "ExecStart="+uroot+"/bin/syedge-agent run -root "+uroot+" -instance blue") || strings.Contains(string(ag), "User=") {
 		t.Fatalf("agent unit:\n%s", ag)
 	}
 	for _, want := range []string{
-		"systemctl --user enable --now syapp-blue.service",
-		uroot + "/bin/syapp-agent enroll -root " + uroot + " -instance blue -server c:9443 -token tok -ca-fingerprint fp",
-		"systemctl --user enable --now syapp-agent-blue.service",
+		"systemctl --user enable --now syedge-blue.service",
+		uroot + "/bin/syedge-agent enroll -root " + uroot + " -instance blue -server c:9443 -token tok -ca-fingerprint fp",
+		"systemctl --user enable --now syedge-agent-blue.service",
 	} {
 		if !f.ran(want) {
 			t.Errorf("missing %q", want)
@@ -149,7 +149,7 @@ func TestEnsure(t *testing.T) {
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot+"/sbin/syapp -e") || len(*sp) != 1 || (*sp)[0].name != uroot+"/bin/syapp-agent" {
+	if !f.ran(uroot+"/sbin/syedge -e") || len(*sp) != 1 || (*sp)[0].name != uroot+"/bin/syedge-agent" {
 		t.Fatalf("ensure did not start both: cmds=%v spawned=%v", f.cmds, *sp)
 	}
 	// 两者都在运行：什么都不做
@@ -172,8 +172,8 @@ func TestEnsure(t *testing.T) {
 		t.Fatalf("ensure touched running processes: %v %v", f.cmds, *sp)
 	}
 	// 热升级后 master 运行 versions/<版本>/ 下的二进制，agent 自升级后运行状态目录中的版本：仍是我们的进程
-	fakeProc("4242", uroot+"/versions/9.1.0/sbin/syapp")
-	fakeProc("777", l.AgentState()+"/agent/0.3.1/syapp-agent")
+	fakeProc("4242", uroot+"/versions/9.1.0/sbin/syedge")
+	fakeProc("777", l.AgentState()+"/agent/0.3.1/syedge-agent")
 	f.cmds, *sp = nil, nil
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestEnsure(t *testing.T) {
 		t.Fatalf("upgraded processes treated as stopped: %v %v", f.cmds, *sp)
 	}
 	// 版本库之外、名字相同的程序不算
-	fakeProc("4242", uroot+"/versions/9.1.0/other/syapp")
+	fakeProc("4242", uroot+"/versions/9.1.0/other/syedge")
 	if f.alive(l.PidFile(), dataplaneExe(l)) {
 		t.Fatal("binary outside the versions layout accepted")
 	}
@@ -192,7 +192,7 @@ func TestEnsure(t *testing.T) {
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot+"/sbin/syapp -e") || len(*sp) != 0 {
+	if !f.ran(uroot+"/sbin/syedge -e") || len(*sp) != 0 {
 		t.Fatalf("reused pid treated as running: cmds=%v spawned=%v", f.cmds, *sp)
 	}
 	// system 模式下不可用
@@ -216,12 +216,12 @@ func TestUserRemove(t *testing.T) {
 	_ = os.MkdirAll(f.path(b.RunDir()), 0o755)
 	_ = os.WriteFile(f.path(b.PidFile()), []byte("5150\n"), 0o644)
 	_ = os.MkdirAll(f.path("/proc/5150"), 0o755)
-	_ = os.Symlink(uroot+"/versions/9.1.0/sbin/syapp", f.path("/proc/5150/exe"))
+	_ = os.Symlink(uroot+"/versions/9.1.0/sbin/syedge", f.path("/proc/5150/exe"))
 	f.cmds = nil
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot + "/sbin/syapp -e " + b.ErrorLog() + " -c " + b.CurrentConf() + " -s quit") {
+	if !f.ran(uroot + "/sbin/syedge -e " + b.ErrorLog() + " -c " + b.CurrentConf() + " -s quit") {
 		t.Fatalf("upgraded master not asked to quit: %v", f.cmds)
 	}
 	if _, err := os.Stat(f.path(b.Prefix())); err == nil {

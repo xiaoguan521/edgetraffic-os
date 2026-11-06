@@ -1,7 +1,7 @@
-# 隔离验收用节点镜像：国密 syapp（gmssl）+ syapp-lua + syapp-agent。
+# 隔离验收用节点镜像：国密 syedge（gmssl）+ syedge-lua + syedge-agent。
 # 该镜像只供 gm-lua Compose 使用，不替换演示环境的标准版 node 镜像。
 
-FROM ubuntu:24.04 AS syapp-lua-build
+FROM ubuntu:24.04 AS syedge-lua-build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl git make patch perl \
@@ -11,8 +11,8 @@ WORKDIR /src
 COPY dataplane dataplane
 COPY scripts/rename-scan.sh scripts/rename-scan.sh
 COPY docs/NOTICE docs/NOTICE
-# 同一次构建产出 gmssl 基础包和与其版本绑定的 syapp-lua 附加包。
-RUN bash dataplane/build-syapp-lua.sh -o /out
+# 同一次构建产出 gmssl 基础包和与其版本绑定的 syedge-lua 附加包。
+RUN bash dataplane/build-syedge-lua.sh -o /out
 
 FROM golang:1.27 AS go
 ARG EXTRA_LICENSE_KEY=""
@@ -20,34 +20,34 @@ WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -mod=vendor -trimpath \
       -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY}" \
-      -o /out/ ./cmd/syapp-agent ./cmd/syapp-wrapper
+      -o /out/ ./cmd/syedge-agent ./cmd/syedge-wrapper
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpcre2-8-0 libssl3t64 zlib1g sudo ca-certificates curl procps libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
-RUN groupadd -r syapp && useradd -r -g syapp -s /usr/sbin/nologin syapp \
- && useradd -r -g syapp -s /usr/sbin/nologin syapp-agent
+RUN groupadd -r syedge && useradd -r -g syedge -s /usr/sbin/nologin syedge \
+ && useradd -r -g syedge -s /usr/sbin/nologin syedge-agent
 
-COPY --from=syapp-lua-build /out/base/syapp-*-gmssl-*.tar.gz /tmp/
-RUN tar -C / -xzf /tmp/syapp-*-gmssl-*.tar.gz \
- && rm -f /tmp/syapp-*-gmssl-*.tar.gz \
- && ln -s /opt/syapp/sbin/syapp /usr/sbin/syapp
+COPY --from=syedge-lua-build /out/base/syedge-*-gmssl-*.tar.gz /tmp/
+RUN tar -C / -xzf /tmp/syedge-*-gmssl-*.tar.gz \
+ && rm -f /tmp/syedge-*-gmssl-*.tar.gz \
+ && ln -s /opt/syedge/sbin/syedge /usr/sbin/syedge
 
-COPY --from=syapp-lua-build /out/syapp-lua-*.tar.gz /tmp/
-RUN mkdir -p /tmp/syapp-lua \
- && tar -C /tmp/syapp-lua -xzf /tmp/syapp-lua-*.tar.gz \
- && bash /tmp/syapp-lua/install.sh \
- && rm -rf /tmp/syapp-lua /tmp/syapp-lua-*.tar.gz
+COPY --from=syedge-lua-build /out/syedge-lua-*.tar.gz /tmp/
+RUN mkdir -p /tmp/syedge-lua \
+ && tar -C /tmp/syedge-lua -xzf /tmp/syedge-lua-*.tar.gz \
+ && bash /tmp/syedge-lua/install.sh \
+ && rm -rf /tmp/syedge-lua /tmp/syedge-lua-*.tar.gz
 
-COPY --from=go /out/syapp-agent /usr/bin/syapp-agent
-COPY --from=go /out/syapp-wrapper /usr/libexec/syapp/syapp-wrapper
-COPY dataplane/packaging/sudoers/syapp-agent /etc/sudoers.d/syapp-agent
-# 运行时不使用 root（D5）：wrapper 以 syapp 运行，-t 绑定 80/443 需要文件能力；只允许 syapp 组执行
-RUN chown root:syapp /usr/libexec/syapp/syapp-wrapper && chmod 0750 /usr/libexec/syapp/syapp-wrapper \
- && setcap cap_net_bind_service=ip /usr/libexec/syapp/syapp-wrapper
-RUN chmod 0440 /etc/sudoers.d/syapp-agent && visudo -c
+COPY --from=go /out/syedge-agent /usr/bin/syedge-agent
+COPY --from=go /out/syedge-wrapper /usr/libexec/syedge/syedge-wrapper
+COPY dataplane/packaging/sudoers/syedge-agent /etc/sudoers.d/syedge-agent
+# 运行时不使用 root（D5）：wrapper 以 syedge 运行，-t 绑定 80/443 需要文件能力；只允许 syedge 组执行
+RUN chown root:syedge /usr/libexec/syedge/syedge-wrapper && chmod 0750 /usr/libexec/syedge/syedge-wrapper \
+ && setcap cap_net_bind_service=ip /usr/libexec/syedge/syedge-wrapper
+RUN chmod 0440 /etc/sudoers.d/syedge-agent && visudo -c
 COPY demo/node/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY demo/node/systemctl /usr/local/bin/systemctl
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/systemctl

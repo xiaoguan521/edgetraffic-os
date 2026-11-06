@@ -38,7 +38,7 @@ func TestAdoptDrift(t *testing.T) {
 	_ = q.Node.WithContext(ctx).Create(node)
 	fj, _ := json.Marshal([]gateway.DriftFileView{
 		{Path: "conf.d/site-shop.conf", Change: "modified", Content: mod},
-		{Path: "syapp.conf", Change: "modified", Content: "worker_processes 64;"},
+		{Path: "syedge.conf", Change: "modified", Content: "worker_processes 64;"},
 		{Path: "certs/x.key", Change: "added", Omitted: true},
 	})
 	_ = q.NodeDrift.WithContext(ctx).Create(&store.NodeDrift{NodeID: node.ID, RevisionID: dep.RevisionID, Files: string(fj)})
@@ -55,7 +55,7 @@ func TestAdoptDrift(t *testing.T) {
 		t.Fatalf("expected server + location snippets, got %+v", res)
 	}
 	if len(res.Rejected) != 2 {
-		t.Fatalf("syapp.conf and the key file cannot be adopted: %+v", res.Rejected)
+		t.Fatalf("syedge.conf and the key file cannot be adopted: %+v", res.Rejected)
 	}
 	sns, _ := d.ListSnippets(g.ID)
 	var server, loc *store.Snippet
@@ -120,7 +120,7 @@ func TestRestoreClearsDriftStateImmediately(t *testing.T) {
 	if err := q.Node.WithContext(ctx).Create(node); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.NodeDrift.WithContext(ctx).Create(&store.NodeDrift{NodeID: node.ID, RevisionID: dep.RevisionID, TreeHash: "drifted:manual", Files: `[{"path":"syapp.conf"}]`})
+	_ = q.NodeDrift.WithContext(ctx).Create(&store.NodeDrift{NodeID: node.ID, RevisionID: dep.RevisionID, TreeHash: "drifted:manual", Files: `[{"path":"syedge.conf"}]`})
 
 	d.Agents = &applyAgents{d: d}
 	rdep, err := d.Restore(node.ID, "alice", "127.0.0.1")

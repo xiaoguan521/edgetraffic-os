@@ -9,7 +9,7 @@ import (
 )
 
 // TestAcceptanceConfig 为 CI 的 P10 验收（scripts/ci/lua-acceptance.sh）生成版本目录：用真实渲染器产出配置，
-// 写到 /opt/syapp/conf/releases/<ACCEPT_REV> 并通过真实 syapp -t。只在设置 ACCEPT_REV 时运行（需要 root）。
+// 写到 /opt/syedge/conf/releases/<ACCEPT_REV> 并通过真实 syedge -t。只在设置 ACCEPT_REV 时运行（需要 root）。
 //
 //	ACCEPT_LUA=1        包含 JWT（Lua）规则；=0 生成不含 Lua 的版本（卸载附加包前切换用）
 //	ACCEPT_HS_SECRET    HS256 密钥；ACCEPT_RS_PUB  RS256 公钥 PEM 文件
@@ -75,11 +75,11 @@ func TestAcceptanceConfig(t *testing.T) {
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	bin := os.Getenv("SYAPP_BIN")
+	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syapp/sbin/syapp"
+		bin = "/opt/syedge/sbin/syedge"
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput(); err != nil {
-		t.Fatalf("syapp -t failed: %v\n%s", err, out)
+	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 }

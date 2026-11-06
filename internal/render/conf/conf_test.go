@@ -65,7 +65,7 @@ set $v "${host}x";`))
 }
 
 func TestDumpSplitsFiles(t *testing.T) {
-	dump := `syapp: the configuration file /etc/x/x.conf syntax is ok
+	dump := `syedge: the configuration file /etc/x/x.conf syntax is ok
 # configuration file /etc/x/x.conf:
 http {
     include conf.d/*.conf;

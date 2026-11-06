@@ -48,7 +48,7 @@ type Command struct {
 	Env      []string
 }
 
-// SafeEnv 是执行 syapp 时使用的全部环境变量。
+// SafeEnv 是执行 syedge 时使用的全部环境变量。
 var SafeEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
 
 // Build 校验 argv（不含程序名）并返回 system 模式下要执行的命令。

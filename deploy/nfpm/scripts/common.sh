@@ -11,16 +11,16 @@ nologin_shell() {
 ensure_group() { getent group "$1" >/dev/null 2>&1 || groupadd -r "$1"; }
 ensure_user() { id "$1" >/dev/null 2>&1 || useradd -r -g "$2" -d /nonexistent -M -s "$(nologin_shell)" "$1"; }
 is_remove() { [ "$1" = "0" ] || [ "$1" = "remove" ] || [ "$1" = "purge" ]; }
-# 同机多实例（syapp-instance add 创建）：卸载软件包前必须先逐个删除实例，否则拒绝卸载（设计 0001 第 5.7 节）
+# 同机多实例（syedge-instance add 创建）：卸载软件包前必须先逐个删除实例，否则拒绝卸载（设计 0001 第 5.7 节）
 named_instances() {
-  for f in /opt/syapp/instances/*/instance.json; do [ -f "$f" ] && basename "$(dirname "$f")"; done
+  for f in /opt/syedge/instances/*/instance.json; do [ -f "$f" ] && basename "$(dirname "$f")"; done
 }
 refuse_remove_with_instances() {
   is_remove "$1" || return 0
-  [ "${SYAPP_FORCE_REMOVE:-}" = "1" ] && return 0
+  [ "${SYEDGE_FORCE_REMOVE:-}" = "1" ] && return 0
   insts=$(named_instances | tr '\n' ' ')
   [ -z "$insts" ] && return 0
   echo "本机还有同机多实例：$insts" >&2
-  echo "请先逐个执行 syapp-instance remove <实例名> --yes，再卸载软件包；确需强制卸载请设置 SYAPP_FORCE_REMOVE=1" >&2
+  echo "请先逐个执行 syedge-instance remove <实例名> --yes，再卸载软件包；确需强制卸载请设置 SYEDGE_FORCE_REMOVE=1" >&2
   exit 1
 }

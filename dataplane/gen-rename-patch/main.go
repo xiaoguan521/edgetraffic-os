@@ -11,7 +11,7 @@
 //	@HPACK@     HTTP/2 server 头值的 HPACK 哈夫曼字面量编码，@HPACKLEN@ 为其字节数
 //
 // 生成的 patch 仍只改字符串字面量与宏的值（ADR 0001）。默认品牌生成的 patch 必须与
-// dataplane/patches/0001-syapp-rename.patch 逐字节相同（TestDefaultBrandMatchesCommittedPatch）。
+// dataplane/patches/0001-syedge-rename.patch 逐字节相同（TestDefaultBrandMatchesCommittedPatch）。
 package main
 
 import (
@@ -98,7 +98,7 @@ func foldNoops(p []byte) []byte {
 }
 
 func main() {
-	id := flag.String("id", "syapp", "品牌标识（小写，3–7 个字符）")
+	id := flag.String("id", "syedge", "品牌标识（小写，3–7 个字符）")
 	proc := flag.String("proc", "", "进程标题与对外显示名（默认同 -id）")
 	tmplPath := flag.String("tmpl", "dataplane/patches/0001-rename.patch.tmpl", "模板")
 	outPath := flag.String("o", "", "输出 patch（默认输出到标准输出）")

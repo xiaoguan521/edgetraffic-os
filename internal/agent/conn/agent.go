@@ -1,4 +1,4 @@
-// Package conn 实现 syapp-agent 与控制台之间的连接：首次注册、mTLS 长连接、心跳与指令执行（规格书 5.2、5.3）。
+// Package conn 实现 syedge-agent 与控制台之间的连接：首次注册、mTLS 长连接、心跳与指令执行（规格书 5.2、5.3）。
 //
 // agent 只主动连接控制台，不监听任何端口；每条指令先验应用层签名再执行。
 package conn
@@ -48,15 +48,15 @@ import (
 // Config 是 agent 的运行参数。
 type Config struct {
 	Server       string         // 控制台 gRPC 地址 host:port
-	StateDir     string         // /var/lib/syapp-agent
-	DataplaneBin string         // /opt/syapp/sbin/syapp（只读取 -V 与 sha256，不直接执行变更）
-	StatusURL    string         // http://127.0.0.1:8081/__syapp_status
-	VersionURL   string         // http://127.0.0.1:8081/__syapp_version：本实例 worker 实际运行的版本
+	StateDir     string         // /var/lib/syedge-agent
+	DataplaneBin string         // /opt/syedge/sbin/syedge（只读取 -V 与 sha256，不直接执行变更）
+	StatusURL    string         // http://127.0.0.1:8081/__syedge_status
+	VersionURL   string         // http://127.0.0.1:8081/__syedge_version：本实例 worker 实际运行的版本
 	Profile      render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
-	AccessLog    string         // /var/log/syapp/access.json
+	AccessLog    string         // /var/log/syedge/access.json
 	Heartbeat    time.Duration
 	Apply        apply.Config
-	Modules      string // /opt/syapp/modules（syapp-lua 附加包，只读取版本信息上报）
+	Modules      string // /opt/syedge/modules（syedge-lua 附加包，只读取版本信息上报）
 }
 
 // state 是注册后持久化的身份信息。
@@ -179,7 +179,7 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 	return nil
 }
 
-// writeAtomic 写入身份文件。enroll 通常以 root 执行，而 agent 以 syapp-agent 运行：
+// writeAtomic 写入身份文件。enroll 通常以 root 执行，而 agent 以 syedge-agent 运行：
 // 文件属主跟随状态目录，运行中的 agent 才能读取新身份。
 func (a *Agent) writeAtomic(name string, b []byte) error {
 	tmp := a.path(name + ".tmp")
@@ -375,7 +375,7 @@ func (a *Agent) runningVersion(ctx context.Context) string {
 
 var luaVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$`)
 
-// luaAddon 返回已安装的 syapp-lua 附加包：<包版本>/<基础变体>；未安装或不完整时为空。
+// luaAddon 返回已安装的 syedge-lua 附加包：<包版本>/<基础变体>；未安装或不完整时为空。
 func (a *Agent) luaAddon() string {
 	dir := a.C.Modules
 	if dir == "" {

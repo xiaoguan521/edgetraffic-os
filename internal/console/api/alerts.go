@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/alerts"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 )
@@ -96,7 +97,7 @@ func (s *Server) testChannel(c *gin.Context) {
 		failErr(c, store.ErrNotFound)
 		return
 	}
-	if err := s.Alerts.Send(ch, alerts.Message{Title: "【测试】EdgeTraffic OS 告警通道", Text: "这是一条测试消息，由 " + c.GetString("user") + " 发送。"}); err != nil {
+	if err := s.Alerts.Send(ch, alerts.Message{Title: "【测试】" + brand.Product() + " 告警通道", Text: "这是一条测试消息，由 " + c.GetString("user") + " 发送。"}); err != nil {
 		fail(c, http.StatusBadGateway, "SEND_FAILED", err.Error())
 		return
 	}

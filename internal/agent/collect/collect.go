@@ -23,7 +23,7 @@ type Stub struct {
 	Requests uint64
 }
 
-// ReadStub 读取本机状态页，例如 http://127.0.0.1:8081/__syapp_status。
+// ReadStub 读取本机状态页，例如 http://127.0.0.1:8081/__syedge_status。
 func ReadStub(ctx context.Context, url string) (Stub, error) {
 	cl := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

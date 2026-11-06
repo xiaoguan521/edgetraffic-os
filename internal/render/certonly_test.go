@@ -28,7 +28,7 @@ func TestRepackMatchesRender(t *testing.T) {
 // 授权只读时 agent 只放行“仅证书文件变化”的版本（规格书 8.6：证书续期在任何授权状态下可用）。
 func TestCertOnlyChange(t *testing.T) {
 	base := map[string][]byte{
-		"syapp.conf":            []byte("a"),
+		"syedge.conf":           []byte("a"),
 		"conf.d/site-shop.conf": []byte("b"),
 		"certs/site-shop.crt":   []byte("c1"),
 		"certs/site-shop.key":   []byte("k1"),
@@ -120,8 +120,8 @@ func TestAcmeChallengeSnippet(t *testing.T) {
 func TestCertOnlyChangeWithAcmeSnippet(t *testing.T) {
 	tok := "abcDEF0123456789_-tokenXYZ"
 	good := []byte("# ACME HTTP-01 challenges (generated)\nlocation = /.well-known/acme-challenge/" + tok + " { default_type text/plain; return 200 \"" + tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab\"; }\n")
-	base := map[string][]byte{"syapp.conf": []byte("a"), AcmeSnippet: []byte("# ACME HTTP-01 challenges (generated)\n"), ManifestName: []byte("m")}
-	next := map[string][]byte{"syapp.conf": []byte("a"), AcmeSnippet: good, ManifestName: []byte("m2")}
+	base := map[string][]byte{"syedge.conf": []byte("a"), AcmeSnippet: []byte("# ACME HTTP-01 challenges (generated)\n"), ManifestName: []byte("m")}
+	next := map[string][]byte{"syedge.conf": []byte("a"), AcmeSnippet: good, ManifestName: []byte("m2")}
 	if !CertOnlyChange(base, next) {
 		t.Fatal("valid challenge snippet change rejected")
 	}

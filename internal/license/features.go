@@ -16,7 +16,7 @@ const (
 	FeatureHA              Feature = "ha"
 	FeatureCanary          Feature = "canary"
 	FeatureGMTLS           Feature = "gm_tls"
-	FeatureLua             Feature = "lua" // P10：Lua 规则（JWT 校验，需要节点装 syapp-lua 附加包）；原生规则积木属于 core
+	FeatureLua             Feature = "lua" // P10：Lua 规则（JWT 校验，需要节点装 syedge-lua 附加包）；原生规则积木属于 core
 )
 
 // Edition 是展示用的版本名。

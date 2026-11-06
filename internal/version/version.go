@@ -8,11 +8,15 @@
 // BuildDate 同时用于 License 的 maintenance_until 校验（规格书 8.3）。
 package version
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+)
 
 var (
-	// Product 是对外品牌名。
-	Product = "EdgeTraffic OS"
+	// Product 是对外产品名（来自构建时的品牌，见 internal/brand）。
+	Product = brand.Product()
 	// Version 是语义化版本号。
 	Version = "0.0.0-dev"
 	// Commit 是 git 提交哈希。

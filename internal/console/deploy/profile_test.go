@@ -61,8 +61,8 @@ func TestGroupProfileFeedsRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	main := string(b.Files["syapp.conf"])
-	if !strings.Contains(main, "pid   /run/syapp-blue/syapp.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
+	main := string(b.Files["syedge.conf"])
+	if !strings.Contains(main, "pid   /run/syedge-blue/syedge.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
 		t.Fatalf("preview not rendered with the group profile:\n%s", main)
 	}
 }
@@ -200,7 +200,7 @@ func TestCheckInstance(t *testing.T) {
 	}
 	wrong := blue
 	wrong.HTTPSPort = 28443
-	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "syapp-instance add") {
+	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "syedge-instance add") {
 		t.Fatalf("port mismatch: %v", err)
 	}
 	if err := d.CheckInstance(def.ID, &blue); !errors.Is(err, ErrInstanceMismatch) {

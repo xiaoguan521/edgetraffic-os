@@ -26,7 +26,7 @@ var (
 	signerA  = Actor{User: "carol", Roles: []string{store.RoleSigner}}
 )
 
-const actJSON = `{"installation_id":"inst_00ff","fp_hashes":["a1","b2","c3","d4","e5"],"product":"EdgeTraffic OS","nodes":3}`
+const actJSON = `{"installation_id":"inst_00ff","fp_hashes":["a1","b2","c3","d4","e5"],"product":"SyEdge","nodes":3}`
 
 type env struct {
 	s    *Service

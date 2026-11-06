@@ -128,7 +128,7 @@ func payload(id, kid string) license.Payload {
 		Limits:   license.Limits{Nodes: 50, Sites: 2000, AuditDays: 365},
 		IssuedAt: now, NotBefore: now, ExpiresAt: now.AddDate(1, 0, 0), MaintenanceUntil: now.AddDate(1, 0, 0), GraceDays: 15,
 		Binding: license.Binding{Type: "installation_only", InstallationID: "inst_abc"},
-		Product: license.Product{Name: "EdgeTraffic OS", MinVersion: "0.0.0", MaxVersion: "1.*"}}
+		Product: license.Product{Name: "SyEdge", MinVersion: "0.0.0", MaxVersion: "1.*"}}
 }
 
 func request(t *testing.T, kid string) ([]byte, *license.SignRequest) {

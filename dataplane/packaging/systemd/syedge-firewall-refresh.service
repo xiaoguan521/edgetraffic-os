@@ -1,0 +1,13 @@
+[Unit]
+Description=syedge firewall: refresh rules from instance configurations
+ConditionPathExists=/var/lib/syedge-firewall/firewall.nft.args
+
+[Service]
+Type=oneshot
+# 运行时不使用 root（设计 0001 D5）：防火墙专用用户，只带 CAP_NET_ADMIN；只读各实例的配置
+User=syedge-firewall
+Group=syedge-firewall
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ExecStart=/usr/sbin/syedge-firewall refresh

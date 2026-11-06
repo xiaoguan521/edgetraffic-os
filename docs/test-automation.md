@@ -11,7 +11,7 @@
 npm install --no-save --no-audit --no-fund --prefix /tmp/etos-pw playwright@1.63.0
 /tmp/etos-pw/node_modules/.bin/playwright install chromium
 
-# SQLite + 真实浏览器 + 两个真实 syapp/agent 容器 + 测试后端。
+# SQLite + 真实浏览器 + 两个真实 syedge/agent 容器 + 测试后端。
 NODE_PATH=/tmp/etos-pw/node_modules IMPORT_E2E_LIVE=1 scripts/ci/import-ui-local.sh
 ```
 

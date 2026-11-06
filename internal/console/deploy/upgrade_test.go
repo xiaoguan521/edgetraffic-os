@@ -42,7 +42,7 @@ func seedPackage(t *testing.T, d *Service, ver string) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	d.PackageKeys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	data := []byte("pkg-" + ver)
-	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", ver, "amd64", "standard", data)
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", ver, "amd64", "standard", data)
 	sb, _ := json.Marshal(sig)
 	if _, err := d.ImportPackage(data, sb, "admin", ""); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestAgentUpgrade(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	d.PackageKeys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	data := []byte("agent-pkg")
-	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-agent", "2.0.0", "amd64", "standard", data)
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge-agent", "2.0.0", "amd64", "standard", data)
 	sb, _ := json.Marshal(sig)
 	if _, err := d.ImportPackage(data, sb, "admin", ""); err != nil {
 		t.Fatal(err)

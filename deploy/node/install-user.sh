@@ -5,9 +5,9 @@
 #       [--console <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>]
 #
 # 端口须 ≥ 1024（普通用户不能监听特权端口）；同一根目录下再加实例：
-#   <安装根目录>/bin/syapp-instance --root <安装根目录> add <实例名> --http .. --https .. --status ..
+#   <安装根目录>/bin/syedge-instance --root <安装根目录> add <实例名> --http .. --https .. --status ..
 set -euo pipefail
-B=syapp
+B=syedge
 [[ $# -ge 1 && "$1" != -* ]] || { sed -n '4,8p' "$0" >&2; exit 2; }
 R="$1"; shift
 [[ "$(id -u)" != 0 ]] || { echo "user 模式请以普通用户运行；以 root 安装请使用 install.sh 或软件包" >&2; exit 1; }
