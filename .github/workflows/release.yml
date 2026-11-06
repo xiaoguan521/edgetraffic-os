@@ -231,19 +231,22 @@ jobs:
           curl -fsS http://127.0.0.1:18600/ | grep -q '<div id="app">'
           kill $lpid
 
-      - name: upload release assets
+      # 构建任务只把发布文件交给 publish 任务（工作流制品），不直接调用 Releases API：
+      # GitHub 托管的 arm64 runner 访问 api.github.com 时多次出现 TLS 错误（“unrecognized name”），重试 5 分钟仍会失败
+      - name: collect release assets
         run: |
+          mkdir -p "$RUNNER_TEMP/assets"
           for f in "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/*.deb "$OUT"/*.rpm; do
-            [[ -f "$f" ]] || continue
-            # GitHub 托管的 arm64 runner 访问 api.github.com 时偶发 TLS 错误（“unrecognized name”），持续时间可达一分钟：
-            # 多试几次并逐步拉长间隔（合计约 5 分钟），--clobber 保证重传是幂等的
-            for try in 1 2 3 4 5 6; do
-              if err=$(gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$f" 2>&1); then echo "uploaded $(basename "$f")"; break; fi
-              echo "::warning title=upload $(basename "$f") try $try::${err//$'\n'/ }"
-              [[ $try == 6 ]] && { echo "::error title=upload::$(basename "$f"): ${err//$'\n'/ }"; exit 1; }
-              sleep $((try * 15))
-            done
+            [[ -f "$f" ]] && cp "$f" "$RUNNER_TEMP/assets/"
           done
+          ls -l "$RUNNER_TEMP/assets"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.arch }}
+          path: ${{ runner.temp }}/assets/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0   # 已是压缩包
 
       - name: build and push images (${{ matrix.arch }})
         run: |
@@ -288,12 +291,24 @@ jobs:
             docker buildx imagetools create "${tags[@]}" "$REGISTRY/$name:$TAG-amd64" "$REGISTRY/$name:$TAG-arm64"
             docker buildx imagetools inspect "$REGISTRY/$name:$TAG" | grep -E 'Platform:' | sort -u
           done
-      - name: checksums and publish release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: assets-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/assets
+      - name: upload assets, checksums and publish release
         run: |
-          d=$(mktemp -d); cd "$d"
-          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'syedge*'
-          sha256sum syedge* | tee SHA256SUMS
-          gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber SHA256SUMS
+          cd "$RUNNER_TEMP/assets"
+          ls -l
+          sha256sum -- * | tee SHA256SUMS
+          for f in *; do
+            for try in 1 2 3 4 5; do
+              if err=$(gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$f" 2>&1); then echo "uploaded $f"; break; fi
+              echo "::warning title=upload $f try $try::${err//$'\n'/ }"
+              [[ $try == 5 ]] && { echo "::error title=upload::$f: ${err//$'\n'/ }"; exit 1; }
+              sleep $((try * 10))
+            done
+          done
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             gh release edit "$RELEASE" -R "$GITHUB_REPOSITORY" --draft=false --latest=${{ needs.meta.outputs.stable }} \
               --prerelease=$([[ "${{ needs.meta.outputs.stable }}" == true ]] && echo false || echo true)
