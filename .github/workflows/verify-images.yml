@@ -1,0 +1,37 @@
+# 临时：核对 v0.3.0 发布镜像能按演示方式启动（不合并）
+name: verify-images
+on:
+  push:
+    branches: [ci/verify-030-images]
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: pull 0.3.0 and start
+        working-directory: demo
+        run: |
+          printf 'ETOS_REGISTRY=ghcr.io/xiaoguan521/edgetraffic-os\nETOS_TAG=0.3.0\n' > .env
+          docker compose pull console node1 node2 backend1 backend2
+          docker compose up -d --no-build console node1 node2 backend1 backend2
+          sleep 25
+          docker compose ps
+      - name: checks
+        working-directory: demo
+        run: |
+          set -x
+          fail=0
+          for n in node1 node2; do
+            docker compose logs --no-color $n | tail -20
+            docker compose exec -T $n ps -eo user,args | grep -E 'syapp: (master|worker)' || fail=1
+            if docker compose exec -T $n ps -eo user,args | grep -E 'syapp: (master|worker)' | grep -q '^root'; then echo "ROOT data plane on $n"; fail=1; fi
+            docker compose exec -T $n syapp -v || fail=1
+            docker compose exec -T $n ls -l /usr/libexec/syapp/syapp-wrapper
+            docker compose exec -T -u syapp $n /usr/libexec/syapp/syapp-wrapper test r000000 || { echo "wrapper test failed on $n"; fail=1; }
+          done
+          curl -sI http://127.0.0.1:8001/ | head -5
+          curl -fsS http://127.0.0.1:8443/api/v1/setup/status || fail=1
+          curl -fsS http://127.0.0.1:8443/api/v1/brand || true
+          docker compose logs --no-color console | tail -20
+          exit $fail
