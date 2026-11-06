@@ -139,6 +139,8 @@ jobs:
           sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
       - name: renderer output through real syapp -t (default, instance and user-mode profiles)
         run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyappSyntax$|TestRenderProfileSyappSyntax$' ./internal/render/
+      - name: brand runtime check (default brand; Server header over HTTP/1.1 and HTTP/2, titles, error page)
+        run: sudo scripts/ci/brand-runtime.sh "$(ls dist/syapp-*.tar.gz)" syapp syapp
       - name: wrapper hot upgrade with real syapp (single instance and two instances sharing one binary)
         run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor SYAPP_BIN=/opt/syapp/sbin/syapp go test -count=1 -v -run 'RealSyapp$' ./internal/wrapper/
       - name: multi-instance and non-root acceptance (P11, design 0001 §10.3)
@@ -150,6 +152,24 @@ jobs:
           name: syapp-linux-x86_64
           path: dist/*.tar.gz
           retention-days: 3
+
+  dataplane-brand:
+    # 定制品牌（设计 0001 第 4 节，BR-01 / BR-02 / D7）：按测试品牌生成改名 patch 并构建数据面，
+    # 实测进程标题、-t 输出、HTTP/1.1 与 HTTP/2 的 Server 头（HPACK 编码，字符串扫描看不到）、错误页
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - name: build deps
+        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev
+      - name: build syedge / SyEdge
+        run: |
+          printf 'BRAND_ID=syedge\nBRAND_PROC=SyEdge\nBRAND_PRODUCT="SyEdge Gateway"\n' > /tmp/syedge.env
+          BRAND_ENV=/tmp/syedge.env GOFLAGS=-mod=vendor dataplane/build-syapp.sh -o dist-brand
+      - name: brand runtime check
+        run: sudo scripts/ci/brand-runtime.sh "$(ls dist-brand/syedge-*.tar.gz)" syedge SyEdge
 
   dataplane-gm:
     # 国密变体：铜锁（NTLS）静态构建 → 渲染器国密配置过真实 syapp -t → 国密 TLCP 与标准 TLS 握手（同一 443，按 SNI 选证书）。

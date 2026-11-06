@@ -373,4 +373,4 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 | D4 | user 模式是否必须支持没有 `systemd --user` 的机器 | 必须支持。cron 兜底的实现成本低，而且国产操作系统上经常无法开启 linger |
 | D5 | 是否需要方式 B（system 模式降权运行） | 建议需要；P11 中未实现，等确认后单独做（要点见 6.1 节） |
 | D6 | v0.2 是否等 P11 完成 | 不等。v0.2 只包含 10.1 节的最小修复，按单实例交付试点；P11 进入 v0.3 |
-| D7 | `Server` 响应头是否允许客户配置为隐藏品牌名 | 不能按选项实现：开源版的 `server_tokens` 只有 on / off / build，去掉 Server 头需要改模块逻辑，违反“patch 只改字符串”的规则。需要不同的显示名时用品牌定制构建（第 4 节）；错误页可用自定义错误页覆盖 |
+| D7 | `Server` 响应头与错误页显示什么 | 显示品牌的显示名：默认品牌为 `syapp`，定制品牌为其显示名（例如 `SyEdge`），不隐藏。由改名 patch 模板按品牌生成：HTTP/1.1、HTTP/2（HPACK 编码）、HTTP/3 的 Server 头与默认错误页都用显示名；`server_tokens off` 时不带版本号。实现时修复了两处：HTTP/2 的 HPACK 字节曾写死为默认品牌，控制台输出的前缀长度曾写死为默认长度（显示名长度不同时吞掉消息首字符）。由 `scripts/ci/brand-runtime.sh` 对默认品牌与定制品牌分别实测（CI：`dataplane`、`dataplane-brand`） |
