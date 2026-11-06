@@ -6,6 +6,8 @@
 
 ## 1. 组件与安装方式
 
+发布页每个文件的用途、交付对象与选择方法见 [`release-assets.md`](release-assets.md)（同一内容也写在每个正式版本的发布说明开头）。
+
 | 组件 | 作用 | 默认位置 |
 | --- | --- | --- |
 | `syapp-console` | Web 控制台、REST API、节点 gRPC 网关 | `/usr/bin/syapp-console` |
