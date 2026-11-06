@@ -1,9 +1,9 @@
-# EdgeTraffic OS（边缘流量操作系统）
+# SyEdge（神玥企业级动态网关与负载均衡引擎）
 
-基于 NGINX 开源版的边缘流量管理产品：数据面 **syapp** 只做改名构建、不改逻辑；
+基于 NGINX 开源版的边缘流量管理产品：数据面 **syedge** 只做改名构建、不改逻辑；
 控制面是自研 Web 控制台，统一管理多台边缘节点的「改配置 → 校验 → 下发 → reload → 验证 → 回滚」，并内置商业授权。
 
-- 设计规格书：[EdgeTraffic OS 设计规格书 v3.1](https://claude.ai/artifact/6nhk8LuTBm3hqjBD1MryCp)（副本索引见 `docs/spec/`）
+- 设计规格书：[SyEdge 设计规格书 v3.1](https://claude.ai/artifact/6nhk8LuTBm3hqjBD1MryCp)（副本索引见 `docs/spec/`）
 - 安装维护手册：[`docs/install-maintenance.md`](docs/install-maintenance.md)
 - 编码规则：[`CLAUDE.md`](CLAUDE.md)（所有编码 Agent 与开发者必读）
 
@@ -11,11 +11,11 @@
 
 | 程序 | 位置 | 职责 |
 | --- | --- | --- |
-| `syapp-console` | 客户内网 | Web 控制台、REST API、渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
-| `syapp-agent` | 每台边缘节点 | 主动连接控制台，本地发布状态机、指标采集、漂移检测；不监听端口 |
-| `syapp-wrapper` | 每台边缘节点 | agent 唯一的提权入口，只执行 test / reload / reopen / quit |
-| `syapp` | 每台边缘节点 | 数据面：处理公网流量 |
-| `syapp-license-server` | 厂商内网 | 客户与订单、License 签发、激活、吊销 |
+| `syedge-console` | 客户内网 | Web 控制台、REST API、渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
+| `syedge-agent` | 每台边缘节点 | 主动连接控制台，本地发布状态机、指标采集、漂移检测；不监听端口 |
+| `syedge-wrapper` | 每台边缘节点 | agent 唯一的提权入口，只执行 test / reload / reopen / quit |
+| `syedge` | 每台边缘节点 | 数据面：处理公网流量 |
+| `syedge-license-server` | 厂商内网 | 客户与订单、License 签发、激活、吊销 |
 
 ## 目录
 

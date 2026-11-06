@@ -14,7 +14,7 @@ func TestLuaAddonDetection(t *testing.T) {
 	}
 	_ = os.MkdirAll(filepath.Join(dir, "lua-1.30.6-2"), 0o755)
 	_ = os.Symlink("lua-1.30.6-2", filepath.Join(dir, "lua"))
-	_ = os.WriteFile(filepath.Join(dir, "lua-1.30.6-2/VERSION"), []byte(`{"name":"syapp-lua","version":"1.30.6-2"}`), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "lua-1.30.6-2/VERSION"), []byte(`{"name":"syedge-lua","version":"1.30.6-2"}`), 0o644)
 	if a.luaAddon() != "" {
 		t.Fatal("incomplete install (no BASE) reported")
 	}

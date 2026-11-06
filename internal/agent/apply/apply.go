@@ -1,6 +1,6 @@
 // Package apply 实现边缘节点上的本地发布状态机（规格书 5.4）。
 //
-// 加锁 → 校验父版本 → 解包并校验清单 → syapp -t → 切换 current → reload →
+// 加锁 → 校验父版本 → 解包并校验清单 → syedge -t → 切换 current → reload →
 // 确认加载（worker 全部更换、error.log 无 emerg/crit）→ 后置探活 → 完成；
 // 任一步失败自动回滚到 previous。全程禁止 restart。
 package apply
@@ -62,11 +62,11 @@ type PostCheck struct {
 
 // Config 描述节点上的路径与提权方式。
 type Config struct {
-	ConfRoot     string          // /opt/syapp/conf
-	PidFile      string          // /run/syapp/syapp.pid
-	ErrorLog     string          // /var/log/syapp/error.log
-	LockFile     string          // /run/syapp-agent/apply.lock
-	Wrapper      []string        // 例如 ["sudo","-n","/usr/libexec/syapp/syapp-wrapper"]；root 运行时可直接写 wrapper 路径
+	ConfRoot     string          // /opt/syedge/conf
+	PidFile      string          // /run/syedge/syedge.pid
+	ErrorLog     string          // /var/log/syedge/error.log
+	LockFile     string          // /run/syedge-agent/apply.lock
+	Wrapper      []string        // 例如 ["sudo","-n","/usr/libexec/syedge/syedge-wrapper"]；root 运行时可直接写 wrapper 路径
 	KeepRelease  int             // 保留的版本数，默认 20
 	ConfirmWait  time.Duration   // reload 后等待 worker 更换的上限，默认 10s
 	Workers      func(int) []int // 测试可注入 worker PID 查询（默认读取 /proc）

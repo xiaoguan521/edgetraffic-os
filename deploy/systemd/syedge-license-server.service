@@ -1,0 +1,19 @@
+[Unit]
+Description=SyEdge vendor license portal (syedge-license-server serve)
+After=network-online.target postgresql.service
+
+[Service]
+User=syedge-license
+# 只放公钥与业务数据；签名私钥永远不在这台机器上（离线签名机，docs/license-ops.md）
+EnvironmentFile=-/etc/syedge-license-server/portal.env
+ExecStart=/usr/bin/syedge-license-server serve -data /var/lib/syedge-license-server
+Restart=always
+StateDirectory=syedge-license-server
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -56,10 +56,10 @@ echo "== [5/6] Production binaries & release-tag build gate"
 make build
 TMP_REL="$(mktemp -d)"
 trap 'rm -rf "$TMP_REL"' EXIT
-CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syapp-console" ./cmd/syapp-console
-CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syapp-agent" ./cmd/syapp-agent
-CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syapp-wrapper" ./cmd/syapp-wrapper
-CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syapp-license-server" ./cmd/syapp-license-server
+CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syedge-console" ./cmd/syedge-console
+CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syedge-agent" ./cmd/syedge-agent
+CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syedge-wrapper" ./cmd/syedge-wrapper
+CGO_ENABLED=0 go build -trimpath -tags release -o "$TMP_REL/syedge-license-server" ./cmd/syedge-license-server
 
 echo "== [6/6] Go vet & race test suite"
 go vet ./...
@@ -79,14 +79,14 @@ sha256_of() {
   fi
 }
 
-CONSOLE_VER="$(./bin/syapp-console -version 2>/dev/null || echo unknown)"
-CONSOLE_SHA="$(sha256_of bin/syapp-console)"
-AGENT_SHA="$(sha256_of bin/syapp-agent)"
-WRAPPER_SHA="$(sha256_of bin/syapp-wrapper)"
-PORTAL_SHA="$(sha256_of bin/syapp-license-server)"
+CONSOLE_VER="$(./bin/syedge-console -version 2>/dev/null || echo unknown)"
+CONSOLE_SHA="$(sha256_of bin/syedge-console)"
+AGENT_SHA="$(sha256_of bin/syedge-agent)"
+WRAPPER_SHA="$(sha256_of bin/syedge-wrapper)"
+PORTAL_SHA="$(sha256_of bin/syedge-license-server)"
 
 SUMMARY="$(cat <<EOF
-# EdgeTraffic OS 发布门禁报告
+# SyEdge 发布门禁报告
 
 - **执行时间 (UTC)**：\`$NOW_UTC\`
 - **Git 分支 / 提交**：\`$BRANCH\` @ \`$COMMIT\` (\`$FULL_COMMIT\`, working tree: \`$DIRTY\`)
@@ -108,10 +108,10 @@ SUMMARY="$(cat <<EOF
 
 | 组件 | 路径 | SHA-256 |
 | --- | --- | --- |
-| \`syapp-console\` | \`bin/syapp-console\` | \`$CONSOLE_SHA\` |
-| \`syapp-agent\` | \`bin/syapp-agent\` | \`$AGENT_SHA\` |
-| \`syapp-wrapper\` | \`bin/syapp-wrapper\` | \`$WRAPPER_SHA\` |
-| \`syapp-license-server\` | \`bin/syapp-license-server\` | \`$PORTAL_SHA\` |
+| \`syedge-console\` | \`bin/syedge-console\` | \`$CONSOLE_SHA\` |
+| \`syedge-agent\` | \`bin/syedge-agent\` | \`$AGENT_SHA\` |
+| \`syedge-wrapper\` | \`bin/syedge-wrapper\` | \`$WRAPPER_SHA\` |
+| \`syedge-license-server\` | \`bin/syedge-license-server\` | \`$PORTAL_SHA\` |
 EOF
 )"
 

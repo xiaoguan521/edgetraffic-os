@@ -102,7 +102,7 @@ var errStandby = status.Error(codes.Unavailable, "standby console: connect to th
 
 func (s *Server) standby() bool { return s.Ready != nil && !s.Ready() }
 
-// TLSLib 从 syapp -V 输出判断数据面的 TLS 库：国密变体由 build-syapp.sh -t tongsuo 构建，
+// TLSLib 从 syedge -V 输出判断数据面的 TLS 库：国密变体由 build-syedge.sh -t tongsuo 构建，
 // 配置参数中带 enable-ntls（铜锁的版本文本与 OpenSSL 相同，不能用来区分）。
 func TLSLib(versionOutput string) string {
 	if strings.Contains(versionOutput, "enable-ntls") {
@@ -113,7 +113,7 @@ func TLSLib(versionOutput string) string {
 
 var luaAddonRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?/(standard|gmssl)$`)
 
-// LuaAddon 校验 agent 上报的 syapp-lua 附加包（<包版本>/<基础变体>），格式不对时视为未安装。
+// LuaAddon 校验 agent 上报的 syedge-lua 附加包（<包版本>/<基础变体>），格式不对时视为未安装。
 func LuaAddon(v string) string {
 	if luaAddonRe.MatchString(v) {
 		return v
@@ -590,9 +590,12 @@ func (s *Server) FetchPackage(req *agentv1.FetchPackageRequest, stream agentv1.A
 
 var hostKeyRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// HostKey 返回 agent 上报的机器指纹（/etc/machine-id 的 sha256）；格式不符时为空（视为未知主机，不参与同机检查）。
+// emptyMachineID 是空 /etc/machine-id 的 sha256：v0.3.0 及之前的 agent 在没有机器 ID 的容器中上报它，所有这样的容器相同。
+const emptyMachineID = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// HostKey 返回 agent 上报的机器指纹（/etc/machine-id 的 sha256）；格式不符或是空机器 ID 的哈希时为空（视为未知主机，不参与同机检查）。
 func HostKey(fp string) string {
-	if hostKeyRe.MatchString(fp) {
+	if hostKeyRe.MatchString(fp) && fp != emptyMachineID {
 		return fp
 	}
 	return ""

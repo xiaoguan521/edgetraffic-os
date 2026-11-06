@@ -1,4 +1,4 @@
-# syapp-lua 附加包依赖（P10）：全部按发布标签 + 完整提交哈希锁定，克隆后校验提交哈希
+# syedge-lua 附加包依赖（P10）：全部按发布标签 + 完整提交哈希锁定，克隆后校验提交哈希
 # （提交哈希是整个源码树内容的密码学摘要）。升级任一依赖时同时更新标签与提交哈希，并重新跑 CI 的 lua 验收。
 # 版本配套：lua-resty-core v0.1.32R1 要求 lua 模块 0.10.29（ngx_lua_version 10029）。许可：LuaJIT MIT，其余 BSD-2-Clause。
 LUAJIT_GIT=https://github.com/openresty/luajit2.git

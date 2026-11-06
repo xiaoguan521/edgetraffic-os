@@ -31,6 +31,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
@@ -256,7 +257,7 @@ func unpackArchive(r io.Reader, pass []byte) (map[string][]byte, *Summary, error
 		return nil, nil, err
 	}
 	if len(raw) < len(magic)+28 || string(raw[:len(magic)]) != magic {
-		return nil, nil, errors.New("不是 EdgeTraffic OS 备份文件")
+		return nil, nil, errors.New("不是 " + brand.Product() + " 备份文件")
 	}
 	header := raw[:len(magic)+28]
 	salt, nonce := header[len(magic):len(magic)+16], header[len(magic)+16:]

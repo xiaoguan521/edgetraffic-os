@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 50 节点规模验收（真实容器，规格书 12.1“集成与压测”、12.6 数据面统一升级）：
 #   1. 50 节点并行发布 < 60 秒；
-#   2. 控制台宕机 30 分钟期间业务无影响（节点持续服务、0 失败请求、syapp 不重启），恢复后节点自动重连、发布正常；
+#   2. 控制台宕机 30 分钟期间业务无影响（节点持续服务、0 失败请求、syedge 不重启），恢复后节点自动重连、发布正常；
 #   3. 50 节点分 3 批热升级 < 10 分钟，回退同样 < 10 分钟；
 #   4. 升级与回退都在压测中进行：0 失败请求，长连接不断。
-# 在 demo/ 的 Docker 环境中运行（真实控制台 + 50 个真实节点容器：syapp + agent + wrapper）。
+# 在 demo/ 的 Docker 环境中运行（真实控制台 + 50 个真实节点容器：syedge + agent + wrapper）。
 # 用法：在仓库根目录 scripts/ci/scale-50.sh；需要 docker、wrk、python3、curl；
 #   LIC_TOOL / LIC_KEY / LIC_KID：CI 临时授权签发；PKG_KEY / PKG_KID：CI 临时升级包签名密钥；
 #   N（默认 50）、DOWN_MIN（默认 30）可调小用于本地试跑。
@@ -40,7 +40,7 @@ echo "== 控制台就绪、初始化、授权（$N 节点）"
 for _ in $(seq 1 90); do curl -sf --noproxy '*' "$B/setup/status" >/dev/null && break; sleep 2; done
 "${C[@]}" -X POST "$B/setup" -d '{"username":"admin","password":"Scale@2026!50"}' >/dev/null
 "${C[@]}" -X POST "$B/auth/login" -d '{"username":"admin","password":"Scale@2026!50"}' >/dev/null
-INST=$($DC exec -T console sh -c 'cat /var/lib/syapp-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
+INST=$($DC exec -T console sh -c 'cat /var/lib/syedge-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
 "$LIC_TOOL" issue -key "$LIC_KEY" -kid "$LIC_KID" -installation-id "$INST" -binding installation_only \
   -customer scale -edition professional -nodes $((N + 10)) -sites 200 -days 365 > "$W/l.lic"
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/l.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
@@ -69,7 +69,7 @@ start_node() {
   local cmd; cmd=$("${CR[@]}" -X POST "$B/node-groups/1/enroll" | j "d['command']")
   [[ -z "$cmd" ]] && { echo "::warning title=scale::enroll $(name_of "$i") failed" >&2; return 1; }
   cmd=${cmd#sudo }; cmd=${cmd%% && *}
-  for _ in $(seq 1 30); do docker exec "etos-n$i" test -e /opt/syapp/conf/current && break; sleep 1; done
+  for _ in $(seq 1 30); do docker exec "etos-n$i" test -e /opt/syedge/conf/current && break; sleep 1; done
   # shellcheck disable=SC2086
   docker exec "etos-n$i" $cmd >/dev/null 2>&1
 }
@@ -132,7 +132,7 @@ probe() { # <名>
 probe_result() { # <名> -> “成功 失败”
   touch "$W/stop-$1"; sleep 4; cat "$W/probe-$1" 2>/dev/null || echo "0 0"
 }
-masters() { for i in $(seq 1 "$N"); do docker exec "etos-n$i" cat /run/syapp/syapp.pid 2>/dev/null || echo "-"; done | tr '\n' ' '; }
+masters() { for i in $(seq 1 "$N"); do docker exec "etos-n$i" cat /run/syedge/syedge.pid 2>/dev/null || echo "-"; done | tr '\n' ' '; }
 
 echo "== 2. 控制台宕机 $DOWN_MIN 分钟期间业务无影响"
 m_before=$(masters)
@@ -146,7 +146,7 @@ done
 read -r pok pbad <<<"$(probe_result down)"
 (( pbad == 0 && pok > N * 100 )) && ok "宕机 $DOWN_MIN 分钟内 $pok 次业务请求全部成功" || bad "宕机期间业务请求 成功 $pok / 失败 $pbad（$(head -3 "$W/probe-down.err" 2>/dev/null | tr '\n' ' ')）"
 note "控制台宕机 $DOWN_MIN 分钟：业务请求成功 $pok、失败 $pbad"
-[[ "$(masters)" == "$m_before" ]] && ok "宕机期间所有节点的 syapp master 未重启" || bad "有节点的 syapp master 发生变化"
+[[ "$(masters)" == "$m_before" ]] && ok "宕机期间所有节点的 syedge master 未重启" || bad "有节点的 syedge master 发生变化"
 t0=$(now)
 $DC start console >/dev/null 2>&1
 for _ in $(seq 1 90); do curl -sf --noproxy '*' "$B/setup/status" >/dev/null && break; sleep 1; done
@@ -163,19 +163,19 @@ edit_site "scale v3"
 check_publish "控制台恢复后发布" "scale v3"
 
 echo "== 3/4. 分 3 批热升级与回退（压测中，0 失败请求、长连接不断）"
-VER=$(docker exec etos-n1 /opt/syapp/sbin/syapp -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+VER=$(docker exec etos-n1 /opt/syedge/sbin/syedge -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 UP="$VER-2"
-docker cp "etos-n1:$(docker exec etos-n1 readlink -f /opt/syapp/sbin/syapp)" "$W/syapp.bin" >/dev/null
+docker cp "etos-n1:$(docker exec etos-n1 readlink -f /opt/syedge/sbin/syedge)" "$W/syedge.bin" >/dev/null
 ARCH=$(docker exec etos-n1 sh -c 'dpkg --print-architecture 2>/dev/null || uname -m')
 mkpkg() { # <版本>：同一个二进制以给定版本号打包并签名，导入版本库
   local v=$1 d="$W/pkg-$1"
-  mkdir -p "$d/s/sbin" && cp "$W/syapp.bin" "$d/s/sbin/syapp" && chmod 755 "$d/s/sbin/syapp"
+  mkdir -p "$d/s/sbin" && cp "$W/syedge.bin" "$d/s/sbin/syedge" && chmod 755 "$d/s/sbin/syedge"
   echo "$v" > "$d/s/VERSION"; cp ../docs/NOTICE "$d/s/NOTICE"
-  tar -C "$d/s" --owner=0 --group=0 -czf "$d/syapp-$v.tar.gz" sbin/syapp VERSION NOTICE
-  "$LIC_TOOL" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syapp-$v.tar.gz" -name syapp -version "$v" -arch "$ARCH" -variant standard >/dev/null
-  curl -s --noproxy '*' -b "$JAR" -H 'X-Requested-With: etos' -F "package=@$d/syapp-$v.tar.gz" -F "signature=@$d/syapp-$v.tar.gz.sig" "$B/packages"
+  tar -C "$d/s" --owner=0 --group=0 -czf "$d/syedge-$v.tar.gz" sbin/syedge VERSION NOTICE
+  "$LIC_TOOL" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syedge-$v.tar.gz" -name syedge -version "$v" -arch "$ARCH" -variant standard >/dev/null
+  curl -s --noproxy '*' -b "$JAR" -H 'X-Requested-With: etos' -F "package=@$d/syedge-$v.tar.gz" -F "signature=@$d/syedge-$v.tar.gz.sig" "$B/packages"
 }
-expect_pkg() { if [[ "$2" == *'"version":"'"$1"'"'* ]]; then ok "导入签名升级包 syapp $1"; else bad "导入 syapp $1 失败：${2:0:200}"; fi; }
+expect_pkg() { if [[ "$2" == *'"version":"'"$1"'"'* ]]; then ok "导入签名升级包 syedge $1"; else bad "导入 syedge $1 失败：${2:0:200}"; fi; }
 expect_pkg "$UP" "$(mkpkg "$UP")"
 expect_pkg "$VER" "$(mkpkg "$VER")"
 
@@ -243,12 +243,12 @@ rollout() { # <说明> <目标版本> <期望软链目录>
   local pok pbad; read -r pok pbad <<<"$(probe_result "$ver")"
   (( pbad == 0 && pok > 0 )) && ok "$what：全部节点轮询 $pok 次，0 失败" || bad "$what：全部节点轮询 成功 $pok / 失败 $pbad（$(head -3 "$W/probe-$ver.err" 2>/dev/null | tr '\n' ' ')）"
   local wrong=0
-  for i in $(seq 1 "$N"); do [[ $(docker exec "etos-n$i" readlink /opt/syapp/sbin/syapp) == */versions/$3/sbin/syapp ]] || wrong=$((wrong + 1)); done
+  for i in $(seq 1 "$N"); do [[ $(docker exec "etos-n$i" readlink /opt/syedge/sbin/syedge) == */versions/$3/sbin/syedge ]] || wrong=$((wrong + 1)); done
   (( wrong == 0 )) && ok "$what：$N 个节点都运行 $3" || bad "$what：$wrong 个节点没有运行 $3"
   # 旧 master 在长连接结束后退出；等它们都退出再进行下一次升级
   for _ in $(seq 1 60); do
     local left=0
-    for i in $(seq 1 "$N"); do docker exec "etos-n$i" test -e /run/syapp/syapp.pid.oldbin && left=$((left + 1)); done
+    for i in $(seq 1 "$N"); do docker exec "etos-n$i" test -e /run/syedge/syedge.pid.oldbin && left=$((left + 1)); done
     (( left == 0 )) && break; sleep 2
   done
 }
@@ -259,7 +259,7 @@ note "对照压测（不升级）：wrk $(grep -E 'requests in|Socket errors|Non
 rollout "热升级到 $UP" "$UP" "$UP"
 rollout "回退到 $VER" "$VER" "$VER"
 [[ $(curl -s --noproxy '*' --max-time 3 -H "$HOSTH" -H "X-Forwarded-For: $(xff)" "http://$(ip_of 1)/") == *"scale v3"* ]] && ok "升级与回退后配置不变" || bad "升级与回退后配置异常"
-docker exec etos-n1 ps -eo comm | grep -qi 'ngi''nx' && bad "节点进程名出现上游名" || ok "节点进程名为 syapp"
+docker exec etos-n1 ps -eo comm | grep -qi 'ngi''nx' && bad "节点进程名出现上游名" || ok "节点进程名为 syedge"
 
 echo
 if (( fail > 0 )); then echo "规模验收：$fail 项失败"; $DC logs --tail 30 console | sed 's/^/console | /'; docker logs --tail 20 etos-n1 2>&1 | sed 's/^/edge-01 | /'; exit 1; fi

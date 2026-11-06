@@ -5,7 +5,7 @@
 | 能力 | 依赖 | 授权 |
 | --- | --- | --- |
 | 原生规则积木：IP / IP 集（地域）/ 请求头 / User-Agent / 路径 / 方法 → 拒绝 / 跳转 / 限速 / 外部鉴权 | 只用官方模块，标准版与国密版基础包都能用 | `core`（所有版本） |
-| Lua 规则：JWT 校验（HS256 / RS256） | 节点安装 `syapp-lua` 附加包 | `lua`（专业版、企业版） |
+| Lua 规则：JWT 校验（HS256 / RS256） | 节点安装 `syedge-lua` 附加包 | `lua`（专业版、企业版） |
 
 不开放客户自定义 Lua 脚本：
 - Lua 代码只由 `internal/render` 的固定模板生成；
@@ -16,7 +16,7 @@
 
 独立模式不接入控制台时，管理员可以在手工维护的 `conf.d/*.conf` 中直接使用已安装 Lua 模块的原生阶段指令，例如 `access_by_lua_block`、`rewrite_by_lua_block`、`header_filter_by_lua_block` 和 `body_filter_by_lua_block`。这属于受信任运维人员维护的数据面配置，不会被控制台渲染、预览或纳入控制台脚本编辑入口；节点注册并由控制台接管后，手工配置会按独立模式接管规则处理。
 
-独立模式验收夹具：`scripts/ci/standalone-lua-response-filter.conf`。它验证请求阶段的放行/拒绝、响应头新增与 `Content-Length` 清除，以及响应体改写；实际运行仍须在已安装匹配 `syapp-lua` 的独立节点上先执行 `syapp -t`。
+独立模式验收夹具：`scripts/ci/standalone-lua-response-filter.conf`。它验证请求阶段的放行/拒绝、响应头新增与 `Content-Length` 清除，以及响应体改写；实际运行仍须在已安装匹配 `syedge-lua` 的独立节点上先执行 `syedge -t`。
 
 ## 原生规则积木
 
@@ -49,7 +49,7 @@
   - 或从 RIR 公开的分配统计文件（APNIC 等的 `delegated-*-extended-latest`）按国家 / 地区代码导入，同名 IP 集整体替换，定期重新导入即可更新；
   - 只有被规则引用的 IP 集才会渲染到节点。
 
-## syapp-lua 附加包
+## syedge-lua 附加包
 
 一个包同时适配标准版与国密版基础包，内容固定为：
 - LuaJIT 2.1（OpenResty 分支）；
@@ -57,7 +57,7 @@
 - lua-resty-core、lua-resty-lrucache；
 - 审核过的规则库 `etos`（JSON 解析、JWT 校验、初始化与沙箱）。
 
-版本与提交哈希锁定在 `dataplane/lua/DEPS`。syapp 核心与改名 patch 不变。
+版本与提交哈希锁定在 `dataplane/lua/DEPS`。syedge 核心与改名 patch 不变。
 
 基础包为此做了两处调整，都不改变不装附加包时的行为：
 - 编译外部鉴权需要的 `auth_request` 模块；
@@ -66,14 +66,14 @@
 ### 安装与卸载（节点上以 root 执行）
 
 ```
-mkdir syapp-lua && tar -C syapp-lua -xzf syapp-lua-1.30.6-x86_64.tar.gz && cd syapp-lua
-bash install.sh      # 校验与运行中的 syapp 版本一致，自动选择标准版 / 国密版模块，真实 syapp -t 自检
+mkdir syedge-lua && tar -C syedge-lua -xzf syedge-lua-1.30.6-x86_64.tar.gz && cd syedge-lua
+bash install.sh      # 校验与运行中的 syedge 版本一致，自动选择标准版 / 国密版模块，真实 syedge -t 自检
 bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制台去掉 JWT 规则并发布
 ```
 
 安装的具体行为：
-- 模块装到 `/opt/syapp/modules/lua-<版本>/`，配置通过软链 `/opt/syapp/modules/lua` 加载；
-- 安装、卸载都不重启、不停止 syapp；
+- 模块装到 `/opt/syedge/modules/lua-<版本>/`，配置通过软链 `/opt/syedge/modules/lua` 加载；
+- 安装、卸载都不重启、不停止 syedge；
 - agent 在心跳中上报附加包，节点列表显示“Lua”标签。
 
 ### 发布门禁与回退
@@ -84,19 +84,19 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 
 否则预览与发布报 `LUA_ADDON_REQUIRED`，并列出缺少附加包的节点。
 
-万一含 Lua 的版本到达未装附加包的节点，`syapp -t` 会因找不到模块而失败，agent 自动回退到原版本。
+万一含 Lua 的版本到达未装附加包的节点，`syedge -t` 会因找不到模块而失败，agent 自动回退到原版本。
 
 ### 数据面热升级
 
-模块与 syapp 二进制版本强绑定，所以装有附加包的节点升级时要带上同版本的附加包：
+模块与 syedge 二进制版本强绑定，所以装有附加包的节点升级时要带上同版本的附加包：
 1. 厂商离线签名两个包：
 
    ```
-   syapp-license-signer sign-package ... -name syapp     -version <版本> -arch amd64 -variant standard|gmssl
-   syapp-license-signer sign-package ... -name syapp-lua -version <版本> -arch amd64 -variant lua
+   syedge-license-signer sign-package ... -name syedge     -version <版本> -arch amd64 -variant standard|gmssl
+   syedge-license-signer sign-package ... -name syedge-lua -version <版本> -arch amd64 -variant lua
    ```
 
-   附加包的 `addon/VERSION` 中的版本必须与 `<版本>` 一致（`build-syapp-lua.sh -v <版本>`）。
+   附加包的 `addon/VERSION` 中的版本必须与 `<版本>` 一致（`build-syedge-lua.sh -v <版本>`）。
 2. 两个包都导入“数据面版本库”。缺少附加包时，控制台拒绝开始升级。
 3. 升级过程：
    - wrapper 以 root 验签后，先把模块软链切到目标版本，再用新二进制 `-t`，然后发 USR2；
@@ -124,19 +124,19 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 ## 验收（CI：`.github/workflows/lua.yml`）
 
 amd64 / arm64 × 标准版 / 国密版共 4 组，在干净的机器上以生产路径运行 `scripts/ci/lua-acceptance.sh`，覆盖：
-- 模块加载与真实 `syapp -t`（含渲染器黄金用例）；
+- 模块加载与真实 `syedge -t`（含渲染器黄金用例）；
 - 原生规则、外部鉴权、限速；
 - JWT HS256 / RS256，以及各种非法令牌；
 - 沙箱；
 - reload、带附加包的热升级与中止；
 - 标准 HTTPS 与国密 NTLS；
 - 安装、拒绝卸载、卸载；
-- 品牌检查：模块目录 `/opt/syapp/modules/lua-*/` 之外，二进制、配置、日志中没有上游名；
+- 品牌检查：模块目录 `/opt/syedge/modules/lua-*/` 之外，二进制、配置、日志中没有上游名；
 - 性能：开启三条常用规则（IP 拒绝、UA 拒绝、JWT 校验）后 QPS 下降不超过 15%。压测口径（代表性负载）：
-  - 后端返回 4 KB 响应，前端 syapp、后端与 wrk 在整机上运行，不绑核（与生产部署一致）；
+  - 后端返回 4 KB 响应，前端 syedge、后端与 wrk 在整机上运行，不绑核（与生产部署一致）；
   - 按 ABBA 顺序（无规则、有规则、有规则、无规则）跑 4 组，每次 5 秒；
   - 取 8 个相邻配对比值的中位数，消除机器前后漂移的影响；
-  - 压测使用同一个有效令牌，测的是缓存命中路径（即请求阶段与 Lua/syapp 边界开销）。验签本身由功能用例覆盖。
+  - 压测使用同一个有效令牌，测的是缓存命中路径（即请求阶段与 Lua/syedge 边界开销）。验签本身由功能用例覆盖。
 
   另外报告一组隔离最坏情况作为参考（不作门槛）：前端只绑 2 个 CPU 且是唯一瓶颈。此时每个请求进入 Lua 的固定开销
   （约 5–7 µs）占比被放大，arm64 上的下降约 20%。请求处理越重（TLS、更大的响应、真实后端延迟），这部分占比越小。

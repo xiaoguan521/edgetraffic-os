@@ -209,7 +209,7 @@ func (d *Service) checkUpgradable(nodes []*store.Node, version, variant string) 
 			return fmt.Errorf("版本库中没有 %s %s %s %s 的升级包", brand.ID(), version, n.Arch, variant)
 		}
 	}
-	// 装有 syapp-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
+	// 装有 syedge-lua 的节点：模块与二进制版本绑定，必须同时有目标版本的附加包（与二进制一起切换）
 	for _, n := range luaNodes(nodes) {
 		if c, _ := p.WithContext(bg).Where(p.Name.Eq(brand.Lua()), p.Version.Eq(version), p.Arch.Eq(n.Arch), p.Variant.Eq("lua")).Count(); c == 0 {
 			return fmt.Errorf("节点 %s 装有 %s 附加包：版本库中还需要 %s %s %s 的附加包", n.Name, brand.Lua(), brand.Lua(), version, n.Arch)
@@ -662,7 +662,7 @@ func (d *Service) ListUpgrades(groupID uint) ([]*UpgradeView, error) {
 // AgentRestartWait 是 agent 自升级后等待节点以新版本重新上线的上限。
 var AgentRestartWait = 90 * time.Second
 
-// StartAgentUpgrade 分批升级节点组内的 agent（只重启 agent 进程，syapp 不受影响）。记录中 Variant 为 "agent"。
+// StartAgentUpgrade 分批升级节点组内的 agent（只重启 agent 进程，syedge 不受影响）。记录中 Variant 为 "agent"。
 func (d *Service) StartAgentUpgrade(groupID uint, version, user, ip string) (*store.DataplaneUpgrade, error) {
 	if !pkgsig.VersionRe.MatchString(version) {
 		return nil, errors.New("版本号无效")

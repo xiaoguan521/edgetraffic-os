@@ -25,7 +25,7 @@ var literalAllowValue = map[string]string{
 }
 
 // TestNoBrandLiteral：除 internal/brand 外，非测试 Go 代码的字符串字面量中不得出现默认品牌名。
-// 品牌在构建时注入（-ldflags -X），任何写死的 syapp 都会让定制品牌的产物残留旧名字。
+// 品牌在构建时注入（-ldflags -X），任何写死的 syedge 都会让定制品牌的产物残留旧名字。
 func TestNoBrandLiteral(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var hits []string

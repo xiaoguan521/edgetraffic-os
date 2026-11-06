@@ -1,6 +1,6 @@
-# 软件包校验（不发布）：静态构建 syapp → 生成 RPM / DEB → 在发行版容器中并行安装冒烟。
+# 软件包校验（不发布）：静态构建 syedge → 生成 RPM / DEB → 在发行版容器中并行安装冒烟。
 # 仅手动触发，可选择代表性子集（CentOS 7、Rocky 9、Ubuntu 24.04 与两个独立模式场景）或全量场景；
-# 合并到 main 与正式发布由 release.yml 运行完整的 9 个发行版，并且总是重新构建 syapp（不使用缓存）。
+# 合并到 main 与正式发布由 release.yml 运行完整的 9 个发行版，并且总是重新构建 syedge（不使用缓存）。
 name: packages
 
 on:
@@ -10,7 +10,7 @@ on:
       - "deploy/**"
       - "dataplane/**"
       - "scripts/release/**"
-      - "cmd/syapp-wrapper/**"
+      - "cmd/syedge-wrapper/**"
       - "internal/wrapper/**"
       - ".github/workflows/packages.yml"
   pull_request:
@@ -18,7 +18,7 @@ on:
       - "deploy/**"
       - "dataplane/**"
       - "scripts/release/**"
-      - "cmd/syapp-wrapper/**"
+      - "cmd/syedge-wrapper/**"
       - "internal/wrapper/**"
       - ".github/workflows/packages.yml"
   workflow_dispatch:
@@ -56,20 +56,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      # syapp 的产物只取决于数据面源码、补丁、依赖清单与构建脚本（不含产品版本号与日期），按这些文件的哈希缓存；
+      # syedge 的产物只取决于数据面源码、补丁、依赖清单与构建脚本（不含产品版本号与日期），按这些文件的哈希缓存；
       # 任何一项改动都会重新构建。release.yml 不使用这个缓存。
-      - name: cache static syapp
-        id: syapp-cache
+      - name: cache static syedge
+        id: syedge-cache
         uses: actions/cache@v4
         with:
-          path: dist/syapp
-          key: syapp-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syapp-static.sh') }}
-      - name: static syapp (glibc 2.17)
-        if: steps.syapp-cache.outputs.cache-hit != 'true'
-        run: scripts/release/build-syapp-static.sh dist/syapp
-      - name: static syapp from cache
-        if: steps.syapp-cache.outputs.cache-hit == 'true'
-        run: ls -l dist/syapp && tar -tzf dist/syapp/syapp-*.tar.gz opt/syapp/sbin/syapp
+          path: dist/syedge
+          key: syedge-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh') }}
+      - name: static syedge (glibc 2.17)
+        if: steps.syedge-cache.outputs.cache-hit != 'true'
+        run: scripts/release/build-syedge-static.sh dist/syedge
+      - name: static syedge from cache
+        if: steps.syedge-cache.outputs.cache-hit == 'true'
+        run: ls -l dist/syedge && tar -tzf dist/syedge/syedge-*.tar.gz opt/syedge/sbin/syedge
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: rpm / deb
@@ -77,7 +77,7 @@ jobs:
           trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           export PATH="$(go env GOPATH)/bin:$PATH"
-          scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          scripts/release/package.sh pkg ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
       - name: install smoke (parallel; PR subset unless dispatched with full)
         env:
           SMOKE_SET: ${{ inputs.smoke_set || 'pr' }}

@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gen/field"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/portal/store/query"
@@ -340,7 +341,7 @@ func (s *Service) Download(ctx context.Context, act Actor, id uint) (name string
 		return "", "", fmt.Errorf("%w：只有已签发的 License 可以下载", ErrInvalidState)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# EdgeTraffic OS License %s\n%s\n", row.LicenseID, row.Raw)
+	fmt.Fprintf(&b, "# %s License %s\n%s\n", brand.Product(), row.LicenseID, row.Raw)
 	if crl, err := s.LatestCRL(ctx); err == nil && crl != nil {
 		fmt.Fprintf(&b, "# 吊销列表（序号 %d）\n%s\n", crl.Serial, crl.Raw)
 	}

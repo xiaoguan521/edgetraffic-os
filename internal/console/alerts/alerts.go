@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
@@ -438,7 +439,7 @@ func (s *Service) Send(ch *store.AlertChannel, m Message) error {
 	md := fmt.Sprintf("### %s\n%s", m.Title, m.Text)
 	switch ch.Type {
 	case "webhook":
-		return s.post(ch.URL, map[string]any{"title": m.Title, "text": m.Text, "resolved": m.Resolved, "source": "EdgeTraffic OS"})
+		return s.post(ch.URL, map[string]any{"title": m.Title, "text": m.Text, "resolved": m.Resolved, "source": brand.Product()})
 	case "wecom":
 		return s.post(ch.URL, map[string]any{"msgtype": "markdown", "markdown": map[string]string{"content": md}})
 	case "dingtalk":

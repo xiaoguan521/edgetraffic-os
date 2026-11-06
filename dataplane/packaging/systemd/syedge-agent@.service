@@ -1,0 +1,25 @@
+[Unit]
+Description=SyEdge edge agent (syedge-agent instance %i)
+After=network-online.target syedge@%i.service
+Wants=network-online.target
+ConditionPathExists=/opt/syedge/instances/%i/instance.json
+
+[Service]
+# 每个实例一个 agent 用户，sudoers 只允许它操作本实例（/etc/sudoers.d/syedge-agent-%i）
+User=syedge-agent-%i
+Group=syedge
+EnvironmentFile=-/etc/syedge-agent/agent-%i.env
+# 路径、端口与 wrapper 调用方式由实例名与 /opt/syedge/instances/%i/instance.json 推出
+ExecStart=/usr/bin/syedge-agent run -instance %i
+Restart=always
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# 经 sudo 调用的 wrapper 与本服务共享挂载命名空间：需要本实例的配置、日志、缓存目录，以及热升级用的共用版本库
+ReadWritePaths=/opt/syedge/instances/%i/conf /var/lib/syedge-agent-%i /run/syedge-agent-%i -/run/syedge-%i /var/log/syedge-%i /var/cache/syedge-%i -/run/sudo -/opt/syedge/versions /opt/syedge/sbin
+RuntimeDirectory=syedge-agent-%i
+StateDirectory=syedge-agent-%i
+
+[Install]
+WantedBy=multi-user.target

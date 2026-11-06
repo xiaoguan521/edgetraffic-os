@@ -1,9 +1,9 @@
 FROM golang:1.27 AS build
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/syapp-console ./cmd/syapp-console
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/syedge-console ./cmd/syedge-console
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /out/syapp-console /usr/bin/syapp-console
+COPY --from=build /out/syedge-console /usr/bin/syedge-console
 USER 65532:65532
-ENTRYPOINT ["/usr/bin/syapp-console", "-listen", "0.0.0.0:8443"]
+ENTRYPOINT ["/usr/bin/syedge-console", "-listen", "0.0.0.0:8443"]

@@ -1,4 +1,4 @@
-# EdgeTraffic OS 代码库全景解读
+# SyEdge 代码库全景解读
 
 > **仓库**：[edgetraffic-os](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os)　|　**分支**：`main`　|　**基线版本**：`v0.1.0`（MVP）
 > **语言**：Go 1.26 + Vue 3 / TypeScript　|　**后端总代码量**：~30,000 行（不含生成代码与 vendor）
@@ -7,27 +7,27 @@
 
 ## 1. 产品定位
 
-EdgeTraffic OS（边缘流量操作系统）是一款**基于 NGINX 开源版的边缘流量管理产品**。
+SyEdge（边缘流量操作系统）是一款**基于 NGINX 开源版的边缘流量管理产品**。
 
 核心理念：
-- **数据面 `syapp`**：对 NGINX 只做改名构建（brand），不改动任何逻辑
+- **数据面 `syedge`**：对 NGINX 只做改名构建（brand），不改动任何逻辑
 - **控制面**：自研 Web 控制台，统一管理多台边缘节点的完整发布生命周期：**改配置 → 校验 → 下发 → reload → 验证 → 回滚**
 - 内置商业授权系统
 
 ```mermaid
 graph TB
     subgraph 厂商内网
-        LS[syapp-license-server<br/>授权签发与管理]
+        LS[syedge-license-server<br/>授权签发与管理]
     end
     subgraph 客户内网
-        C[syapp-console<br/>Web 控制台 + REST API + gRPC 网关]
+        C[syedge-console<br/>Web 控制台 + REST API + gRPC 网关]
         DB[(SQLite / PostgreSQL)]
         C --- DB
     end
     subgraph 边缘节点_xN["边缘节点 ×N"]
-        A[syapp-agent<br/>主动连接控制台]
-        W[syapp-wrapper<br/>唯一提权入口]
-        S[syapp<br/>数据面：处理公网流量]
+        A[syedge-agent<br/>主动连接控制台]
+        W[syedge-wrapper<br/>唯一提权入口]
+        S[syedge<br/>数据面：处理公网流量]
         A -->|sudo| W
         W -->|test/reload/reopen/quit| S
     end
@@ -41,14 +41,14 @@ graph TB
 
 | 程序 | 部署位置 | 入口文件 | 核心职责 |
 | --- | --- | --- | --- |
-| **syapp-console** | 客户内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-console/main.go) | Web 控制台、REST API、配置渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
-| **syapp-agent** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-agent/main.go) | 主动连接控制台，本地发布状态机、指标采集、漂移检测；**不监听端口** |
-| **syapp-wrapper** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-wrapper/main.go) | agent 唯一的提权入口，只执行 `test / reload / reopen / quit / upgrade-*` |
-| **syapp** | 每台边缘节点 | `dataplane/` | 数据面：处理公网流量（NGINX 改名构建） |
-| **syapp-license-server** | 厂商内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-license-server/main.go) | 客户与订单管理、License 签发 / 激活 / 吊销、授权后台 Web |
+| **syedge-console** | 客户内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-console/main.go) | Web 控制台、REST API、配置渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
+| **syedge-agent** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-agent/main.go) | 主动连接控制台，本地发布状态机、指标采集、漂移检测；**不监听端口** |
+| **syedge-wrapper** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-wrapper/main.go) | agent 唯一的提权入口，只执行 `test / reload / reopen / quit / upgrade-*` |
+| **syedge** | 每台边缘节点 | `dataplane/` | 数据面：处理公网流量（NGINX 改名构建） |
+| **syedge-license-server** | 厂商内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-license-server/main.go) | 客户与订单管理、License 签发 / 激活 / 吊销、授权后台 Web |
 
 > [!IMPORTANT]
-> 另有一个 **syapp-license-signer**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-license-signer/main.go)）是**离线签名工具**，部署在离线签名机上，不含任何网络代码。正式 License 和升级包都由它签名。
+> 另有一个 **syedge-license-signer**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-license-signer/main.go)）是**离线签名工具**，部署在离线签名机上，不含任何网络代码。正式 License 和升级包都由它签名。
 
 ---
 
@@ -57,11 +57,11 @@ graph TB
 ```
 edgetraffic-os/
 ├── cmd/                          # 6 个可执行程序入口
-│   ├── syapp-console/            #   控制台（含 backup/restore 子命令）
-│   ├── syapp-agent/              #   节点 agent（含 bootstrap/enroll/run/firewall 子命令）
-│   ├── syapp-wrapper/            #   提权 wrapper
-│   ├── syapp-license-server/     #   授权服务（含 serve/keygen/issue/inspect/request/import 等）
-│   ├── syapp-license-signer/     #   离线签名工具
+│   ├── syedge-console/            #   控制台（含 backup/restore 子命令）
+│   ├── syedge-agent/              #   节点 agent（含 bootstrap/enroll/run/firewall 子命令）
+│   ├── syedge-wrapper/            #   提权 wrapper
+│   ├── syedge-license-server/     #   授权服务（含 serve/keygen/issue/inspect/request/import 等）
+│   ├── syedge-license-signer/     #   离线签名工具
 │   └── etos-loadgen/             #   压测生成器
 │
 ├── api/                          # 接口定义
@@ -94,7 +94,7 @@ edgetraffic-os/
 │   │   ├── firewall/             #     nftables 防火墙规则
 │   │   └── selfupdate/           #     agent 自升级
 │   │
-│   ├── render/                   #   配置渲染器（模型 → syapp 配置文件）
+│   ├── render/                   #   配置渲染器（模型 → syedge 配置文件）
 │   ├── license/                  #   License 解析、验签、状态判断
 │   ├── wrapper/                  #   wrapper 命令构建与热升级
 │   ├── pkgsig/                   #   升级包签名验签
@@ -121,8 +121,8 @@ edgetraffic-os/
 │   └── e2e/                      #   前端权限矩阵测试
 │
 ├── dataplane/                    # 数据面构建
-│   ├── build-syapp.sh            #   标准版构建（OpenSSL / 铜锁）
-│   ├── build-syapp-lua.sh        #   Lua 变体构建
+│   ├── build-syedge.sh            #   标准版构建（OpenSSL / 铜锁）
+│   ├── build-syedge-lua.sh        #   Lua 变体构建
 │   ├── patches/                  #   改名 patch（只改字符串）
 │   ├── packaging/                #   RPM/DEB 打包模板
 │   └── lua/                      #   LuaJIT + 动态模块
@@ -203,13 +203,13 @@ edgetraffic-os/
 
 ## 5. 核心架构详解
 
-### 5.1 控制台 syapp-console
+### 5.1 控制台 syedge-console
 
 控制台是整个系统的中枢，一个进程同时提供：
 
 ```mermaid
 graph LR
-    subgraph syapp-console 进程
+    subgraph syedge-console 进程
         HTTP["HTTP/S 服务<br/>-listen :8443"]
         GRPC["gRPC 服务<br/>-grpc-listen :9443"]
         BG["后台任务<br/>ACME / 告警 / 清理"]
@@ -218,7 +218,7 @@ graph LR
     Agent -->|mTLS 双向流| GRPC
 ```
 
-**启动流程**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syapp-console/main.go#L85-L238)）：
+**启动流程**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-console/main.go#L85-L238)）：
 
 1. 打开/创建数据库（SQLite 或 PostgreSQL）
 2. 加载/创建内置 CA（`pki.LoadOrCreate`）
@@ -254,7 +254,7 @@ API 路由定义在 [server.go](file:///Users/youyou/Downloads/edge_traffic/edge
 
 **安全中间件链**：`securityHeaders` → `standbyGuard` → `csrf` → `auth` → `role(min)` → `writable` → `feature(f)` → Handler
 
-### 5.3 Agent（syapp-agent）
+### 5.3 Agent（syedge-agent）
 
 Agent 运行在每台边缘节点上，**只主动连接控制台，不监听任何端口**。
 
@@ -310,7 +310,7 @@ sequenceDiagram
 
 ### 5.5 配置渲染器（Render）
 
-[internal/render/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render) 是系统的核心引擎，负责将结构化模型转为 syapp 配置文件。
+[internal/render/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render) 是系统的核心引擎，负责将结构化模型转为 syedge 配置文件。
 
 ```
 Input (站点 + 上游 + 证书 + 规则 + 片段 + 四层代理)
@@ -334,7 +334,7 @@ Bundle { Revision, Files map, Manifest{Digest} }
 | `templates/*.tmpl` | Go 模板文件 |
 
 > [!CAUTION]
-> **禁止用字符串拼接生成配置！** 一律经 `internal/render` 的校验器 + 模板 + 转义函数。每次修改模板都要通过真实 `syapp -t` 测试。
+> **禁止用字符串拼接生成配置！** 一律经 `internal/render` 的校验器 + 模板 + 转义函数。每次修改模板都要通过真实 `syedge -t` 测试。
 
 ### 5.6 发布编排（Deploy）
 
@@ -346,11 +346,11 @@ graph LR
     B --> C[生成不可变版本<br/>rYYMMDDHHMMSS]
     C --> D[下发到组内节点]
     D --> E{agent 执行}
-    E -->|syapp -t 通过| F[reload]
+    E -->|syedge -t 通过| F[reload]
     F --> G[探活检查]
     G -->|通过| H[APPLIED ✅]
     G -->|失败| I[自动回滚 ⚠️]
-    E -->|syapp -t 失败| I
+    E -->|syedge -t 失败| I
 ```
 
 支持的发布模式：
@@ -463,7 +463,7 @@ type Payload struct {
 ```
 
 > [!IMPORTANT]
-> 正式密钥**只存在于离线签名机**，在线系统只持有公钥。`syapp-license-signer` 不含任何网络代码（有 `TestNoNetworkCode` 保护）。
+> 正式密钥**只存在于离线签名机**，在线系统只持有公钥。`syedge-license-signer` 不含任何网络代码（有 `TestNoNetworkCode` 保护）。
 
 ---
 
@@ -481,8 +481,8 @@ type Payload struct {
 ### 8.2 权限隔离
 
 ```
-syapp-agent (普通用户)
-  └── sudo → syapp-wrapper (root)
+syedge-agent (普通用户)
+  └── sudo → syedge-wrapper (root)
               └── 只接受 7 个子命令：
                   test | reload | reopen | quit |
                   upgrade-start | upgrade-commit | upgrade-abort
@@ -521,10 +521,10 @@ make lint        # golangci-lint
 ### 9.2 构建产物
 
 ```bash
-bin/syapp-console        # 控制台
-bin/syapp-agent          # 节点 agent
-bin/syapp-wrapper        # 提权 wrapper
-bin/syapp-license-server # 授权服务
+bin/syedge-console        # 控制台
+bin/syedge-agent          # 节点 agent
+bin/syedge-wrapper        # 提权 wrapper
+bin/syedge-license-server # 授权服务
 ```
 
 构建参数通过 `-ldflags` 注入版本信息：`Version`、`Commit`、`BuildDate`
@@ -552,7 +552,7 @@ cd demo && ./demo.sh reset  # 重置数据
 | 阶段 | 状态 | 核心内容 |
 | --- | --- | --- |
 | **P0** 数据面 | ✅ 完成 | NGINX 1.30.6 改名构建，黄金验收通过 |
-| **P1** 渲染器 | ✅ 完成 | 模型、校验、模板、确定性打包，真实 syapp -t 验证 |
+| **P1** 渲染器 | ✅ 完成 | 模型、校验、模板、确定性打包，真实 syedge -t 验证 |
 | **P2** Agent | ✅ 完成 | 注册、mTLS 长连接、发布状态机、自动回滚、漂移检测、指标采集 |
 | **P3** 控制台后端 | ✅ 完成 | API、RBAC、发布编排、回滚、自动对齐、审计哈希链 |
 | **P4** 商业授权 | ✅ 完成 | 验签、状态机、门禁中间件、agent 侧校验、签发 CLI |
@@ -561,7 +561,7 @@ cd demo && ./demo.sh reset  # 重置数据
 | **P7** 配置治理 | ✅ 完成 | 发布审批、自定义片段（双人批准）、配置导入、漂移 diff 采纳 |
 | **P8** 统一升级 | ✅ 完成 | 升级包签名、wrapper 热升级、分批编排、agent 自升级、国密变体 |
 | **P9** 商业功能 | ✅ 完成 | API 令牌、告警、灰度/批量发布、等保 2.0、LDAP/OIDC、四层代理、静态资源、高可用 |
-| **P10** Lua 扩展 | ✅ 完成 | 规则积木、syapp-lua 附加包、JWT 模板规则、热升级兼容 |
+| **P10** Lua 扩展 | ✅ 完成 | 规则积木、syedge-lua 附加包、JWT 模板规则、热升级兼容 |
 
 > **目标**：2027 年 3 月发布 v1.0
 
@@ -612,7 +612,7 @@ cd demo && ./demo.sh reset  # 重置数据
 > [!CAUTION]
 > **以下规则违反任一条即拒绝合并：**
 
-1. **永远不得 restart syapp**；任何代码路径（含授权失效）不得停止 syapp
+1. **永远不得 restart syedge**；任何代码路径（含授权失效）不得停止 syedge
 2. **不得复制 nginx-ui（AGPL-3.0）的任何代码**
 3. 产品代码中**不得出现 "nginx"**（除 NOTICE 归因和 Lua 模块目录）
 4. 禁止用字符串拼接生成配置 → 一律经 `internal/render`

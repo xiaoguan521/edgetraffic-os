@@ -1,4 +1,4 @@
--- etos.init：syapp-lua 附加包的初始化（init_by_lua 中由渲染器生成的配置调用）。
+-- etos.init：syedge-lua 附加包的初始化（init_by_lua 中由渲染器生成的配置调用）。
 --
 -- 1. 按规则读取版本目录中的密钥文件，交给 etos.jwt；
 -- 2. 收紧运行环境：之后执行的任何 Lua 代码都不能读写文件、执行命令、加载新代码或 C 模块，

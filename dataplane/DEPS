@@ -1,4 +1,4 @@
-# syapp 静态链接依赖（build-syapp.sh -S 使用）。版本与 sha256 一并固定，下载后逐一校验。
+# syedge 静态链接依赖（build-syedge.sh -S 使用）。版本与 sha256 一并固定，下载后逐一校验。
 # 升级依赖时同时更新 URL 与 SHA256，并在 PR 中附上上游发布说明链接。
 OPENSSL_VERSION=3.5.9
 OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz

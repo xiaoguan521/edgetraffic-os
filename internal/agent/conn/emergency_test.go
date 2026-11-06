@@ -127,7 +127,7 @@ func TestExpiredLicenseEmergencyOperations(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(confRoot, "releases"), 0o755)
 	_ = os.MkdirAll(stateDir, 0o700)
 
-	pidFile := filepath.Join(dir, "syapp.pid")
+	pidFile := filepath.Join(dir, "syedge.pid")
 	errLog := filepath.Join(dir, "error.log")
 	_ = os.WriteFile(pidFile, []byte("1"), 0o644)
 	_ = os.WriteFile(errLog, nil, 0o644)

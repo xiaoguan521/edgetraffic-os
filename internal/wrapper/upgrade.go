@@ -26,10 +26,10 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 )
 
-// 数据面二进制热升级（规格书 12.6）：全程不 restart、不 stop syapp。
+// 数据面二进制热升级（规格书 12.6）：全程不 restart、不 stop syedge。
 //
 //	upgrade-start <版本>  验签 → 解压到 versions/<版本> → 新二进制 -t → 切换软链 → USR2 给当前 master
-//	                     → 等新 master 起来 → WINCH 给旧 master（syapp.pid.oldbin），旧 worker 优雅退出
+//	                     → 等新 master 起来 → WINCH 给旧 master（syedge.pid.oldbin），旧 worker 优雅退出
 //	upgrade-commit       探活通过后：QUIT 给旧 master
 //	upgrade-abort        探活失败：HUP 给旧 master 拉起旧 worker，QUIT 给新 master，软链切回
 //
@@ -37,8 +37,8 @@ import (
 
 // Paths 是升级涉及的路径与参数（生产值见 DefaultPaths；测试可替换）。
 type Paths struct {
-	Bin      string // 数据面二进制路径（首次升级后为指向 versions/<版本>/sbin/syapp 的软链）
-	Modules  string // 动态模块目录（syapp-lua 附加包，见 lua.go）；为空表示不处理附加包
+	Bin      string // 数据面二进制路径（首次升级后为指向 versions/<版本>/sbin/syedge 的软链）
+	Modules  string // 动态模块目录（syedge-lua 附加包，见 lua.go）；为空表示不处理附加包
 	Versions string // 已安装版本目录（root 所有）
 	Incoming string // 升级包投放目录（agent 可写）
 	PidFile  string
@@ -102,7 +102,7 @@ var (
 // State 记录上一次升级，用于中止时切回与一键回退。
 type State struct {
 	Previous string `json:"previous"`           // 升级前的二进制路径
-	PrevLua  string `json:"prev_lua,omitempty"` // 升级前 syapp-lua 软链的目标（未装附加包为空）
+	PrevLua  string `json:"prev_lua,omitempty"` // 升级前 syedge-lua 软链的目标（未装附加包为空）
 	Target   string `json:"target"`             // 目标版本
 	Phase    string `json:"phase"`              // started | committed | aborted
 	// KeepLink：本实例开始升级时，同机其他实例已把共用软链切到目标版本（设计 0001 第 5.6 节）。
@@ -248,7 +248,7 @@ func readPid(path string) (int, error) {
 	return pid, nil
 }
 
-// isMaster 确认 pid 是 syapp 的 master 进程（防止 pid 文件被篡改后向任意进程发信号）。
+// isMaster 确认 pid 是 syedge 的 master 进程（防止 pid 文件被篡改后向任意进程发信号）。
 func isMaster(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	return err == nil && strings.HasPrefix(string(b), brand.MasterTitle())
@@ -398,7 +398,7 @@ func checkUpgradeDiskSpace(dir string) error {
 	return nil
 }
 
-// lockUpgrade 获取宿主机级版本库互斥锁（防止同机多实例同时修改 /opt/syapp/versions 与软链）。
+// lockUpgrade 获取宿主机级版本库互斥锁（防止同机多实例同时修改 /opt/syedge/versions 与软链）。
 func (p Paths) lockUpgrade() (func(), error) {
 	if err := os.MkdirAll(p.Versions, 0o755); err != nil {
 		return nil, err
@@ -443,7 +443,7 @@ func UpgradeStart(p Paths, ver string) error {
 	if masterExe(oldPid) == newBin {
 		return fail("version %s is already running", ver)
 	}
-	// 装有 syapp-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
+	// 装有 syedge-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
 	prevLua, err := p.prepareLua(ver, newBin)
 	if err != nil {
 		return err
@@ -505,7 +505,7 @@ func UpgradeStart(p Paths, ver string) error {
 		return true
 	})
 	if !started {
-		// 新 master 没有起来：旧 master 仍在服务，切回软链即可（syapp 会自行恢复 pid 文件）
+		// 新 master 没有起来：旧 master 仍在服务，切回软链即可（syedge 会自行恢复 pid 文件）
 		switchBack()
 		_ = p.saveState(State{Previous: prev, PrevLua: prevLua, Target: ver, Phase: "aborted", KeepLink: keepLink})
 		return fail("new master did not start within %s; switched back to the previous binary", p.Timeout)
@@ -553,7 +553,7 @@ func UpgradeAbort(p Paths) error {
 		return err
 	}
 	before := workerPids(oldPid) // 收到 WINCH 后可能还没退完的旧 worker，不能算作“已重新拉起”
-	// HUP 会让旧 master 重新加载配置（含 load_module）：先把 syapp-lua 软链切回旧版本
+	// HUP 会让旧 master 重新加载配置（含 load_module）：先把 syedge-lua 软链切回旧版本
 	if st, err := p.loadState(); err == nil && st.PrevLua != "" {
 		if err := p.swapLua(st.PrevLua); err != nil {
 			return err

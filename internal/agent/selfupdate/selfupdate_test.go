@@ -30,11 +30,11 @@ func TestInstallAndStaged(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	keys := map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	data := pkg(t, "#!/bin/sh\necho new\n")
-	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp-agent", "1.2.0", "amd64", "standard", data)
+	sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge-agent", "1.2.0", "amd64", "standard", data)
 	sb, _ := json.Marshal(sig)
 
-	// syapp 的包、错误架构、错误签名都拒绝
-	ssig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", "1.2.0", "amd64", "standard", data)
+	// syedge 的包、错误架构、错误签名都拒绝
+	ssig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", "1.2.0", "amd64", "standard", data)
 	ssb, _ := json.Marshal(ssig)
 	if _, err := Install(state, data, ssb, "amd64", keys); err == nil {
 		t.Fatal("data-plane package accepted as agent")
@@ -43,7 +43,7 @@ func TestInstallAndStaged(t *testing.T) {
 		t.Fatal("wrong arch accepted")
 	}
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
-	osig, _ := pkgsig.Sign(other, "etos-ci-pkg-test", "syapp-agent", "1.2.0", "amd64", "standard", data)
+	osig, _ := pkgsig.Sign(other, "etos-ci-pkg-test", "syedge-agent", "1.2.0", "amd64", "standard", data)
 	osb, _ := json.Marshal(osig)
 	if _, err := Install(state, data, osb, "amd64", keys); err == nil {
 		t.Fatal("bad signature accepted")
@@ -63,7 +63,7 @@ func TestInstallAndStaged(t *testing.T) {
 		t.Fatal("older staged version must not be executed")
 	}
 	// 二进制被替换：不执行
-	_ = os.WriteFile(filepath.Join(state, "agent/1.2.0/syapp-agent"), []byte("#!/bin/sh\necho evil\n"), 0o700)
+	_ = os.WriteFile(filepath.Join(state, "agent/1.2.0/syedge-agent"), []byte("#!/bin/sh\necho evil\n"), 0o700)
 	if bin := Staged(state, "1.1.9", "amd64", keys); bin != "" {
 		t.Fatal("tampered binary would be executed")
 	}

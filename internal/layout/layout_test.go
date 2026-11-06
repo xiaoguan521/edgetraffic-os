@@ -6,22 +6,22 @@ import "testing"
 func TestSystemDefaultMatchesLegacyPaths(t *testing.T) {
 	l := System("")
 	for _, c := range []struct{ name, got, want string }{
-		{"Prefix", l.Prefix(), "/opt/syapp"},
-		{"ConfRoot", l.ConfRoot(), "/opt/syapp/conf"},
-		{"ReleasesDir", l.ReleasesDir(), "/opt/syapp/conf/releases"},
-		{"CurrentConf", l.CurrentConf(), "/opt/syapp/conf/current/syapp.conf"},
-		{"Bin", l.Bin(), "/opt/syapp/sbin/syapp"},
-		{"Versions", l.Versions(), "/opt/syapp/versions"},
-		{"Modules", l.Modules(), "/opt/syapp/modules"},
-		{"PidFile", l.PidFile(), "/run/syapp/syapp.pid"},
-		{"ErrorLog", l.ErrorLog(), "/var/log/syapp/error.log"},
-		{"AccessLog", l.AccessLog(), "/var/log/syapp/access.json"},
-		{"AgentState", l.AgentState(), "/var/lib/syapp-agent"},
-		{"AgentLock", l.AgentLock(), "/run/syapp-agent/apply.lock"},
-		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syapp-agent/upgrade"},
-		{"WrapperBin", l.WrapperBin(), "/usr/libexec/syapp/syapp-wrapper"},
-		{"AgentBin", l.AgentBin(), "/usr/bin/syapp-agent"},
-		{"StatusURL", l.StatusURL(8081), "http://127.0.0.1:8081/__syapp_status"},
+		{"Prefix", l.Prefix(), "/opt/syedge"},
+		{"ConfRoot", l.ConfRoot(), "/opt/syedge/conf"},
+		{"ReleasesDir", l.ReleasesDir(), "/opt/syedge/conf/releases"},
+		{"CurrentConf", l.CurrentConf(), "/opt/syedge/conf/current/syedge.conf"},
+		{"Bin", l.Bin(), "/opt/syedge/sbin/syedge"},
+		{"Versions", l.Versions(), "/opt/syedge/versions"},
+		{"Modules", l.Modules(), "/opt/syedge/modules"},
+		{"PidFile", l.PidFile(), "/run/syedge/syedge.pid"},
+		{"ErrorLog", l.ErrorLog(), "/var/log/syedge/error.log"},
+		{"AccessLog", l.AccessLog(), "/var/log/syedge/access.json"},
+		{"AgentState", l.AgentState(), "/var/lib/syedge-agent"},
+		{"AgentLock", l.AgentLock(), "/run/syedge-agent/apply.lock"},
+		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syedge-agent/upgrade"},
+		{"WrapperBin", l.WrapperBin(), "/usr/libexec/syedge/syedge-wrapper"},
+		{"AgentBin", l.AgentBin(), "/usr/bin/syedge-agent"},
+		{"StatusURL", l.StatusURL(8081), "http://127.0.0.1:8081/__syedge_status"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -33,16 +33,16 @@ func TestSystemDefaultMatchesLegacyPaths(t *testing.T) {
 func TestSystemInstancePaths(t *testing.T) {
 	l := System("blue")
 	for _, c := range []struct{ name, got, want string }{
-		{"Prefix", l.Prefix(), "/opt/syapp/instances/blue"},
-		{"ReleasesDir", l.ReleasesDir(), "/opt/syapp/instances/blue/conf/releases"},
-		{"CurrentConf", l.CurrentConf(), "/opt/syapp/instances/blue/conf/current/syapp.conf"},
-		{"Bin", l.Bin(), "/opt/syapp/sbin/syapp"},
-		{"Versions", l.Versions(), "/opt/syapp/versions"},
-		{"PidFile", l.PidFile(), "/run/syapp-blue/syapp.pid"},
-		{"ErrorLog", l.ErrorLog(), "/var/log/syapp-blue/error.log"},
-		{"AgentState", l.AgentState(), "/var/lib/syapp-agent-blue"},
-		{"AgentLock", l.AgentLock(), "/run/syapp-agent-blue/apply.lock"},
-		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syapp-agent-blue/upgrade"},
+		{"Prefix", l.Prefix(), "/opt/syedge/instances/blue"},
+		{"ReleasesDir", l.ReleasesDir(), "/opt/syedge/instances/blue/conf/releases"},
+		{"CurrentConf", l.CurrentConf(), "/opt/syedge/instances/blue/conf/current/syedge.conf"},
+		{"Bin", l.Bin(), "/opt/syedge/sbin/syedge"},
+		{"Versions", l.Versions(), "/opt/syedge/versions"},
+		{"PidFile", l.PidFile(), "/run/syedge-blue/syedge.pid"},
+		{"ErrorLog", l.ErrorLog(), "/var/log/syedge-blue/error.log"},
+		{"AgentState", l.AgentState(), "/var/lib/syedge-agent-blue"},
+		{"AgentLock", l.AgentLock(), "/run/syedge-agent-blue/apply.lock"},
+		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syedge-agent-blue/upgrade"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -57,22 +57,22 @@ func TestUserModePathsStayUnderRoot(t *testing.T) {
 	}
 	for _, c := range []struct{ name, got, want string }{
 		{"Prefix", l.Prefix(), "/home/ops/syedge"},
-		{"Bin", l.Bin(), "/home/ops/syedge/sbin/syapp"},
-		{"PidFile", l.PidFile(), "/home/ops/syedge/run/syapp.pid"},
+		{"Bin", l.Bin(), "/home/ops/syedge/sbin/syedge"},
+		{"PidFile", l.PidFile(), "/home/ops/syedge/run/syedge.pid"},
 		{"ErrorLog", l.ErrorLog(), "/home/ops/syedge/logs/error.log"},
 		{"AgentState", l.AgentState(), "/home/ops/syedge/agent"},
 		{"AgentLock", l.AgentLock(), "/home/ops/syedge/run/agent.lock"},
-		{"WrapperBin", l.WrapperBin(), "/home/ops/syedge/bin/syapp-wrapper"},
+		{"WrapperBin", l.WrapperBin(), "/home/ops/syedge/bin/syedge-wrapper"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
 		}
 	}
 	li, _ := User("/home/ops/syedge", "blue")
-	if got := li.PidFile(); got != "/home/ops/syedge/instances/blue/run/syapp.pid" {
+	if got := li.PidFile(); got != "/home/ops/syedge/instances/blue/run/syedge.pid" {
 		t.Errorf("instance PidFile = %q", got)
 	}
-	if got := li.Bin(); got != "/home/ops/syedge/sbin/syapp" {
+	if got := li.Bin(); got != "/home/ops/syedge/sbin/syedge" {
 		t.Errorf("instance Bin must be shared, got %q", got)
 	}
 }
@@ -101,12 +101,12 @@ func TestInvalidInputs(t *testing.T) {
 func TestInstanceNames(t *testing.T) {
 	d, b := System(""), System("blue")
 	for _, c := range []struct{ got, want string }{
-		{d.AgentUser(), "syapp-agent"}, {b.AgentUser(), "syapp-agent-blue"},
-		{d.DataplaneUnit(), "syapp.service"}, {b.DataplaneUnit(), "syapp@blue.service"},
-		{d.AgentUnit(), "syapp-agent.service"}, {b.AgentUnit(), "syapp-agent@blue.service"},
-		{b.SudoersFile(), "/etc/sudoers.d/syapp-agent-blue"}, {d.SudoersFile(), "/etc/sudoers.d/syapp-agent"},
-		{b.InstanceFile(), "/opt/syapp/instances/blue/instance.json"},
-		{Group(), "syapp"}, {WorkerUser(), "syapp"},
+		{d.AgentUser(), "syedge-agent"}, {b.AgentUser(), "syedge-agent-blue"},
+		{d.DataplaneUnit(), "syedge.service"}, {b.DataplaneUnit(), "syedge@blue.service"},
+		{d.AgentUnit(), "syedge-agent.service"}, {b.AgentUnit(), "syedge-agent@blue.service"},
+		{b.SudoersFile(), "/etc/sudoers.d/syedge-agent-blue"}, {d.SudoersFile(), "/etc/sudoers.d/syedge-agent"},
+		{b.InstanceFile(), "/opt/syedge/instances/blue/instance.json"},
+		{Group(), "syedge"}, {WorkerUser(), "syedge"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)

@@ -1,6 +1,6 @@
--- etos.jwt：JWT 校验（HS256 / RS256）。syapp-lua 附加包中审核过的库，只由渲染器生成的配置调用。
+-- etos.jwt：JWT 校验（HS256 / RS256）。syedge-lua 附加包中审核过的库，只由渲染器生成的配置调用。
 --
--- 密码学运算通过 FFI 调用 syapp 自身导出的 OpenSSL / 铜锁函数（基础包以 -Wl,-u 固定导出这些符号，
+-- 密码学运算通过 FFI 调用 syedge 自身导出的 OpenSSL / 铜锁函数（基础包以 -Wl,-u 固定导出这些符号，
 -- CI 校验附加包需要的每个符号都存在）。只接受配置的算法（拒绝 alg=none 与算法混淆），
 -- 必须有 exp；校验 nbf / iss / aud；签名比较用 CRYPTO_memcmp（常量时间）。
 -- 校验通过的令牌按 worker 缓存，直到过期（最多 60 秒）。

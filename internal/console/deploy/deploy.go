@@ -190,7 +190,7 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 // ErrGMNotLicensed 表示站点启用了国密双证书，但授权不包含 gm_tls（企业版）。
 var ErrGMNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含国密 TLCP（gm_tls），请去掉站点的国密证书")
 
-// CheckGM：国密双证书只能下发到国密变体（铜锁构建）的节点，标准版 syapp -t 会拒绝这些指令。
+// CheckGM：国密双证书只能下发到国密变体（铜锁构建）的节点，标准版 syedge -t 会拒绝这些指令。
 func (d *Service) CheckGM(groupID uint) error {
 	if d.Feature != nil && !d.Feature("gm_tls") {
 		return ErrGMNotLicensed

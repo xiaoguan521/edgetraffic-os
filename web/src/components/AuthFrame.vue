@@ -11,6 +11,7 @@ defineProps<{ title: string; hint?: string }>()
       </div>
       <div class="pitch">
         <div class="product">{{ brand.product }}</div>
+        <div class="fullname">{{ brand.fullname }}</div>
         <p>改配置、校验、下发、生效、回滚，<br />在一个控制台里完成。</p>
       </div>
     </aside>
@@ -71,6 +72,11 @@ defineProps<{ title: string; hint?: string }>()
   font-size: 30px;
   font-weight: 650;
   letter-spacing: 0.02em;
+}
+.fullname {
+  margin-top: 6px;
+  font-size: 15px;
+  opacity: 0.85;
 }
 .pitch p {
   margin: 12px 0 0;

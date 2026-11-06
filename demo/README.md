@@ -1,12 +1,12 @@
-# EdgeTraffic OS 演示手册
+# SyEdge 演示手册
 
-在一台 Linux 服务器上，一条命令启动完整演示环境：控制台、两台边缘节点（syapp + syapp-agent）、两个演示用后端服务。全程约 15 分钟。
+在一台 Linux 服务器上，一条命令启动完整演示环境：控制台、两台边缘节点（syedge + syedge-agent）、两个演示用后端服务。全程约 15 分钟。
 
 ```
             浏览器 ──8443──▶ console（控制台）◀──9443（节点主动连接，mTLS）──┐
                                                                          │
-  curl ──8001──▶ node1  edge-sg-01（syapp + agent）──┐                    │
-  curl ──8002──▶ node2  edge-sg-02（syapp + agent）──┴─▶ backend1 / backend2（order-api）
+  curl ──8001──▶ node1  edge-sg-01（syedge + agent）──┐                    │
+  curl ──8002──▶ node2  edge-sg-02（syedge + agent）──┴─▶ backend1 / backend2（order-api）
 ```
 
 ## 准备（演示前一天完成）
@@ -26,7 +26,7 @@
 | 镜像 | 内容 |
 | --- | --- |
 | `ghcr.io/xiaoguan521/edgetraffic-os/console` | 控制台（含签发工具，用于现场签发演示授权） |
-| `ghcr.io/xiaoguan521/edgetraffic-os/node` | 边缘节点：syapp + syapp-agent + syapp-wrapper |
+| `ghcr.io/xiaoguan521/edgetraffic-os/node` | 边缘节点：syedge + syedge-agent + syedge-wrapper |
 | `ghcr.io/xiaoguan521/edgetraffic-os/demo-backend` | 演示用上游服务 order-api |
 
 标签：分支名（`mvp`、`main`）、版本号（`0.1.0`）、`sha-<提交>`、`latest`（最新正式版）。
@@ -60,22 +60,22 @@ mkdir -p keys && cp /path/to/etos-demo-2026.key keys/
 
 | 发布包 | 平台 |
 | --- | --- |
-| `edgetraffic-os-console-<版本>-<系统>-<架构>` | linux / darwin（tar.gz）、windows（zip），amd64 / arm64 |
-| `edgetraffic-os-node-<版本>-linux-<架构>.tar.gz` | Linux amd64 / arm64，systemd，glibc 2.35+、OpenSSL 3（Ubuntu 22.04+ / Debian 12+） |
+| `syedge-console-<版本>-<系统>-<架构>` | linux / darwin（tar.gz）、windows（zip），amd64 / arm64 |
+| `syedge-node-<版本>-linux-<架构>.tar.gz` | Linux amd64 / arm64，systemd，glibc 2.35+、OpenSSL 3（Ubuntu 22.04+ / Debian 12+） |
 
 ```bash
 gh release download dev-mvp -R xiaoguan521/edgetraffic-os -p '*linux-amd64*'
 
 # 控制台（任意一台机器，笔记本也可以）
-tar -xzf edgetraffic-os-console-*-linux-amd64.tar.gz && cd edgetraffic-os-console-*/
-./syapp-console -listen 0.0.0.0:8443 -grpc-listen 0.0.0.0:9443 \
+tar -xzf syedge-console-*-linux-amd64.tar.gz && cd syedge-console-*/
+./syedge-console -listen 0.0.0.0:8443 -grpc-listen 0.0.0.0:9443 \
   -grpc-hosts <控制台IP> -grpc-advertise <控制台IP>:9443 -data ./data
-# 演示授权：./syapp-license-server issue -key etos-demo-2026.key -kid etos-demo-2026 \
+# 演示授权：./syedge-license-server issue -key etos-demo-2026.key -kid etos-demo-2026 \
 #   -installation-id <data/installation.json 中的 ID> -binding installation_only -customer 演示客户 -out demo.lic
 
 # 每台边缘节点（真实 Linux 服务器）
-tar -xzf edgetraffic-os-node-*-linux-amd64.tar.gz && cd edgetraffic-os-node-*/
-sudo ./install.sh          # 安装并由 systemd 启动 syapp
+tar -xzf syedge-node-*-linux-amd64.tar.gz && cd syedge-node-*/
+sudo ./install.sh          # 安装并由 systemd 启动 syedge
 # 然后把控制台“添加节点”生成的命令粘贴执行
 ```
 
@@ -96,7 +96,7 @@ sudo ./install.sh          # 安装并由 systemd 启动 syapp
 ./demo.sh ps node1
 ```
 
-看点：`syapp version: syapp/1.30.6`；进程是 `syapp: master process` / `syapp: worker process`；整台机器上看不到 nginx 字样。
+看点：`SyEdge version: SyEdge/1.30.6`；进程是 `SyEdge: master process` / `SyEdge: worker process`；整台机器上看不到 nginx 字样。
 讲解：数据面基于 NGINX 官方源码，只改名、不改逻辑，行为与官方逐字节一致，升级上游成本低。
 
 ### 2. 初始化与授权（2 分钟）
@@ -129,7 +129,7 @@ sudo ./install.sh          # 安装并由 systemd 启动 syapp
 ```bash
 curl -H 'Host: shop.demo.local' http://<服务器>:8001/          # 演示商城 v1
 curl -H 'Host: shop.demo.local' http://<服务器>:8002/api/orders # 返回 order-api-1 或 order-api-2
-curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: syapp
+curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: SyEdge
 ```
 
 另开一个终端执行 `./demo.sh traffic`，总览页会出现流量曲线。
@@ -144,8 +144,8 @@ curl -I -H 'Host: shop.demo.local' http://<服务器>:8001/        # Server: sya
 去掉多余域名后保存并发布，在节点上验证：`docker compose exec node1 curl -skv --resolve shop.demo.local:443:127.0.0.1 https://shop.demo.local/ 2>&1 | grep 'expire date'`。
 
 **可选：ACME 自动申请证书。** 演示服务器通常无法被 Let's Encrypt 访问，可启用内置的测试 CA（Pebble）：
-`COMPOSE_PROFILES=acme ETOS_ACME_CA_FILE=/var/lib/syapp-console/acme-ca.pem ./demo.sh up`，然后执行
-`docker compose cp pebble:/test/certs/pebble.minica.pem /tmp/p.pem && docker compose cp /tmp/p.pem console:/var/lib/syapp-console/acme-ca.pem`。
+`COMPOSE_PROFILES=acme ETOS_ACME_CA_FILE=/var/lib/syedge-console/acme-ca.pem ./demo.sh up`，然后执行
+`docker compose cp pebble:/test/certs/pebble.minica.pem /tmp/p.pem && docker compose cp /tmp/p.pem console:/var/lib/syedge-console/acme-ca.pem`。
 在“证书”页的 ACME 设置里把服务地址改为 `https://pebble:14000/dir`，点“自动申请证书”，填 `shop.demo.local`。
 看点：“ACME 签发记录”依次显示 下发验证文件到节点 → 等待 CA 验证 → 签发证书 → 写入证书库并下发；“发布”页多出两条“证书续期”记录（下发验证文件、换上证书并清除验证文件）。
 

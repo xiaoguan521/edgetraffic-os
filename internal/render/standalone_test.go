@@ -15,13 +15,13 @@ func TestPackageDefaults(t *testing.T) {
 	if err := WritePackageDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"share/defaults/baseline/syapp.conf", "share/defaults/baseline/" + ManifestName,
+	for _, f := range []string{"share/defaults/baseline/syedge.conf", "share/defaults/baseline/" + ManifestName,
 		"share/defaults/baseline/mime.types", "share/defaults/standalone-example.conf", "share/doc/STANDALONE.txt"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			t.Fatalf("missing %s", f)
 		}
 	}
-	// 与 agent bootstrap 写入的初始版本完全一致：后装 syapp-agent 时不算漂移
+	// 与 agent bootstrap 写入的初始版本完全一致：后装 syedge-agent 时不算漂移
 	b, _ := Baseline()
 	m, _ := os.ReadFile(filepath.Join(root, "share/defaults/baseline", ManifestName))
 	if string(m) != string(b.Files[ManifestName]) {
@@ -67,17 +67,17 @@ func TestStandaloneExampleFollowsRules(t *testing.T) {
 	}
 }
 
-// 基线 + 示例站点放进 conf.d 后，真实 syapp -t 必须通过。
-func TestStandaloneExampleSyappSyntax(t *testing.T) {
-	bin := os.Getenv("SYAPP_BIN")
+// 基线 + 示例站点放进 conf.d 后，真实 syedge -t 必须通过。
+func TestStandaloneExampleSyedgeSyntax(t *testing.T) {
+	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syapp/sbin/syapp"
+		bin = "/opt/syedge/sbin/syedge"
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 {
-		t.Skip("syapp -t needs root to check user and log paths")
+		t.Skip("syedge -t needs root to check user and log paths")
 	}
 	b, err := Baseline()
 	if err != nil {
@@ -94,8 +94,8 @@ func TestStandaloneExampleSyappSyntax(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput(); err != nil {
-			t.Fatalf("syapp -t failed (example=%v): %v\n%s", conf != "", err, out)
+		if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+			t.Fatalf("syedge -t failed (example=%v): %v\n%s", conf != "", err, out)
 		}
 	}
 	// HTTPS 示例取消注释后（配上证书）也要能通过
@@ -112,8 +112,8 @@ func TestStandaloneExampleSyappSyntax(t *testing.T) {
 		t.Skipf("openssl unavailable: %v %s", err, out)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "conf.d", "www.conf"), []byte(https), 0o644)
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput(); err != nil {
-		t.Fatalf("syapp -t failed with HTTPS example: %v\n%s", err, out)
+	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+		t.Fatalf("syedge -t failed with HTTPS example: %v\n%s", err, out)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestEmbeddedFilesHaveNoBrand(t *testing.T) {
 		}
 	}
 	// 默认品牌：占位符替换后与原文一致
-	if s := string(StandaloneFiles()["share/doc/STANDALONE.txt"]); strings.Contains(s, "@ID@") || !strings.Contains(s, "syapp -t") {
+	if s := string(StandaloneFiles()["share/doc/STANDALONE.txt"]); strings.Contains(s, "@ID@") || !strings.Contains(s, "syedge -t") {
 		t.Fatal("placeholder not expanded for the default brand")
 	}
 }

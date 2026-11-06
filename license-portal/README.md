@@ -1,4 +1,4 @@
 # 厂商授权后台前端
 
-`syapp-license-server` 的管理界面（规格书 8.8），独立 Vite 工程，技术栈与 `web/` 相同。
+`syedge-license-server` 的管理界面（规格书 8.8），独立 Vite 工程，技术栈与 `web/` 相同。
 只在厂商内网使用，不随产品交付。P4 实现：客户、订单、License 签发与审批、激活码、迁移、吊销、用量看板。

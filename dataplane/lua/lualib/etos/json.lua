@@ -1,4 +1,4 @@
--- etos.json：只读的 JSON 解析（JWT 头与载荷使用）。syapp-lua 附加包中审核过的库，不对外开放。
+-- etos.json：只读的 JSON 解析（JWT 头与载荷使用）。syedge-lua 附加包中审核过的库，不对外开放。
 -- 输入长度由调用方限制；嵌套深度最多 16 层；解析失败返回 nil。
 local byte, sub, find, char, tonumber = string.byte, string.sub, string.find, string.char, tonumber
 local concat = table.concat

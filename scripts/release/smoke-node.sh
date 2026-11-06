@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 发布包冒烟测试：在一台带 systemd 的干净 Linux 上，用节点发布包走一遍真实安装流程。
-#   1. install.sh 安装，syapp 由 systemd 启动，进程名与版本均为 syapp
+#   1. install.sh 安装，syedge 由 systemd 启动，进程名与版本均为 syedge
 #   2. 本机启动控制台，导入授权，生成注册令牌
 #   3. install.sh --server/--token/--ca-fingerprint 再次执行（验证可重复安装 + 注册）
-#   4. 节点上线后发布一个站点，经 sudo + syapp-wrapper 在 systemd 加固环境下完成校验与 reload
+#   4. 节点上线后发布一个站点，经 sudo + syedge-wrapper 在 systemd 加固环境下完成校验与 reload
 #
 # 用法（普通用户 + 免密 sudo，CI 中运行）：
-#   LIC_TOOL=... LIC_KEY=... LIC_KID=... scripts/release/smoke-node.sh <节点包.tar.gz> <syapp-console>
+#   LIC_TOOL=... LIC_KEY=... LIC_KID=... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
 # 控制台须是注入了临时授权公钥的测试构建；它只用于本测试，不进入发布包。
 set -uo pipefail
 PKG=$(realpath "${1:?node package}"); CONSOLE=$(realpath "${2:?console binary}")
@@ -24,7 +24,7 @@ cleanup() { [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null; }
 trap cleanup EXIT
 diag() {
   [[ -n "${GITHUB_ACTIONS:-}" ]] || return 0
-  for u in syapp syapp-agent; do
+  for u in syedge syedge-agent; do
     m=$( (sudo systemctl status $u --no-pager -l; sudo journalctl -u $u --no-pager -n 20) 2>&1 | tail -30)
     echo "::warning title=$u status::${m//$'\n'/%0A}"
   done
@@ -32,17 +32,17 @@ diag() {
 
 echo "== 安装节点包"
 tar -C "$W" -xzf "$PKG"
-D=$(echo "$W"/edgetraffic-os-node-*)
+D=$(echo "$W"/syedge-node-*)
 if out=$(sudo "$D/install.sh" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
-expect "systemd 单元 syapp.service 运行中" "$(systemctl is-active syapp.service)" "active"
-expect "syapp -v" "$(syapp -v 2>&1)" "syapp version: syapp/"
-expect "master 进程标题" "$(ps -eo args)" "syapp: master process"
-expect "worker 以 syapp 用户运行" "$(ps -o user= -C syapp | sort -u | tr '\n' ' ')" "syapp"
+expect "systemd 单元 syedge.service 运行中" "$(systemctl is-active syedge.service)" "active"
+expect "syedge -v" "$(syedge -v 2>&1)" "SyEdge version: SyEdge/"
+expect "master 进程标题" "$(ps -eo args)" "SyEdge: master process"
+expect "worker 以 syedge 用户运行" "$(ps -o user= -C syedge | sort -u | tr '\n' ' ')" "syedge"
 if ps -eo args | grep -v grep | grep -qi 'ngi''nx'; then bad "进程列表出现上游名"; else ok "进程列表无上游名"; fi
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || true)
 expect "基线配置：未知域名直接断开" "$code" "000"
-MASTER=$(cat /run/syapp/syapp.pid)
-expect "节点防火墙默认不启用" "$(sudo syapp-firewall status)" "未启用"
+MASTER=$(cat /run/syedge/syedge.pid)
+expect "节点防火墙默认不启用" "$(sudo syedge-firewall status)" "未启用"
 
 echo "== 启动控制台并导入授权"
 "$CONSOLE" -listen 127.0.0.1:18443 -grpc-listen 127.0.0.1:9443 -grpc-hosts 127.0.0.1 \
@@ -68,8 +68,8 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 expect "节点上线" "$online" "1"
-expect "systemd 单元 syapp-agent.service 运行中" "$(systemctl is-active syapp-agent.service)" "active"
-expect "agent 以 syapp-agent 用户运行" "$(ps -o user= -C syapp-agent)" "syapp-agent"
+expect "systemd 单元 syedge-agent.service 运行中" "$(systemctl is-active syedge-agent.service)" "active"
+expect "agent 以 syedge-agent 用户运行" "$(ps -o user= -C syedge-agent)" "syedge-agent"
 
 echo "== 发布站点（sudo + wrapper 在 systemd 加固下校验与 reload）"
 "${C[@]}" -X POST "$B/sites" -d '{"group_id":1,"spec":{"name":"smoke","domains":["smoke.local"],"routes":[{"path":"/","match":"prefix","mode":"static","static":{"index_html":"<h1>smoke ok</h1>"}}]}}' >/dev/null
@@ -82,13 +82,13 @@ for _ in $(seq 1 60); do
 done
 expect "发布生效" "$st" "APPLIED"
 expect "站点返回内容" "$(curl -s --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "smoke ok"
-expect "Server 头为 syapp" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: syapp"
-expect "发布与升级全程未重启 syapp（master PID 不变）" "$(cat /run/syapp/syapp.pid)" "$MASTER"
+expect "Server 头为 SyEdge" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: SyEdge"
+expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /run/syedge/syedge.pid)" "$MASTER"
 
 if [[ $fail -ne 0 ]]; then
   diag
   tail -15 "$W/console.log" | sed 's/^/::warning title=console::/'
-  sudo tail -5 /var/log/syapp/error.log | sed 's/^/::warning title=error.log::/'
+  sudo tail -5 /var/log/syedge/error.log | sed 's/^/::warning title=error.log::/'
 fi
 echo "---- $fail failed"
 [[ $fail -eq 0 ]] && echo "NODE PACKAGE SMOKE OK" || exit 1

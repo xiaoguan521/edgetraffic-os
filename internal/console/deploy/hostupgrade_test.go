@@ -231,11 +231,11 @@ func TestImportRejectsOtherBrand(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	d.PackageKeys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
 	data := []byte("pkg")
-	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", "1.30.7-1", "amd64", "standard", data)
+	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", "1.30.7-1", "amd64", "standard", data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig.Name = "syedge" // 另一个品牌的包（签名格式只接受本品牌的包名，见 pkgsig.Names）
+	sig.Name = "sytest" // 另一个品牌的包（签名格式只接受本品牌的包名，见 pkgsig.Names）
 	sb, _ := json.Marshal(sig)
 	if _, err := d.ImportPackage(data, sb, "admin", ""); !errors.Is(err, pkgsig.ErrSignature) {
 		t.Fatalf("other brand package: %v", err)

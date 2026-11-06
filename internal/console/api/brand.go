@@ -15,6 +15,7 @@ func (s *Server) brandInfo(c *gin.Context) {
 		"id":       brand.ID(),
 		"proc":     brand.Proc(),
 		"product":  brand.Product(),
+		"fullname": brand.FullName(),
 		"agent":    brand.Agent(),
 		"lua":      brand.Lua(),
 		"instance": brand.ID() + "-instance",

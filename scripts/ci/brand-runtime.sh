@@ -2,15 +2,15 @@
 # 品牌的运行时检查（设计 0001 第 4 节 BR-01 / BR-02、D7）：解压数据面包，在临时目录中启动，检查对外可见的名字。
 #
 #   scripts/ci/brand-runtime.sh <数据面 tar.gz> <品牌 ID> <显示名>
-#   例：scripts/ci/brand-runtime.sh dist/syapp-1.30.6-x86_64.tar.gz syapp syapp
-#       scripts/ci/brand-runtime.sh dist/syedge-1.30.6-x86_64.tar.gz syedge SyEdge
+#   例：scripts/ci/brand-runtime.sh dist/syedge-1.30.6-x86_64.tar.gz syedge SyEdge      （默认品牌）
+#       scripts/ci/brand-runtime.sh dist/sytest-1.30.6-x86_64.tar.gz sytest SyTest      （OEM 定制品牌）
 #
 # 检查：-v / -t 输出、master 与 worker 进程标题、HTTP/1.1 与 HTTP/2 的 Server 头、默认错误页、
 # $<品牌>_version 变量；二进制中没有上游名，定制品牌时也没有默认品牌名
 # （HTTP/2 的 Server 头是 HPACK 哈夫曼编码，strings 扫描看不到，只能这样实测）。
 # 需要 root（解压到编译期前缀 /opt/<品牌>）、curl（支持 HTTP/2）、openssl。
 set -uo pipefail
-TGZ=$(realpath "$1"); ID=$2; PROC=$3; DEFAULT=syapp
+TGZ=$(realpath "$1"); ID=$2; PROC=$3; DEFAULT=syedge
 [[ $EUID -eq 0 ]] || { echo "需要 root" >&2; exit 2; }
 export NO_PROXY='*' no_proxy='*'
 fail=0

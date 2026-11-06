@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | R1 | 一台机器部署多个数据面实例，各用不同端口 | 每个实例可被控制台独立发布、reload、热升级、监控和卸载，任何操作不影响同机其他实例 |
 | R2 | 没有 root 权限也能安装和使用 | 普通用户从安装、注册、发布、热升级到卸载全程不需要 root 或 sudo，运行中的进程没有一个属于 root |
-| R3 | 数据面的程序名和进程名可以定制，例如 SyEdge | 命令、进程标题、路径、服务单元、安装包、界面、日志、错误页和 Server 头中都只出现定制名，不残留 syapp |
+| R3 | 数据面的程序名和进程名可以定制，例如 SyEdge | 命令、进程标题、路径、服务单元、安装包、界面、日志、错误页和 Server 头中都只出现定制名，不残留 syedge |
 
 三个需求改的是同一件事：**程序叫什么、文件放在哪、以谁的身份运行、谁能给谁发信号**。现在这些约定散落在 42 个 Go 文件（203 处）、模板、打包脚本和 sudoers 里，而且都是写死的。本设计把它们收敛为一个统一的模型，称为部署布局（Layout），三个需求都在这个模型上实现。
 
@@ -21,21 +21,21 @@
 
 | 位置 | 现状 | 对 R1 | 对 R2 | 对 R3 |
 | --- | --- | --- | --- | --- |
-| `syapp.conf.tmpl` | `pid`、`error_log`、`access_log` 是绝对路径；`listen 80/443`；状态页固定为 `127.0.0.1:8081`；有 `user syapp` | 实例之间冲突 | 普通用户无法监听 80/443，也写不了 `/run`、`/var/log` | 路径里带名字 |
-| `site.conf.tmpl` | `listen 80/443`；`alias /opt/syapp/conf/current/...` | 端口冲突，路径错到默认实例 | 同上 | 同上 |
-| 国密与 Lua 模板 | 证书、模块用 `/opt/syapp/...` 绝对路径 | 指向错误的实例 | 目录不存在 | 同上 |
-| `build-syapp.sh` | 编译期默认路径都在 `/opt/syapp`、`/run/syapp`、`/var/log/syapp`、`/var/cache/syapp` | 需要在运行时覆盖 | 同左 | 名字编译在二进制里 |
-| 改名 patch | 64 处字符串常量写死为 `syapp`，其中部分带长度常量，HPACK 编码字节是预先算好的 | — | — | 换名要重新生成 patch |
+| `syedge.conf.tmpl` | `pid`、`error_log`、`access_log` 是绝对路径；`listen 80/443`；状态页固定为 `127.0.0.1:8081`；有 `user syedge` | 实例之间冲突 | 普通用户无法监听 80/443，也写不了 `/run`、`/var/log` | 路径里带名字 |
+| `site.conf.tmpl` | `listen 80/443`；`alias /opt/syedge/conf/current/...` | 端口冲突，路径错到默认实例 | 同上 | 同上 |
+| 国密与 Lua 模板 | 证书、模块用 `/opt/syedge/...` 绝对路径 | 指向错误的实例 | 目录不存在 | 同上 |
+| `build-syedge.sh` | 编译期默认路径都在 `/opt/syedge`、`/run/syedge`、`/var/log/syedge`、`/var/cache/syedge` | 需要在运行时覆盖 | 同左 | 名字编译在二进制里 |
+| 改名 patch | 64 处字符串常量写死为 `syedge`，其中部分带长度常量，HPACK 编码字节是预先算好的 | — | — | 换名要重新生成 patch |
 | agent `main.go` | PID、日志、状态地址、wrapper 写死；只有 `-conf-root` 可改 | 无法托管第二个实例 | 依赖 sudo | 名字写死 |
 | wrapper 与 sudoers | 路径写死；9b0716a 加了 `--instance`，同时新增一条 `--instance *` 通配 sudoers | 任一 agent 都能操作任一实例 | 依赖 sudo | 名字写死 |
-| 升级状态 | 二进制共用（`sbin/syapp` 软链到 `versions/`）；`state.json` 放在共用的 `versions/` 下 | 多个实例互相覆盖升级状态 | — | — |
+| 升级状态 | 二进制共用（`sbin/syedge` 软链到 `versions/`）；`state.json` 放在共用的 `versions/` 下 | 多个实例互相覆盖升级状态 | — | — |
 | 打包 | 只有一套 systemd 单元、logrotate、tmpfiles、nftables 规则，都只针对 80/443 | 无法新增或删除实例 | 必须 root 安装 | 包名写死 |
 | 控制台模型 | 一个节点就是一台机器；同组节点拿到同一个配置包 | 没有主机和实例的概念 | — | 界面文案写死 |
 
 **提交 9b0716a 的具体问题（应先处理，见 10.1 节）：**
 
-1. `syapp-agent@.service` 传了 agent 并不认识的 `-data`、`-pid-file`、`-lock` 参数，agent 一启动就会退出。
-2. wrapper 对实例执行 `syapp -c <实例配置> -s reload`。syapp 按配置里的 `pid` 找进程，而渲染出的 `pid` 是 `/run/syapp/syapp.pid`，**结果信号发给了默认实例**。
+1. `syedge-agent@.service` 传了 agent 并不认识的 `-data`、`-pid-file`、`-lock` 参数，agent 一启动就会退出。
+2. wrapper 对实例执行 `syedge -c <实例配置> -s reload`。syedge 按配置里的 `pid` 找进程，而渲染出的 `pid` 是 `/run/syedge/syedge.pid`，**结果信号发给了默认实例**。
 3. sudoers 中 `--instance *` 这一行的通配覆盖了全部子命令，任一实例的 agent 都能操作所有实例。这违反 `CLAUDE.md`“只有 test 与 upgrade-start 带通配”的契约。
 4. 升级状态 `state.json` 由各实例共用，并发或先后升级时会互相覆盖，中止升级可能切回错误的版本。
 
@@ -49,7 +49,7 @@
 
 | 维度 | 取值 | 决定于 |
 | --- | --- | --- |
-| 品牌 `B` | 例如 `syapp`（默认）、`syedge` | **构建时**写入所有程序，见第 4 节 |
+| 品牌 `B` | 例如 `syedge`（默认）、`syedge` | **构建时**写入所有程序，见第 4 节 |
 | 模式 `M` | `system`（root 安装，当前方式）或 `user`（普通用户安装） | 安装时选择 |
 | 根目录 `R` | system 模式固定为 `/opt/B`；user 模式由用户指定，例如 `~/syedge` | 安装时确定 |
 | 实例名 `I` | 空字符串表示默认实例；具名实例匹配 `^[a-z][a-z0-9-]{0,15}$`，`default` 为保留名 | `B-instance add` 时确定 |
@@ -69,7 +69,7 @@
 
 ### 3.3 路径表
 
-**system 模式**（root 安装；`B=syapp`、默认实例时，路径与现在完全一致）
+**system 模式**（root 安装；`B=syedge`、默认实例时，路径与现在完全一致）
 
 | 内容 | 默认实例 | 具名实例 `I` |
 | --- | --- | --- |
@@ -121,7 +121,7 @@
 
 ### 4.1 为什么只能在构建时定制
 
-数据面的名字是编译进二进制的：进程标题前缀（`syapp: master process`）、`-v` 输出、错误日志前缀、`Server` 响应头、默认错误页、HTTP/2 头的 HPACK 编码、热升级时传递监听套接字用的环境变量名，都是 patch 里的字符串常量。安装后只改文件名，只会影响 `ps` 的 comm 列，进程标题、日志和响应头仍然是旧名字。所以**品牌在构建时确定，一个安装包对应一个品牌**。发布流程为每个品牌产出一套安装包和升级包。
+数据面的名字是编译进二进制的：进程标题前缀（`SyEdge: master process`）、`-v` 输出、错误日志前缀、`Server` 响应头、默认错误页、HTTP/2 头的 HPACK 编码、热升级时传递监听套接字用的环境变量名，都是 patch 里的字符串常量。安装后只改文件名，只会影响 `ps` 的 comm 列，进程标题、日志和响应头仍然是旧名字。所以**品牌在构建时确定，一个安装包对应一个品牌**。发布流程为每个品牌产出一套安装包和升级包。
 
 ### 4.2 品牌参数
 
@@ -129,23 +129,23 @@
 
 | 参数 | 默认 | 示例 | 用途与约束 |
 | --- | --- | --- | --- |
-| `BRAND_ID` | `syapp` | `syedge` | 命令名、二进制名、路径、用户名、服务单元名、安装包名、环境变量前缀（大写形式）。约束为 `^[a-z][a-z0-9]{2,6}$`：小写便于命令行使用，长度上限 7 能保证 `B-console`、`B-agent-I` 这类名字在进程 comm 的 15 字符限制内尽量完整显示 |
+| `BRAND_ID` | `syedge` | `syedge` | 命令名、二进制名、路径、用户名、服务单元名、安装包名、环境变量前缀（大写形式）。约束为 `^[a-z][a-z0-9]{2,6}$`：小写便于命令行使用，长度上限 7 能保证 `B-console`、`B-agent-I` 这类名字在进程 comm 的 15 字符限制内尽量完整显示 |
 | `BRAND_PROC` | 同 `BRAND_ID` | `SyEdge` | 进程标题前缀（`ps` 中显示为 `SyEdge: master process`）、错误日志前缀、`-v` 输出、`Server` 头、默认错误页。允许大小写字母和数字，长度不超过 15 |
-| `BRAND_PRODUCT` | `EdgeTraffic OS` | `SyEdge 边缘网关` | 控制台、关于页、安装提示中显示的产品名 |
+| `BRAND_PRODUCT` | `SyEdge` | `SyEdge 边缘网关` | 控制台、关于页、安装提示中显示的产品名 |
 
 ### 4.3 数据面
 
-- `dataplane/patches/0001-syapp-rename.patch` 改为模板 `0001-rename.patch.tmpl`，由 `dataplane/gen-rename-patch` 根据品牌参数生成实际的 patch：
+- `dataplane/patches/0001-syedge-rename.patch` 改为模板 `0001-rename.patch.tmpl`，由 `dataplane/gen-rename-patch` 根据品牌参数生成实际的 patch：
   - 字符串常量中的名字被替换为 `BRAND_PROC` 或 `BRAND_ID`。
-  - 带长度的常量（例如 `ngx_cpymem(errstr, "syapp: ", 7)`）的长度值由生成器按新名字计算。
+  - 带长度的常量（例如 `ngx_cpymem(errstr, "SyEdge: ", 8)`）的长度值由生成器按新名字计算。
   - HTTP/2 `server` 头的 HPACK 霍夫曼编码字节由现有的 `dataplane/hpack-gen` 生成。
   - 生成的 patch 仍然**只改字符串常量和宏的值**，ADR 0001 的约束不变。默认品牌生成的 patch 必须与现有 patch 逐字节相同，这一点作为测试。
-- `build-syapp.sh -b brand.env` 根据品牌设置 `--prefix`、`--sbin-path`、`--user` 等编译参数。
-- `rename-scan.sh` 和 `golden-rename.sh` 接收品牌参数。非默认品牌构建时，额外扫描二进制、安装包和运行日志，确认其中没有残留的 `syapp`（品牌泄漏扫描）。上游名 `nginx` 的检查保持不变。
+- `build-syedge.sh -b brand.env` 根据品牌设置 `--prefix`、`--sbin-path`、`--user` 等编译参数。
+- `rename-scan.sh` 和 `golden-rename.sh` 接收品牌参数。非默认品牌构建时，额外扫描二进制、安装包和运行日志，确认其中没有残留的 `syedge`（品牌泄漏扫描）。上游名 `nginx` 的检查保持不变。
 
 ### 4.4 Go 程序与打包
 
-- 新增 `internal/brand`，变量通过 `-ldflags -X` 注入，默认值为 `syapp`。新增测试 `TestNoBrandLiteral`（与 `TestNoNetworkCode` 同类）：`internal/brand` 以外的非测试 Go 代码里不允许出现字面量 `syapp`。
+- 新增 `internal/brand`，变量通过 `-ldflags -X` 注入，默认值为 `syedge`。新增测试 `TestNoBrandLiteral`（与 `TestNoNetworkCode` 同类）：`internal/brand` 以外的非测试 Go 代码里不允许出现字面量 `syedge`。
 - systemd 单元、sudoers、logrotate、tmpfiles、nftables、nfpm 配置都改为模板，由 `scripts/release/package.sh` 按品牌生成。
 - 前端只构建一次。产品名、数据面名、命令名都通过 `/api/v1/about` 在运行时获取，不同品牌不需要重新构建前端。
 - 控制台、agent、升级包都带上品牌标识：agent 注册时上报品牌，与控制台品牌不一致则拒绝注册；升级包的签名元数据包含品牌，wrapper 拒绝安装其他品牌的升级包。
@@ -202,7 +202,7 @@ B-wrapper [--instance I] <test rN|reload|reopen|quit|upgrade-start V|upgrade-com
 ```
 
 - 子命令和参数校验规则不变。`--instance` 只能是第一个参数，取值必须匹配实例名规则，并且对应的实例必须已经由 `B-instance add` 创建：前缀目录存在、归 root 所有、包含 `instance.json`。所有路径由 wrapper 根据布局计算，不接受外部传入的路径。
-- 具名实例的 reload、reopen、quit 用 `B -c <实例的 current 配置> -s <信号>`。由于实例配置中的 `pid` 已按档案渲染为本实例的路径，syapp 会找到正确的进程，这样就修复了信号发到默认实例的问题。
+- 具名实例的 reload、reopen、quit 用 `B -c <实例的 current 配置> -s <信号>`。由于实例配置中的 `pid` 已按档案渲染为本实例的路径，syedge 会找到正确的进程，这样就修复了信号发到默认实例的问题。
 - **每个具名实例使用独立的 agent 用户 `B-agent-I` 和独立的 sudoers 文件** `/etc/sudoers.d/B-agent-I`，由 `B-instance add` 生成，写入前用 `visudo -cf` 校验。文件内容固定 7 行，实例名直接写死：
 
   ```
@@ -311,7 +311,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 ### 6.6 控制台的非 root 运行
 
-控制台本来就以 `syapp-console` 普通用户运行，端口为 8443 和 9443，数据目录可以通过 `-data` 指定。这里只需要补充：免安装包、`systemd --user` 单元示例，以及授权后台的同类说明。
+控制台本来就以 `syedge-console` 普通用户运行，端口为 8443 和 9443，数据目录可以通过 `-data` 指定。这里只需要补充：免安装包、`systemd --user` 单元示例，以及授权后台的同类说明。
 
 ## 7. 安全分析
 
@@ -335,11 +335,11 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 评审通过后，这些条款与实现在同一个 PR 中修改：
 
-1. “`--conf-path=/opt/syapp/conf/current/syapp.conf`” 补充：这是默认实例的配置路径；具名实例以 `-c <实例前缀>/conf/current/<B>.conf` 启动，配置中的绝对路径一律由渲染器按节点组档案生成。
+1. “`--conf-path=/opt/syedge/conf/current/syedge.conf`” 补充：这是默认实例的配置路径；具名实例以 `-c <实例前缀>/conf/current/<B>.conf` 启动，配置中的绝对路径一律由渲染器按节点组档案生成。
 2. wrapper 的命令格式增加 `[--instance I]` 前缀；sudoers 规定为：默认实例 7 行，每个具名实例一个独立文件，同样 7 行，实例名写死，禁止对实例名使用通配。
-3. 漂移 diff 上报的目录限制，从固定的 `/opt/syapp/conf/releases/` 改为“本实例前缀下的 `conf/releases/`”。
-4. “不得停止 syapp”增加一条例外：只有运维人员显式执行的 `B-instance remove` 和卸载安装包，可以对该实例执行优雅退出。
-5. 品牌：除 `internal/brand` 和构建默认值以外，代码中不允许出现 `syapp` 字面量；非默认品牌的构建必须通过品牌泄漏扫描。
+3. 漂移 diff 上报的目录限制，从固定的 `/opt/syedge/conf/releases/` 改为“本实例前缀下的 `conf/releases/`”。
+4. “不得停止 syedge”增加一条例外：只有运维人员显式执行的 `B-instance remove` 和卸载安装包，可以对该实例执行优雅退出。
+5. 品牌：除 `internal/brand` 和构建默认值以外，代码中不允许出现 `syedge` 字面量；非默认品牌的构建必须通过品牌泄漏扫描。
 6. user 模式：wrapper 直接调用、不经过 sudo，但校验和验签规则不变。
 
 ## 10. 实施计划
@@ -349,7 +349,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 针对 9b0716a，在客户环境启用多实例之前先做最小修复：
 
 - 删除 sudoers 中的 `--instance *` 通配行。
-- 从安装包中暂时移除 `syapp@.service` 和 `syapp-agent@.service`，等 P11-B 完成后再按本设计重新加入。
+- 从安装包中暂时移除 `syedge@.service` 和 `syedge-agent@.service`，等 P11-B 完成后再按本设计重新加入。
 - 保留 9b0716a 中与多实例无关的部分：磁盘空间预检、发布并发上限、非交互卸载、发布门禁脚本。
 
 ### 10.2 分期
@@ -377,7 +377,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 | RL-02 | 运行中检查进程属主 | 没有属于 root 的进程 |
 | RL-03 | 重启机器 | 通过 linger 或 cron 自动恢复所有实例 |
 | BR-01 | 以 `syedge` / `SyEdge` 品牌构建并安装 | `ps` 显示 `SyEdge: master process`；`syedge -t`、`systemctl reload syedge@blue` 可用；`Server` 头和错误页显示 SyEdge；路径、单元名、包名都是 syedge |
-| BR-02 | 品牌泄漏扫描 | 二进制、安装包、界面、日志中没有 `syapp`，也没有上游名 |
+| BR-02 | 品牌泄漏扫描 | 二进制、安装包、界面、日志中没有 `syedge`，也没有上游名 |
 | BR-03 | 品牌不一致的 agent 注册，或安装其他品牌的升级包 | 被拒绝 |
 | BR-04 | 默认品牌构建 | 生成的 patch 与现有 patch 逐字节相同，黄金用例全部通过 |
 
@@ -391,4 +391,4 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 | D4 | user 模式是否必须支持没有 `systemd --user` 的机器 | 必须支持。cron 兜底的实现成本低，而且国产操作系统上经常无法开启 linger |
 | D5 | 是否需要方式 B（system 模式运行时不使用 root） | 需要（已确认并实现，见 6.7 节）：作为 system 模式的默认且唯一的运行方式；已以 root 运行的 master 由 `B-instance nonroot` 无中断切换 |
 | D6 | v0.2 是否等 P11 完成 | 不等。v0.2 只包含 10.1 节的最小修复，按单实例交付试点；P11 进入 v0.3 |
-| D7 | `Server` 响应头与错误页显示什么 | 显示品牌的显示名：默认品牌为 `syapp`，定制品牌为其显示名（例如 `SyEdge`），不隐藏。由改名 patch 模板按品牌生成：HTTP/1.1、HTTP/2（HPACK 编码）、HTTP/3 的 Server 头与默认错误页都用显示名；`server_tokens off` 时不带版本号。实现时修复了两处：HTTP/2 的 HPACK 字节曾写死为默认品牌，控制台输出的前缀长度曾写死为默认长度（显示名长度不同时吞掉消息首字符）。由 `scripts/ci/brand-runtime.sh` 对默认品牌与定制品牌分别实测（CI：`dataplane`、`dataplane-brand`） |
+| D7 | `Server` 响应头与错误页显示什么 | 显示品牌的显示名：默认品牌为 `SyEdge`（2026-11-06 起产品更名为 SyEdge；此前默认品牌为 syapp），定制品牌为其显示名，不隐藏。由改名 patch 模板按品牌生成：HTTP/1.1、HTTP/2（HPACK 编码）、HTTP/3 的 Server 头与默认错误页都用显示名；`server_tokens off` 时不带版本号。实现时修复了两处：HTTP/2 的 HPACK 字节曾写死为默认品牌，控制台输出的前缀长度曾写死为默认长度（显示名长度不同时吞掉消息首字符）。由 `scripts/ci/brand-runtime.sh` 对默认品牌与定制品牌分别实测（CI：`dataplane`、`dataplane-brand`） |

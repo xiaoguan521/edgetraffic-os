@@ -1,5 +1,5 @@
 // Package signer 是离线签名机上使用的代码（规格书 8.8.1）：口令加密的私钥文件、批次签名、本地签发日志。
-// 只被 cmd/syapp-license-signer 引用；控制台与授权后台都不链接这个包。
+// 只被 cmd/syedge-license-signer 引用；控制台与授权后台都不链接这个包。
 package signer
 
 import (
@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 )
 
@@ -124,7 +125,7 @@ func ParseKeyFile(b []byte) (*KeyFile, error) {
 		return nil, fmt.Errorf("不是私钥文件：%w", err)
 	}
 	if kf.Format != KeyFileFormat || kf.KID == "" {
-		return nil, errors.New("不是 EdgeTraffic OS 签名私钥文件")
+		return nil, errors.New("不是 " + brand.Product() + " 签名私钥文件")
 	}
 	if _, err := kf.Public(); err != nil {
 		return nil, err

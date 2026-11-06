@@ -18,10 +18,10 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
 
-// syapp-lua 附加包与热升级（P10）：动态模块与 syapp 二进制版本强绑定。
+// syedge-lua 附加包与热升级（P10）：动态模块与 syedge 二进制版本强绑定。
 //
 // 附加包装在 Modules/lua-<版本>/，配置通过软链 Modules/lua 加载与运行中二进制匹配的模块。
-// 节点装有附加包时（Modules/lua 存在），upgrade-start 必须同时拿到目标版本的附加包（agent 与 syapp 包一起放入
+// 节点装有附加包时（Modules/lua 存在），upgrade-start 必须同时拿到目标版本的附加包（agent 与 syedge 包一起放入
 // Incoming，wrapper 以 root 验签），在新二进制 -t 之前把软链切到 lua-<目标版本>；任一步失败都切回。
 // upgrade-abort 在让旧 master 重新加载配置（HUP）之前先把软链切回，旧 master 加载的仍是旧版本模块。
 // 未装附加包的节点完全不受影响。
@@ -76,7 +76,7 @@ func binBase(bin string) string {
 	return "standard"
 }
 
-// installLua 校验签名并把 Incoming 中的 syapp-lua-<ver> 解到 Modules/lua-<ver>（只取 base 对应的模块）。
+// installLua 校验签名并把 Incoming 中的 syedge-lua-<ver> 解到 Modules/lua-<ver>（只取 base 对应的模块）。
 func (p Paths) installLua(ver, base string) error {
 	path := filepath.Join(p.Incoming, brand.Lua()+"-"+ver+".tar.gz")
 	data, err := readNoFollow(path, maxPackage)

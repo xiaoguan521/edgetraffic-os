@@ -111,13 +111,13 @@ func TestRulesSecretsAndLuaGate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	imp("syapp", "standard")
+	imp("syedge", "standard")
 	fa := &luaAgents{fakeAgents: fakeAgents{online: map[uint]bool{n.ID: true}}}
 	d.Agents = fa
-	if _, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", ""); err == nil || !strings.Contains(err.Error(), "syapp-lua") {
+	if _, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", ""); err == nil || !strings.Contains(err.Error(), "syedge-lua") {
 		t.Fatalf("upgrade without the add-on package: %v", err)
 	}
-	imp("syapp-lua", "lua")
+	imp("syedge-lua", "lua")
 	up, err := d.StartUpgrade(g.ID, "1.30.7-1", "standard", "admin", "")
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestRulesSecretsAndLuaGate(t *testing.T) {
 		t.Fatalf("upgrade %s", v.Status)
 	}
 	var ls pkgsig.Sig
-	if json.Unmarshal(fa.luaSig, &ls) != nil || ls.Name != "syapp-lua" || ls.Version != "1.30.7-1" {
+	if json.Unmarshal(fa.luaSig, &ls) != nil || ls.Name != "syedge-lua" || ls.Version != "1.30.7-1" {
 		t.Fatalf("add-on signature not sent: %s", fa.luaSig)
 	}
 }

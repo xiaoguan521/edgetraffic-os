@@ -38,23 +38,23 @@ func TestLuaRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	main := string(b.Files["syapp.conf"])
-	if !strings.HasPrefix(strings.SplitN(main, "\nuser ", 2)[0], "# EdgeTraffic OS") || !strings.Contains(main, "load_module  modules/lua/ngx_http_lua_module.so;") {
+	main := string(b.Files["syedge.conf"])
+	if !strings.HasPrefix(main, "# 数据面基线") || !strings.Contains(main, "load_module  modules/lua/ngx_http_lua_module.so;") {
 		t.Fatalf("load_module missing:\n%s", main[:300])
 	}
 	if strings.Index(main, "load_module") > strings.Index(main, "events {") {
 		t.Fatal("load_module must precede events")
 	}
 	for _, want := range []string{
-		`lua_package_path   "/opt/syapp/modules/lua/lualib/?.lua";`,
-		`lua_package_cpath  "/opt/syapp/modules/lua/lualib/?.disabled";`,
-		`[\034shop/api-hs\034] = { alg = \034HS256\034, key_file = \034/opt/syapp/conf/releases/r000002/lua/jwt-shop-api-hs.key\034`,
-		`key_file = \034/opt/syapp/conf/releases/r000002/lua/jwt-shop-app-rs.pem\034`,
+		`lua_package_path   "/opt/syedge/modules/lua/lualib/?.lua";`,
+		`lua_package_cpath  "/opt/syedge/modules/lua/lualib/?.disabled";`,
+		`[\034shop/api-hs\034] = { alg = \034HS256\034, key_file = \034/opt/syedge/conf/releases/r000002/lua/jwt-shop-api-hs.key\034`,
+		`key_file = \034/opt/syedge/conf/releases/r000002/lua/jwt-shop-app-rs.pem\034`,
 		`cookie = \034session_token\034`,
 	} {
 		w := strings.ReplaceAll(want, `\034`, `"`)
 		if !strings.Contains(main, w) {
-			t.Errorf("syapp.conf lacks %q", w)
+			t.Errorf("syedge.conf lacks %q", w)
 		}
 	}
 	// 密钥不进配置文本，只进 0640 的 .key 文件
@@ -86,7 +86,7 @@ func TestLuaRender(t *testing.T) {
 		t.Error("issuer not escaped as \\ddd")
 	}
 	// 只用原生规则时不加载 Lua
-	if p, _ := Render(rulesInput(t)); strings.Contains(string(p.Files["syapp.conf"]), "lua_") {
+	if p, _ := Render(rulesInput(t)); strings.Contains(string(p.Files["syedge.conf"]), "lua_") {
 		t.Error("Lua directives without Lua rules")
 	}
 }
@@ -97,7 +97,7 @@ func TestLuaCertOnlyRebase(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := Repack("r000003", RebaseRevision(cur.Files, "r000002", "r000003"))
-	if !strings.Contains(string(next.Files["syapp.conf"]), "/releases/r000003/lua/jwt-shop-api-hs.key") {
+	if !strings.Contains(string(next.Files["syedge.conf"]), "/releases/r000003/lua/jwt-shop-api-hs.key") {
 		t.Fatal("Lua key paths not rebased")
 	}
 }

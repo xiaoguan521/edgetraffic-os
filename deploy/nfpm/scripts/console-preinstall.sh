@@ -1,2 +1,2 @@
-ensure_group syapp-console
-ensure_user syapp-console syapp-console
+ensure_group syedge-console
+ensure_user syedge-console syedge-console

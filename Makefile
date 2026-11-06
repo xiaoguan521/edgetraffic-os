@@ -13,10 +13,10 @@ all: test build
 build: console agent wrapper license-server
 
 console agent license-server:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/syapp-$@ ./cmd/syapp-$@
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/syedge-$@ ./cmd/syedge-$@
 
 wrapper:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/syapp-wrapper ./cmd/syapp-wrapper
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/syedge-wrapper ./cmd/syedge-wrapper
 
 test:
 	$(GO) vet ./...
@@ -67,8 +67,8 @@ web:
 proto:
 	cd api/proto && buf generate
 
-syapp:
-	@echo "usage: dataplane/build-syapp.sh <upstream.tar.gz> [openssl|tongsuo]"
+syedge:
+	@echo "usage: dataplane/build-syedge.sh <upstream.tar.gz> [openssl|tongsuo]"
 
 clean:
 	rm -rf bin web/dist web/portal/dist/assets web/portal/dist/index.html

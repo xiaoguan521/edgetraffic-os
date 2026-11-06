@@ -87,7 +87,7 @@ func TestRenderDeterministic(t *testing.T) {
 	if c.Manifest.Digest != a.Manifest.Digest {
 		t.Fatal("route order changed digest")
 	}
-	for _, f := range []string{"syapp.conf", "mime.types", "snippets/security.conf", "conf.d/00-upstreams.conf",
+	for _, f := range []string{"syedge.conf", "mime.types", "snippets/security.conf", "conf.d/00-upstreams.conf",
 		"conf.d/site-shop.conf", "conf.d/site-blog.conf", "certs/site-shop.crt", "certs/site-shop.key", ManifestName} {
 		if _, ok := a.Files[f]; !ok {
 			t.Errorf("missing %s", f)
@@ -148,23 +148,23 @@ func TestRenderRejects(t *testing.T) {
 	}
 }
 
-// 用真实 syapp 二进制做语法校验；未安装时跳过（CI 的 dataplane 任务中会安装）。
-func TestRenderSyappSyntax(t *testing.T) {
-	bin := os.Getenv("SYAPP_BIN")
+// 用真实 syedge 二进制做语法校验；未安装时跳过（CI 的 dataplane 任务中会安装）。
+func TestRenderSyedgeSyntax(t *testing.T) {
+	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syapp/sbin/syapp"
+		bin = "/opt/syedge/sbin/syedge"
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	in := sampleInput(t)
-	if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
+	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
 		in.MimeTypes = mt
 	}
-	// 带一个进行中的 ACME 挑战，确认挑战 location 也能通过真实 syapp -t
+	// 带一个进行中的 ACME 挑战，确认挑战 location 也能通过真实 syedge -t
 	tok := "abcDEF0123456789_-tokenXYZ"
 	in.AcmeChallenges = []AcmeChallenge{{Token: tok, KeyAuth: tok + ".thumbprintABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"}}
-	// 三个插入点的自定义片段（12.7）也要通过真实 syapp -t
+	// 三个插入点的自定义片段（12.7）也要通过真实 syedge -t
 	in.HTTPSnippets = []NamedSnippet{{Name: "tuning", Text: `gzip_comp_level 5; gzip_types text/css application/json;
 limit_req_zone $binary_remote_addr zone=api_rl:10m rate=10r/s;
 map $http_x_env $env_tag { default prod; ~^test test; }`}}
@@ -177,9 +177,9 @@ if ($request_method = TRACE) { return 405; }`
 			in.Sites[0].Routes[i].Snippet = `limit_req zone=api_rl burst=20 nodelay; proxy_read_timeout 300s; proxy_set_header X-Tenant "a b";`
 		}
 	}
-	// 静态资源包路由也要通过真实 syapp -t
+	// 静态资源包路由也要通过真实 syedge -t
 	in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>x</h1>"), "css/a.css": []byte("a{}")}
-	// 四层代理（含 SNI 分流与 UDP）也要通过真实 syapp -t
+	// 四层代理（含 SNI 分流与 UDP）也要通过真实 syedge -t
 	in.Streams = []StreamProxy{
 		{Name: "mysql", Listen: 3306, Servers: []UpstreamServer{{Addr: "10.0.1.21:3306"}}, Algorithm: "least_conn", ProxyProtocol: true},
 		{Name: "tls-sni", Listen: 8443, Servers: []UpstreamServer{{Addr: "10.0.1.22:443"}},
@@ -194,14 +194,14 @@ if ($request_method = TRACE) { return 405; }`
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	// 测试环境不一定有 syapp 用户和日志目录：用 -g 覆盖 user 之外的项不可行，
+	// 测试环境不一定有 syedge 用户和日志目录：用 -g 覆盖 user 之外的项不可行，
 	// 因此只在 root 下运行完整校验。
 	if os.Geteuid() != 0 {
-		t.Skip("syapp -t needs root to check user and log paths")
+		t.Skip("syedge -t needs root to check user and log paths")
 	}
-	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput()
+	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
 	if err != nil {
-		t.Fatalf("syapp -t failed: %v\n%s", err, out)
+		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 	if _, err := b.TarGz(); err != nil {
 		t.Fatal(err)

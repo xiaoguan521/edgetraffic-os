@@ -34,7 +34,7 @@ func TestRulesRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(plain.Files["syapp.conf"]), "etos_not_acme") || plain.Files["conf.d/00-ipsets.conf"] != nil {
+	if strings.Contains(string(plain.Files["syedge.conf"]), "etos_not_acme") || plain.Files["conf.d/00-ipsets.conf"] != nil {
 		t.Fatal("rule scaffolding rendered without rules")
 	}
 
@@ -64,14 +64,14 @@ func TestRulesRender(t *testing.T) {
 			t.Errorf("site conf lacks %q", want)
 		}
 	}
-	if !strings.Contains(string(b.Files["syapp.conf"]), "$etos_not_acme") {
+	if !strings.Contains(string(b.Files["syedge.conf"]), "$etos_not_acme") {
 		t.Error("ACME exemption missing")
 	}
 	sets := string(b.Files["conf.d/00-ipsets.conf"])
 	if !strings.Contains(sets, "geo  $etos_set_cn {") || strings.Contains(sets, "unused") {
 		t.Errorf("ip sets:\n%s", sets)
 	}
-	if strings.Contains(string(b.Files["syapp.conf"]), "load_module") {
+	if strings.Contains(string(b.Files["syedge.conf"]), "load_module") {
 		t.Error("native rules must not load Lua")
 	}
 }
@@ -139,27 +139,27 @@ func TestRulesValidation(t *testing.T) {
 	}
 }
 
-// 规则（含刻意构造的特殊字符）必须通过真实 syapp -t：证明转义后的配置语法正确、没有注入。
-func TestRulesSyappSyntax(t *testing.T) {
-	bin := os.Getenv("SYAPP_BIN")
+// 规则（含刻意构造的特殊字符）必须通过真实 syedge -t：证明转义后的配置语法正确、没有注入。
+func TestRulesSyedgeSyntax(t *testing.T) {
+	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syapp/sbin/syapp"
+		bin = "/opt/syedge/sbin/syedge"
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 {
 		t.Skip("needs root")
 	}
 	in := rulesInput(t)
-	if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
+	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
 		in.MimeTypes = mt
 	}
 	out, _ := exec.Command(bin, "-V").CombinedOutput()
 	if strings.Contains(string(out), "http_auth_request_module") {
 		in.Sites[1].Rules = []Rule{{Name: "sso", Action: RuleAction{Type: "auth_request", Auth: &AuthAction{Upstream: "api", Path: "/auth/verify"}}}}
 	} else if os.Getenv("CI") != "" {
-		t.Fatal("CI syapp must be built with auth_request")
+		t.Fatal("CI syedge must be built with auth_request")
 	}
 	b, err := Render(in)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestRulesSyappSyntax(t *testing.T) {
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput(); err != nil {
-		t.Fatalf("syapp -t failed: %v\n%s", err, out)
+	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 }

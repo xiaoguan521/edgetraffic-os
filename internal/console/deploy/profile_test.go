@@ -61,8 +61,8 @@ func TestGroupProfileFeedsRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	main := string(b.Files["syapp.conf"])
-	if !strings.Contains(main, "pid   /run/syapp-blue/syapp.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
+	main := string(b.Files["syedge.conf"])
+	if !strings.Contains(main, "pid   /run/syedge-blue/syedge.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
 		t.Fatalf("preview not rendered with the group profile:\n%s", main)
 	}
 }
@@ -175,6 +175,14 @@ func TestEnrollHostCheck(t *testing.T) {
 	if err := d.CheckEnrollHost(def2.ID, "", 0); err != nil {
 		t.Fatalf("empty host key: %v", err)
 	}
+	// 吊销后在同一台机器上重新添加（演示手册的“吊销节点后重新添加”）：已吊销的节点不再占用这台主机
+	q := d.q()
+	if _, err := q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).UpdateSimple(q.Node.Status.Value("revoked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CheckEnrollHost(def2.ID, "host-b", 0); err != nil {
+		t.Fatalf("re-adding a node after its old identity was revoked: %v", err)
+	}
 }
 
 // agent 上报的本机实例必须与节点组档案一致；旧版 agent（不上报）只能加入默认档案的组。
@@ -200,7 +208,7 @@ func TestCheckInstance(t *testing.T) {
 	}
 	wrong := blue
 	wrong.HTTPSPort = 28443
-	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "syapp-instance add") {
+	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) || !strings.Contains(err.Error(), "syedge-instance add") {
 		t.Fatalf("port mismatch: %v", err)
 	}
 	if err := d.CheckInstance(def.ID, &blue); !errors.Is(err, ErrInstanceMismatch) {

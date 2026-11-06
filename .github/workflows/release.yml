@@ -5,12 +5,12 @@
 #   手动触发       ：同推送分支
 #
 # 产物
-#   控制台包  edgetraffic-os-console-<ver>-{linux,darwin}-{amd64,arm64}.tar.gz、-windows-{amd64,arm64}.zip
-#   节点包    edgetraffic-os-node-<ver>-linux-{amd64,arm64}.tar.gz（syapp + agent + wrapper + install.sh）
-#   软件包    syapp / syapp-agent / syapp-console 的 RPM 与 DEB（amd64 / arm64），在 9 个发行版上安装冒烟
+#   控制台包  syedge-console-<ver>-{linux,darwin}-{amd64,arm64}.tar.gz、-windows-{amd64,arm64}.zip
+#   节点包    syedge-node-<ver>-linux-{amd64,arm64}.tar.gz（syedge + agent + wrapper + install.sh）
+#   软件包    syedge / syedge-agent / syedge-console 的 RPM 与 DEB（amd64 / arm64），在 9 个发行版上安装冒烟
 #   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}，linux/amd64 + linux/arm64
 #
-# syapp 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（manylinux2014 容器，glibc 2.17，OpenSSL / PCRE2 / zlib 静态链接），不用 QEMU；
+# syedge 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（manylinux2014 容器，glibc 2.17，OpenSSL / PCRE2 / zlib 静态链接），不用 QEMU；
 # Go 程序 CGO_ENABLED=0 交叉编译。产物直接上传到 Release（不占用 Actions artifact 存储）。
 # 发布构建绝不注入 CI 临时授权公钥；冒烟测试用的控制台单独构建，不进入任何发布物。
 name: release
@@ -86,7 +86,7 @@ jobs:
             # 正式版先建草稿，资产与校验和全部上传后再发布
             gh release view "$RELEASE" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
               gh release create "$RELEASE" -R "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
-                --notes-file docs/release-assets.md --title "EdgeTraffic OS $VERSION"
+                --notes-file docs/release-assets.md --title "SyEdge $VERSION"
           else
             # 滚动预发布：每次推送重建，始终指向分支最新提交
             gh release delete "$RELEASE" -R "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || true
@@ -129,41 +129,41 @@ jobs:
       - name: build deps
         run: sudo apt-get update && sudo apt-get install -y zip
 
-      - name: build syapp (static, glibc 2.17)
-        run: scripts/release/build-syapp-static.sh dist/syapp
+      - name: build syedge (static, glibc 2.17)
+        run: scripts/release/build-syedge-static.sh dist/syedge
       # 国密变体（铜锁 NTLS）只在正式标签构建，作为升级包发布：厂商离线 sign-package -variant gmssl 签名后导入控制台版本库
-      - name: build GM syapp (Tongsuo, static, glibc 2.17)
+      - name: build GM syedge (Tongsuo, static, glibc 2.17)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          TLS_LIB=tongsuo scripts/release/build-syapp-static.sh dist/syapp-gm
-          mkdir -p "$OUT" && cp dist/syapp-gm/syapp-*-gmssl-*.tar.gz "$OUT"/
-      # syapp-lua 附加包（P10）：同一个包适配标准版与国密版，只在正式标签构建；离线 sign-package -name syapp-lua -variant lua 签名
-      - name: build syapp-lua add-on (static, glibc 2.17)
+          TLS_LIB=tongsuo scripts/release/build-syedge-static.sh dist/syedge-gm
+          mkdir -p "$OUT" && cp dist/syedge-gm/syedge-*-gmssl-*.tar.gz "$OUT"/
+      # syedge-lua 附加包（P10）：同一个包适配标准版与国密版，只在正式标签构建；离线 sign-package -name syedge-lua -variant lua 签名
+      - name: build syedge-lua add-on (static, glibc 2.17)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          LUA=1 scripts/release/build-syapp-static.sh dist/syapp-lua
-          mkdir -p "$OUT" && cp dist/syapp-lua/syapp-lua-*.tar.gz "$OUT"/
-      # 发布构建总是重新编译 syapp（从不读取缓存）；main 上把这次的新产物写入缓存，
+          LUA=1 scripts/release/build-syedge-static.sh dist/syedge-lua
+          mkdir -p "$OUT" && cp dist/syedge-lua/syedge-lua-*.tar.gz "$OUT"/
+      # 发布构建总是重新编译 syedge（从不读取缓存）；main 上把这次的新产物写入缓存，
       # 供拉取请求的 packages 工作流复用（PR 只能读取自己分支与 main 的缓存）。
-      - name: save static syapp for pull requests
+      - name: save static syedge for pull requests
         if: github.ref == 'refs/heads/main'
         continue-on-error: true   # 同一 key 已存在（例如重跑）时保存会失败，不影响发布
         uses: actions/cache/save@v4
         with:
-          path: dist/syapp
-          key: syapp-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syapp-static.sh') }}
+          path: dist/syedge
+          key: syedge-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh') }}
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: package
         run: |
           trap 'echo "::error title=package::exit $? at: $BASH_COMMAND"' ERR
           export BUILD_DATE=$(date -u +%F) COMMIT=$(git rev-parse --short HEAD)
-          scripts/release/package.sh node ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          scripts/release/package.sh node ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
           # 免 root 安装的节点包（user 模式，设计 0001 第 6 节）
-          scripts/release/package.sh node-user ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          scripts/release/package.sh node-user ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
           # 统一升级用的升级包（未签名，厂商离线 sign-package 后导入控制台版本库）：标准版数据面（版本号即数据面版本）与 agent
-          dp=$(basename dist/syapp/syapp-*.tar.gz); dp=${dp#syapp-}; dp=${dp%-*.tar.gz}
-          SYAPP_UPGRADE_VERSION=$dp scripts/release/package.sh syapp-upgrade ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          dp=$(basename dist/syedge/syedge-*.tar.gz); dp=${dp#syedge-}; dp=${dp%-*.tar.gz}
+          SYEDGE_UPGRADE_VERSION=$dp scripts/release/package.sh syedge-upgrade ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
           scripts/release/package.sh agent-upgrade ${{ matrix.arch }}
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done
@@ -174,7 +174,7 @@ jobs:
             for t in windows/amd64 darwin/arm64; do scripts/release/package.sh vendor-tools ${t%/*} ${t#*/}; done
           fi
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
-          PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syapp/syapp-*.tar.gz
+          PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
           ls -l "$OUT"
       - name: smoke test rpm / deb on 9 distributions + standalone (full, parallel)
         env:
@@ -184,15 +184,15 @@ jobs:
       - name: smoke test node package (systemd install + enroll + publish)
         run: |
           trap 'echo "::error title=smoke::exit $? at: $BASH_COMMAND"' ERR
-          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           # 仅本测试使用：控制台与 agent 注入临时公钥（agent 也会校验授权），不进入任何发布物。
-          # 节点包其余内容（syapp、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
+          # 节点包其余内容（syedge、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
           ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
-          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syapp-console
-          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz   # 不能用 node-*：会同时匹配 node-user
-          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syapp-agent ./cmd/syapp-agent
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syedge-console
+          mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz   # 不能用 node-*：会同时匹配 node-user
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/syedge-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syedge-agent ./cmd/syedge-agent
           tar -C /tmp/smoke-pkg -czf /tmp/smoke-node.tar.gz .
           LIC_TOOL=/tmp/lic LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral \
             scripts/release/smoke-node.sh /tmp/smoke-node.tar.gz /tmp/smoke-console
@@ -200,32 +200,32 @@ jobs:
         run: |
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           d=$(mktemp -d)
-          tar -C "$d" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          tar -C "$d" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          for b in "$d"/*/rootfs/usr/bin/syapp-agent "$d"/*/syapp-console; do
+          tar -C "$d" -xzf "$OUT"/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          tar -C "$d" -xzf "$OUT"/syedge-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          for b in "$d"/*/rootfs/usr/bin/syedge-agent "$d"/*/syedge-console; do
             if strings "$b" | grep -qF "$pub"; then echo "::error::$(basename "$b") contains the CI license key"; exit 1; fi
           done
-          "$d"/edgetraffic-os-console-*/syapp-console -version | tee /dev/stderr | grep -q "$VERSION"
-          "$d"/edgetraffic-os-node-*/rootfs/usr/bin/syapp-agent version | grep -q "$VERSION"
-          # 正式版本：控制台不含演示签名公钥，也不带演示用的 syapp-license-server
+          "$d"/syedge-console-*/syedge-console -version | tee /dev/stderr | grep -q "$VERSION"
+          "$d"/syedge-node-*/rootfs/usr/bin/syedge-agent version | grep -q "$VERSION"
+          # 正式版本：控制台不含演示签名公钥，也不带演示用的 syedge-license-server
           if [[ "$GOTAGS" == *release* ]]; then
-            if strings "$d"/edgetraffic-os-console-*/syapp-console | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
+            if strings "$d"/syedge-console-*/syedge-console | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
               echo "::error::release console contains the demo signing key"; exit 1
             fi
-            if ls "$d"/edgetraffic-os-console-*/syapp-license-server >/dev/null 2>&1; then
-              echo "::error::release console package ships syapp-license-server"; exit 1
+            if ls "$d"/syedge-console-*/syedge-license-server >/dev/null 2>&1; then
+              echo "::error::release console package ships syedge-license-server"; exit 1
             fi
           fi
           # 离线签名工具不含网络代码
-          vt=$(mktemp -d); tar -C "$vt" -xzf "$OUT"/edgetraffic-os-vendor-tools-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          "$vt"/*/syapp-license-signer version | grep -q "$VERSION"
+          vt=$(mktemp -d); tar -C "$vt" -xzf "$OUT"/syedge-vendor-tools-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          "$vt"/*/syedge-license-signer version | grep -q "$VERSION"
           # 授权后台：能启动、内嵌 Web；正式版本不含演示签名公钥
-          lp=$(mktemp -d); tar -C "$lp" -xzf "$OUT"/edgetraffic-os-license-portal-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          "$lp"/*/syapp-license-server version | grep -q "$VERSION"
-          if [[ "$GOTAGS" == *release* ]] && strings "$lp"/*/syapp-license-server | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
+          lp=$(mktemp -d); tar -C "$lp" -xzf "$OUT"/syedge-license-portal-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          "$lp"/*/syedge-license-server version | grep -q "$VERSION"
+          if [[ "$GOTAGS" == *release* ]] && strings "$lp"/*/syedge-license-server | grep -qF "2s66YtpjpEGRSzQU7Sus8hvAbDXp6yAQjOI3y1AeJlU="; then
             echo "::error::release license portal contains the demo signing key"; exit 1
           fi
-          "$lp"/*/syapp-license-server serve -listen 127.0.0.1:18600 -data "$lp/data" & lpid=$!
+          "$lp"/*/syedge-license-server serve -listen 127.0.0.1:18600 -data "$lp/data" & lpid=$!
           for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18600/api/v1/setup/status >/dev/null 2>&1 && break; sleep 0.5; done
           curl -fsS http://127.0.0.1:18600/api/v1/setup/status | grep -q '"initialized":false'
           curl -fsS http://127.0.0.1:18600/ | grep -q '<div id="app">'
@@ -251,10 +251,10 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           S=$(mktemp -d)
           mkdir -p "$S/console" "$S/node" "$S/backend"
-          tar -C "$S" -xzf "$OUT"/edgetraffic-os-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          mv "$S"/edgetraffic-os-console-*/syapp-* "$S/console/"   # 开发构建另含演示用的 syapp-license-server
-          tar -C "$S" -xzf "$OUT"/edgetraffic-os-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
-          mv "$S"/edgetraffic-os-node-*/rootfs "$S/node/rootfs"
+          tar -C "$S" -xzf "$OUT"/syedge-console-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          mv "$S"/syedge-console-*/syedge-* "$S/console/"   # 开发构建另含演示用的 syedge-license-server
+          tar -C "$S" -xzf "$OUT"/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          mv "$S"/syedge-node-*/rootfs "$S/node/rootfs"
           cp demo/node/entrypoint.sh demo/node/systemctl "$S/node/"
           cp "$OUT"/backend-linux-${{ matrix.arch }}/demo-backend "$S/backend/"
           cp docs/NOTICE "$S/NOTICE"
@@ -268,7 +268,7 @@ jobs:
             docker build -q -f deploy/docker/$img.Dockerfile "${labels[@]}" -t "$ref" "$S"
             docker push -q "$ref"
           done
-          docker run --rm --entrypoint syapp "$REGISTRY/node:$TAG-${{ matrix.arch }}" -v
+          docker run --rm --entrypoint syedge "$REGISTRY/node:$TAG-${{ matrix.arch }}" -v
 
   publish:
     needs: [meta, build]
@@ -291,15 +291,15 @@ jobs:
       - name: checksums and publish release
         run: |
           d=$(mktemp -d); cd "$d"
-          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'edgetraffic-os-*' -p 'syapp*'
-          sha256sum edgetraffic-os-* syapp* | tee SHA256SUMS
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'syedge*'
+          sha256sum syedge* | tee SHA256SUMS
           gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber SHA256SUMS
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             gh release edit "$RELEASE" -R "$GITHUB_REPOSITORY" --draft=false --latest=${{ needs.meta.outputs.stable }} \
               --prerelease=$([[ "${{ needs.meta.outputs.stable }}" == true ]] && echo false || echo true)
           fi
           {
-            echo "### EdgeTraffic OS $VERSION"
+            echo "### SyEdge $VERSION"
             echo
             echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE"
             echo

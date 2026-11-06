@@ -39,15 +39,15 @@ func chownR(t *testing.T, dir string, uid, gid int) {
 }
 
 // D5：以 root 运行的 master（升级前启动）在持续请求下无中断地切换为非 root；新 master 只有 CAP_NET_BIND_SERVICE，
-// 之后仍可绑定特权端口（reload 新增一个特权端口的 listen）。需要 root、真实的数据面（SYAPP_BIN）与 syapp 用户。
-func TestHandoverRealSyapp(t *testing.T) {
-	src := os.Getenv("SYAPP_BIN")
+// 之后仍可绑定特权端口（reload 新增一个特权端口的 listen）。需要 root、真实的数据面（SYEDGE_BIN）与 syedge 用户。
+func TestHandoverRealSyedge(t *testing.T) {
+	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
 		src = DataplaneBin
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 || runtime.GOOS != "linux" {
 		t.Skip("needs root on linux")
@@ -80,10 +80,10 @@ func TestHandoverRealSyapp(t *testing.T) {
 			break
 		}
 	}
-	conf := filepath.Join(dir, "conf/syapp.conf")
+	conf := filepath.Join(dir, "conf/syedge.conf")
 	writeConf := func(extra string) {
 		_ = os.WriteFile(conf, []byte(fmt.Sprintf(`worker_processes 2;
-pid %[1]s/run/syapp.pid;
+pid %[1]s/run/syedge.pid;
 error_log %[1]s/logs/error.log;
 events { worker_connections 64; }
 http {
@@ -98,14 +98,14 @@ http {
 `, dir, port, extra)), 0o644)
 	}
 	writeConf("")
-	p := Paths{Bin: filepath.Join(dir, "sbin/syapp"), Versions: filepath.Join(dir, "versions"),
-		PidFile: filepath.Join(dir, "run/syapp.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
+	p := Paths{Bin: filepath.Join(dir, "sbin/syedge"), Versions: filepath.Join(dir, "versions"),
+		PidFile: filepath.Join(dir, "run/syedge.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
 	if err := os.WriteFile(p.Bin, bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// 旧方式：master 以 root 启动
 	if out, err := exec.Command(p.Bin, "-p", dir, "-c", conf).CombinedOutput(); err != nil {
-		t.Fatalf("start syapp: %v %s", err, out)
+		t.Fatalf("start syedge: %v %s", err, out)
 	}
 	t.Cleanup(func() {
 		for _, f := range []string{p.PidFile + ".oldbin", p.PidFile} {

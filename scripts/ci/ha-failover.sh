@@ -6,7 +6,7 @@
 #   3. 正常停止（SIGTERM）。
 # 接管 = 备控制台 /healthz 返回 leader 且 API 可登录。keepalived 按 docs/ha.md 的参数（interval 2、fall 2、rise 1）
 # 漂移 VIP 最多再加 4 秒，所以门槛是接管 ≤ 26 秒。
-# 用法（root）：scripts/ci/ha-failover.sh <syapp-console> <syapp-license-server> <PostgreSQL 主机端口，如 127.0.0.1:5432> <用户:密码>
+# 用法（root）：scripts/ci/ha-failover.sh <syedge-console> <syedge-license-server> <PostgreSQL 主机端口，如 127.0.0.1:5432> <用户:密码>
 set -uo pipefail
 CONSOLE=$(realpath "$1"); LIC=$(realpath "$2"); PGHP=$3; PGUP=$4
 : "${LIC_KEY:?}" "${LIC_KID:?}"

@@ -125,7 +125,7 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 		reply(agentv1.CommandResult_REJECTED, "write package failed", "")
 		return
 	}
-	// 节点装有 syapp-lua 时，控制台同时下发目标版本附加包的签名：一起投放，由 wrapper 验签后与二进制一起切换
+	// 节点装有 syedge-lua 时，控制台同时下发目标版本附加包的签名：一起投放，由 wrapper 验签后与二进制一起切换
 	if len(u.LuaSignatureJson) > 0 {
 		ls, err := pkgsig.Parse(u.LuaSignatureJson)
 		if err != nil || ls.Name != brand.Lua() || ls.Version != u.Version || ls.Arch != runtime.GOARCH || ls.Variant != "lua" {
@@ -167,7 +167,7 @@ func (a *Agent) handleUpgrade(ctx context.Context, client agentv1.AgentGatewayCl
 	reply(agentv1.CommandResult_APPLIED, "new version is serving; waiting for commit", out)
 }
 
-// handleAgentUpgrade 下载并校验 agent 升级包，安装后退出，由 systemd 重启到新版本（syapp 不受影响）。
+// handleAgentUpgrade 下载并校验 agent 升级包，安装后退出，由 systemd 重启到新版本（syedge 不受影响）。
 func (a *Agent) handleAgentUpgrade(ctx context.Context, client agentv1.AgentGatewayClient, u *agentv1.UpgradeAgent, reply func(agentv1.CommandResult_Status, string, string)) {
 	if !upgradeVersionRe.MatchString(u.Version) {
 		reply(agentv1.CommandResult_REJECTED, "invalid version", "")

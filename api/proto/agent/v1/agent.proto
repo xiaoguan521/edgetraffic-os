@@ -60,14 +60,14 @@ message AgentMessage {
 
 message Hello {
   string agent_version = 1;
-  string syapp_version_output = 2; // syapp -V 原始输出
+  string syapp_version_output = 2; // syedge -V 原始输出
   string syapp_sha256 = 3;
   string applied_revision_id = 4;
   string machine_fingerprint = 5;
-  string lua_addon = 6;              // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
+  string lua_addon = 6;              // 已安装的 syedge-lua 附加包：<syedge 版本>/<基础变体>（未安装为空，P10）
   InstanceInfo instance = 7;         // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
   string brand = 8;                  // 同 EnrollRequest.brand
-  string running_version = 9;        // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syapp -V 不同）
+  string running_version = 9;        // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syedge -V 不同）
 }
 
 message Heartbeat {
@@ -100,7 +100,7 @@ message CommandResult {
   enum Status {
     STATUS_UNSPECIFIED = 0;
     APPLIED = 1;
-    INVALID = 2;        // syapp -t 失败
+    INVALID = 2;        // syedge -t 失败
     CONFLICT = 3;       // parent_revision_id 不符
     ROLLED_BACK = 4;
     DEGRADED = 5;       // 回滚也失败
@@ -163,7 +163,7 @@ message Signal {
 message LicenseUpdate { string raw = 1; }
 
 // 漂移 diff 上报（规格书 12.7 路径 B，CLAUDE.md“agent 与安全”）：agent 发现当前版本目录被手工改动时主动上报。
-// 只限受管版本目录 /opt/syapp/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
+// 只限受管版本目录 /opt/syedge/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
 // 协议中没有任何“读取文件”的请求：控制台不能让 agent 读取指定路径。
 message DriftReport {
   string revision_id = 1;
@@ -191,10 +191,10 @@ message UpgradeDataplane {
   bytes signature_json = 4;           // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
   repeated PostCheck post_checks = 5;
   int32 timeout_seconds = 6;
-  bytes lua_signature_json = 7;       // 节点装有 syapp-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syapp 包一起校验、一起切换
+  bytes lua_signature_json = 7;       // 节点装有 syedge-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syedge 包一起校验、一起切换
 }
 
-// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
+// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syedge）。
 message UpgradeAgent {
   string version = 1;
   string package_sha256 = 2;
@@ -202,7 +202,7 @@ message UpgradeAgent {
 }
 
 message FetchPackageRequest {
-  string name = 1;      // syapp | syapp-agent | syapp-lua
+  string name = 1;      // syedge | syedge-agent | syedge-lua
   string version = 2;
   string arch = 3;      // amd64 | arm64
   string variant = 4;   // standard | gmssl | lua

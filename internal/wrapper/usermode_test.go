@@ -16,9 +16,9 @@ func TestBuildUserMode(t *testing.T) {
 		path string
 		args []string
 	}{
-		{[]string{"test", "r000123"}, root + "/sbin/syapp", []string{"-t", "-q", "-e", root + "/logs/error.log", "-c", root + "/conf/releases/r000123/syapp.conf"}},
-		{[]string{"reload"}, root + "/sbin/syapp", []string{"-e", root + "/logs/error.log", "-c", root + "/conf/current/syapp.conf", "-s", "reload"}},
-		{[]string{"--instance", "blue", "quit"}, root + "/sbin/syapp", []string{"-e", root + "/instances/blue/logs/error.log", "-c", root + "/instances/blue/conf/current/syapp.conf", "-s", "quit"}},
+		{[]string{"test", "r000123"}, root + "/sbin/syedge", []string{"-t", "-q", "-e", root + "/logs/error.log", "-c", root + "/conf/releases/r000123/syedge.conf"}},
+		{[]string{"reload"}, root + "/sbin/syedge", []string{"-e", root + "/logs/error.log", "-c", root + "/conf/current/syedge.conf", "-s", "reload"}},
+		{[]string{"--instance", "blue", "quit"}, root + "/sbin/syedge", []string{"-e", root + "/instances/blue/logs/error.log", "-c", root + "/instances/blue/conf/current/syedge.conf", "-s", "quit"}},
 	} {
 		cmd, err := BuildAt(root, c.argv)
 		if err != nil {
@@ -39,7 +39,7 @@ func TestBuildUserMode(t *testing.T) {
 		t.Errorf("system reload = %q", cmd.Args)
 	}
 	p, err := DefaultPathsAt(root, "blue")
-	if err != nil || p.Bin != root+"/sbin/syapp" || p.PidFile != root+"/instances/blue/run/syapp.pid" || p.ErrorLog != root+"/instances/blue/logs/error.log" {
+	if err != nil || p.Bin != root+"/sbin/syedge" || p.PidFile != root+"/instances/blue/run/syedge.pid" || p.ErrorLog != root+"/instances/blue/logs/error.log" {
 		t.Fatalf("user upgrade paths = %+v %v", p, err)
 	}
 	if sp := DefaultPathsForInstance(""); sp.ErrorLog != "" {
@@ -48,13 +48,13 @@ func TestBuildUserMode(t *testing.T) {
 }
 
 func TestRootFromExecutable(t *testing.T) {
-	if r, err := RootFromExecutable("/usr/libexec/syapp/syapp-wrapper"); err != nil || r != "" {
+	if r, err := RootFromExecutable("/usr/libexec/syedge/syedge-wrapper"); err != nil || r != "" {
 		t.Fatalf("system path: %q %v", r, err)
 	}
-	if r, err := RootFromExecutable("/home/ops/edge/bin/syapp-wrapper"); err != nil || r != "/home/ops/edge" {
+	if r, err := RootFromExecutable("/home/ops/edge/bin/syedge-wrapper"); err != nil || r != "/home/ops/edge" {
 		t.Fatalf("user path: %q %v", r, err)
 	}
-	for _, bad := range []string{"/tmp/syapp-wrapper", "/home/ops/edge/sbin/syapp-wrapper", "/home/ops/edge/bin/other", "/bin/syapp-wrapper"} {
+	for _, bad := range []string{"/tmp/syedge-wrapper", "/home/ops/edge/sbin/syedge-wrapper", "/home/ops/edge/bin/other", "/bin/syedge-wrapper"} {
 		if _, err := RootFromExecutable(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

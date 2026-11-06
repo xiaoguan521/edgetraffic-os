@@ -28,7 +28,7 @@ func makePackage(t *testing.T, bin []byte, extra map[string]string) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	_ = tw.WriteHeader(&tar.Header{Name: "sbin/syapp", Mode: 0o755, Size: int64(len(bin)), Typeflag: tar.TypeReg})
+	_ = tw.WriteHeader(&tar.Header{Name: "sbin/syedge", Mode: 0o755, Size: int64(len(bin)), Typeflag: tar.TypeReg})
 	_, _ = tw.Write(bin)
 	for n, b := range extra {
 		_ = tw.WriteHeader(&tar.Header{Name: n, Mode: 0o644, Size: int64(len(b)), Typeflag: tar.TypeReg})
@@ -41,12 +41,12 @@ func makePackage(t *testing.T, bin []byte, extra map[string]string) []byte {
 
 func drop(t *testing.T, p Paths, priv ed25519.PrivateKey, ver string, pkg []byte) {
 	t.Helper()
-	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syapp", ver, p.Arch, "standard", pkg)
+	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", ver, p.Arch, "standard", pkg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sb, _ := json.Marshal(sig)
-	base := filepath.Join(p.Incoming, "syapp-"+ver+".tar.gz")
+	base := filepath.Join(p.Incoming, "syedge-"+ver+".tar.gz")
 	if err := os.WriteFile(base, pkg, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -64,15 +64,15 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// 用真实 syapp 演练热升级：升级、提交、回退、中止，以及坏包被拒绝。需要 root 与已安装的 syapp。
-func TestHotUpgradeWithRealSyapp(t *testing.T) {
-	src := os.Getenv("SYAPP_BIN")
+// 用真实 syedge 演练热升级：升级、提交、回退、中止，以及坏包被拒绝。需要 root 与已安装的 syedge。
+func TestHotUpgradeWithRealSyedge(t *testing.T) {
+	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
 		src = DataplaneBin
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 || runtime.GOOS != "linux" {
 		t.Skip("hot upgrade test needs root on linux")
@@ -87,10 +87,10 @@ func TestHotUpgradeWithRealSyapp(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(dir, "html/index.html"), []byte("ok\n"), 0o644)
 	port := freePort(t)
-	conf := filepath.Join(dir, "conf/syapp.conf")
+	conf := filepath.Join(dir, "conf/syedge.conf")
 	_ = os.WriteFile(conf, []byte(fmt.Sprintf(`user nobody nogroup;
 worker_processes 2;
-pid %[1]s/run/syapp.pid;
+pid %[1]s/run/syedge.pid;
 error_log %[1]s/logs/error.log;
 events { worker_connections 64; }
 http {
@@ -103,8 +103,8 @@ http {
     server { listen 127.0.0.1:%[2]d; location / { root %[1]s/html; } }
 }
 `, dir, port)), 0o644)
-	p := Paths{Bin: filepath.Join(dir, "sbin/syapp"), Versions: filepath.Join(dir, "versions"), Incoming: filepath.Join(dir, "incoming"),
-		PidFile: filepath.Join(dir, "run/syapp.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
+	p := Paths{Bin: filepath.Join(dir, "sbin/syedge"), Versions: filepath.Join(dir, "versions"), Incoming: filepath.Join(dir, "incoming"),
+		PidFile: filepath.Join(dir, "run/syedge.pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second}
 	if err := os.WriteFile(p.Bin, bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ http {
 
 	// 启动 master（与 systemd 相同：通过 Bin 路径启动，热升级时 master 重新执行同一路径）
 	if out, err := exec.Command(p.Bin, "-p", dir, "-c", conf).CombinedOutput(); err != nil {
-		t.Fatalf("start syapp: %v %s", err, out)
+		t.Fatalf("start syedge: %v %s", err, out)
 	}
 	t.Cleanup(func() {
 		for _, f := range []string{p.PidFile + ".oldbin", p.PidFile} {
@@ -138,7 +138,7 @@ http {
 	}
 	if !waitFor(5*time.Second, func() bool { return get() == nil }) {
 		lg, _ := os.ReadFile(filepath.Join(dir, "logs/error.log"))
-		t.Fatalf("syapp did not start serving: %v\n%s", get(), lg)
+		t.Fatalf("syedge did not start serving: %v\n%s", get(), lg)
 	}
 	pid0, _ := readPid(p.PidFile)
 
@@ -178,7 +178,7 @@ http {
 	if err := get(); err != nil {
 		t.Fatalf("serving after start: %v", err)
 	}
-	if link, _ := os.Readlink(p.Bin); link != filepath.Join(p.Versions, "9.1.0/sbin/syapp") {
+	if link, _ := os.Readlink(p.Bin); link != filepath.Join(p.Versions, "9.1.0/sbin/syedge") {
 		t.Fatalf("link = %q", link)
 	}
 	// 进行中再次升级被拒绝
@@ -223,7 +223,7 @@ http {
 	if pid, _ := readPid(p.PidFile); pid != pid1 || alive(pid2) && isMaster(pid2) {
 		t.Fatalf("after abort pid=%d want %d (new master %d alive=%v)", pid, pid1, pid2, alive(pid2))
 	}
-	if link, _ := os.Readlink(p.Bin); link != filepath.Join(p.Versions, "9.1.0/sbin/syapp") {
+	if link, _ := os.Readlink(p.Bin); link != filepath.Join(p.Versions, "9.1.0/sbin/syedge") {
 		t.Fatalf("link after abort = %q", link)
 	}
 	if !waitFor(5*time.Second, func() bool { return get() == nil }) {

@@ -18,7 +18,7 @@
 
 1. 准备 PostgreSQL（建议自身做主从或使用托管服务），两台控制台的 `-db` 指向同一个 DSN。
 2. 先启动第一台控制台，完成初始化并导入 License。高可用 License 请使用 `installation_only` 绑定：安装 ID 存在共用数据库中，主备相同；主机指纹各不相同。
-3. 从第一台的数据目录（默认 `/var/lib/syapp-console`）把 `pki/` 和 `secret.key` 复制到第二台的数据目录（权限 0700 / 0600）：
+3. 从第一台的数据目录（默认 `/var/lib/syedge-console`）把 `pki/` 和 `secret.key` 复制到第二台的数据目录（权限 0700 / 0600）：
    - `pki/` 里是节点 CA 和 Web CA。节点只信任这套 CA，主备不同，切换后节点将无法连接。
    - `secret.key` 是库中证书私钥、告警凭据等的加密密钥。
    - 控制台启动时会校验两者的指纹与库中一致；不一致会拒绝启动，并提示复制哪个文件。
@@ -69,7 +69,7 @@ vrrp_instance ETOS_CONSOLE {
 ```
 curl -sk https://<控制台A>:8443/healthz   # {"role":"leader","db":"ok",...}
 curl -sk https://<控制台B>:8443/healthz   # {"role":"standby",...}，HTTP 503
-systemctl stop syapp-console               # 在 A 上执行
+systemctl stop syedge-console               # 在 A 上执行
 curl -sk https://<控制台B>:8443/healthz   # 数秒内变为 leader
 ```
 

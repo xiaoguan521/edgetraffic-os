@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 控制台冒烟测试：启动真实的 syapp-console（-tls-auto），对指定数据库走一遍主要 API。
-# 用法：scripts/ci/console-smoke.sh <syapp-console> <syapp-license-server> [数据库 DSN，默认 SQLite]
+# 控制台冒烟测试：启动真实的 syedge-console（-tls-auto），对指定数据库走一遍主要 API。
+# 用法：scripts/ci/console-smoke.sh <syedge-console> <syedge-license-server> [数据库 DSN，默认 SQLite]
 # 控制台须是注入了 CI 临时公钥的测试构建；LIC_KEY / LIC_KID 指向对应私钥（与 demo-e2e 相同）。
 set -uo pipefail
 CONSOLE=$(realpath "$1"); LIC=$(realpath "$2"); DB=${3:-}
@@ -147,13 +147,13 @@ if [[ "$al" == *SECsmoke* ]]; then bad "接口返回了通道密钥"; else ok "�
 
 if [[ -n "${PKG_KEY:-}" ]]; then
   echo "== 数据面版本库（P8）"
-  mkdir -p "$W/pkg/sbin" && printf '#!/bin/sh\nexit 0\n' > "$W/pkg/sbin/syapp" && chmod 755 "$W/pkg/sbin/syapp" && echo 9.9.1 > "$W/pkg/VERSION"
-  tar -C "$W/pkg" -czf "$W/syapp-9.9.1-amd64.tar.gz" sbin/syapp VERSION
-  "$LIC" sign-package -key "$PKG_KEY" -kid etos-ci-pkg-ephemeral -in "$W/syapp-9.9.1-amd64.tar.gz" -version 9.9.1 -arch amd64 >/dev/null
+  mkdir -p "$W/pkg/sbin" && printf '#!/bin/sh\nexit 0\n' > "$W/pkg/sbin/syedge" && chmod 755 "$W/pkg/sbin/syedge" && echo 9.9.1 > "$W/pkg/VERSION"
+  tar -C "$W/pkg" -czf "$W/syedge-9.9.1-amd64.tar.gz" sbin/syedge VERSION
+  "$LIC" sign-package -key "$PKG_KEY" -kid etos-ci-pkg-ephemeral -in "$W/syedge-9.9.1-amd64.tar.gz" -version 9.9.1 -arch amd64 >/dev/null
   P=(curl -s --cacert "$W/data/pki/web-ca.crt" -b "$JAR" -H 'X-Requested-With: etos')
-  expect "导入签名升级包" "$("${P[@]}" -F "package=@$W/syapp-9.9.1-amd64.tar.gz" -F "signature=@$W/syapp-9.9.1-amd64.tar.gz.sig" "$B/packages")" '"version":"9.9.1"'
-  printf 'x' >> "$W/syapp-9.9.1-amd64.tar.gz"
-  expect "篡改的升级包被拒绝" "$("${P[@]}" -F "package=@$W/syapp-9.9.1-amd64.tar.gz" -F "signature=@$W/syapp-9.9.1-amd64.tar.gz.sig" "$B/packages")" "PACKAGE_REJECTED"
+  expect "导入签名升级包" "$("${P[@]}" -F "package=@$W/syedge-9.9.1-amd64.tar.gz" -F "signature=@$W/syedge-9.9.1-amd64.tar.gz.sig" "$B/packages")" '"version":"9.9.1"'
+  printf 'x' >> "$W/syedge-9.9.1-amd64.tar.gz"
+  expect "篡改的升级包被拒绝" "$("${P[@]}" -F "package=@$W/syedge-9.9.1-amd64.tar.gz" -F "signature=@$W/syedge-9.9.1-amd64.tar.gz.sig" "$B/packages")" "PACKAGE_REJECTED"
   expect "版本库列表" "$("${C[@]}" "$B/packages")" '"kid":"etos-ci-pkg-ephemeral"'
   expect "节点组没有节点时拒绝升级" "$("${C[@]}" -X POST "$B/node-groups/1/upgrade" -d '{"version":"9.9.1"}')" "没有节点"
 fi

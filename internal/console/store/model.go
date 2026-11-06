@@ -59,8 +59,8 @@ type Node struct {
 	SyappVersion    string     `json:"syapp_version"`
 	RunningVersion  string     `gorm:"size:32" json:"running_version"` // 本实例 worker 实际运行的版本（同机实例共用二进制时可能与 syapp_version 不同）
 	SyappSHA256     string     `json:"syapp_sha256"`
-	TLSLib          string     `gorm:"size:16" json:"tls_lib"`   // syapp -V 中的 TLS 库：openssl | tongsuo（国密变体）
-	LuaAddon        string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syapp-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）
+	TLSLib          string     `gorm:"size:16" json:"tls_lib"`   // syedge -V 中的 TLS 库：openssl | tongsuo（国密变体）
+	LuaAddon        string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syedge-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）
 	AppliedRevision string     `gorm:"size:16" json:"applied_revision"`
 	TreeHash        string     `json:"tree_hash"`
 	Drifted         bool       `json:"drifted"`
@@ -258,7 +258,7 @@ type NodeDrift struct {
 // DataplanePackage 是版本库中的一个厂商签名升级包（规格书 12.6）。导入时验签，包内容存库。
 type DataplanePackage struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
-	Name       string    `gorm:"uniqueIndex:idx_pkg;size:32" json:"name"` // syapp | syapp-agent
+	Name       string    `gorm:"uniqueIndex:idx_pkg;size:32" json:"name"` // syedge | syedge-agent
 	Version    string    `gorm:"uniqueIndex:idx_pkg;size:32" json:"version"`
 	Arch       string    `gorm:"uniqueIndex:idx_pkg;size:16" json:"arch"`
 	Variant    string    `gorm:"uniqueIndex:idx_pkg;size:16" json:"variant"`

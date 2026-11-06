@@ -36,7 +36,7 @@ jobs:
       - name: build
         run: make build
       - name: wrapper is static
-        run: file bin/syapp-wrapper | grep -q "statically linked"
+        run: file bin/syedge-wrapper | grep -q "statically linked"
 
   postgres:
     # 控制台在 PostgreSQL 上的测试：单元测试每个用例一个独立 schema；再用真实控制台对 SQLite 与 PostgreSQL 各跑一遍 API 冒烟（含 -tls-auto）
@@ -60,12 +60,12 @@ jobs:
         run: go test -mod=vendor -count=1 ./internal/console/...
       - name: console smoke (SQLite and PostgreSQL, HTTPS via -tls-auto)
         run: |
-          go build -mod=vendor -o /tmp/lic ./cmd/syapp-license-server
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           /tmp/lic keygen -kid etos-ci-ephemeral -out /tmp/keys > /tmp/keygen.txt
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
           pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub -X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syapp-console
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub -X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syedge-console
           export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral PKG_KEY=/tmp/keys/etos-ci-pkg-ephemeral.key
           scripts/ci/console-smoke.sh /tmp/console /tmp/lic
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE smoke'
@@ -79,7 +79,7 @@ jobs:
           git worktree add -q --detach /tmp/v010 "$V010"
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           (cd /tmp/v010 && CGO_ENABLED=0 go build -mod=vendor -o /tmp/old-console -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub" ./cmd/syapp-console \
-            && go build -mod=vendor -o /tmp/old-lic ./cmd/syapp-license-server)
+            && go build -mod=vendor -o /tmp/old-lic ./cmd/syapp-license-server)   # v0.1.0 时产品还叫 syapp
           export LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral OLD_LIC=/tmp/old-lic
           scripts/ci/upgrade-from-v010.sh /tmp/old-console /tmp/console /tmp/lic
           PGPASSWORD=pg psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE upgrade'
@@ -98,8 +98,8 @@ jobs:
       - name: firewall packet test
         run: |
           sudo apt-get install -y -qq nftables >/dev/null
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syapp-agent ./cmd/syapp-agent
-          sudo scripts/ci/firewall-netns.sh /tmp/syapp-agent
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-agent ./cmd/syedge-agent
+          sudo scripts/ci/firewall-netns.sh /tmp/syedge-agent
 
   brand:
     runs-on: ubuntu-latest
@@ -118,41 +118,41 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev
       - name: hpack-gen test
         run: go test ./dataplane/hpack-gen/
-      - name: build syapp (static dependencies, as released)
-        run: dataplane/build-syapp.sh -S -o dist
+      - name: build syedge (static dependencies, as released)
+        run: dataplane/build-syedge.sh -S -o dist
       - name: install and run golden acceptance
         run: |
           trap 'echo "::error title=dataplane step::exit $? at: $BASH_COMMAND"' ERR
-          sudo tar -C / -xzf dist/syapp-*.tar.gz
-          sudo useradd -r -s /usr/sbin/nologin syapp || true
-          R=/opt/syapp/conf/releases/r000001
-          sudo mkdir -p $R/certs /run/syapp /var/log/syapp /var/cache/syapp /srv/syapp/sites/example/current
+          sudo tar -C / -xzf dist/syedge-*.tar.gz
+          sudo useradd -r -s /usr/sbin/nologin syedge || true
+          R=/opt/syedge/conf/releases/r000001
+          sudo mkdir -p $R/certs /run/syedge /var/log/syedge /var/cache/syedge /srv/syedge/sites/example/current
           sudo cp -r internal/render/testdata/golden/r000001/. $R/
-          sudo cp /opt/syapp/share/defaults/mime.types $R/
+          sudo cp /opt/syedge/share/defaults/mime.types $R/
           sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=www.example.com \
             -keyout $R/certs/site-example.key -out $R/certs/site-example.crt
-          echo ok | sudo tee /srv/syapp/sites/example/current/index.html
-          sudo ln -sfn releases/r000001 /opt/syapp/conf/current
-          # 运行时不使用 root（设计 0001 D5）：单元以 syapp 运行；私钥按 agent 的方式组可读（0640，组 syapp）
-          sudo chown -R syapp:syapp /run/syapp /var/log/syapp /var/cache/syapp
-          sudo chgrp -R syapp /opt/syapp/conf && sudo chmod -R g+rX /opt/syapp/conf && sudo chmod 0640 $R/certs/site-example.key
-          sudo cp dataplane/packaging/systemd/syapp.service /etc/systemd/system/
+          echo ok | sudo tee /srv/syedge/sites/example/current/index.html
+          sudo ln -sfn releases/r000001 /opt/syedge/conf/current
+          # 运行时不使用 root（设计 0001 D5）：单元以 syedge 运行；私钥按 agent 的方式组可读（0640，组 syedge）
+          sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge
+          sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf && sudo chmod 0640 $R/certs/site-example.key
+          sudo cp dataplane/packaging/systemd/syedge.service /etc/systemd/system/
           sudo systemctl daemon-reload
-          sudo systemctl start syapp || { sudo journalctl -u syapp --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
-          sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syapp/sbin/syapp www.example.com
-      - name: renderer output through real syapp -t (default, instance and user-mode profiles)
-        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyappSyntax$|TestRenderProfileSyappSyntax$' ./internal/render/
+          sudo systemctl start syedge || { sudo journalctl -u syedge --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
+          sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syedge/sbin/syedge www.example.com
+      - name: renderer output through real syedge -t (default, instance and user-mode profiles)
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyedgeSyntax$|TestRenderProfileSyedgeSyntax$' ./internal/render/
       - name: brand runtime check (default brand; Server header over HTTP/1.1 and HTTP/2, titles, error page)
-        run: sudo scripts/ci/brand-runtime.sh "$(ls dist/syapp-*.tar.gz)" syapp syapp
-      - name: wrapper hot upgrade with real syapp (single instance and two instances sharing one binary)
-        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor SYAPP_BIN=/opt/syapp/sbin/syapp go test -count=1 -v -run 'RealSyapp$' ./internal/wrapper/
+        run: sudo scripts/ci/brand-runtime.sh "$(ls dist/syedge-*.tar.gz)" syedge SyEdge
+      - name: wrapper hot upgrade with real syedge (single instance and two instances sharing one binary)
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor SYEDGE_BIN=/opt/syedge/sbin/syedge go test -count=1 -v -run 'RealSyedge$' ./internal/wrapper/
       - name: multi-instance and non-root acceptance (P11, design 0001 §10.3)
-        # 放在本任务最后：system 阶段会重装本机的 /opt/syapp
-        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor scripts/ci/p11-acceptance.sh "$(ls dist/syapp-*.tar.gz)" all
+        # 放在本任务最后：system 阶段会重装本机的 /opt/syedge
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor scripts/ci/p11-acceptance.sh "$(ls dist/syedge-*.tar.gz)" all
       - uses: actions/upload-artifact@v4
         continue-on-error: true   # 账号存储配额满时不阻塞流水线
         with:
-          name: syapp-linux-x86_64
+          name: syedge-linux-x86_64
           path: dist/*.tar.gz
           retention-days: 3
 
@@ -167,15 +167,15 @@ jobs:
           go-version: "1.27"
       - name: build deps
         run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev
-      - name: build syedge / SyEdge
+      - name: build sytest / SyTest (OEM test brand)
         run: |
-          printf 'BRAND_ID=syedge\nBRAND_PROC=SyEdge\nBRAND_PRODUCT="SyEdge Gateway"\n' > /tmp/syedge.env
-          BRAND_ENV=/tmp/syedge.env GOFLAGS=-mod=vendor dataplane/build-syapp.sh -o dist-brand
+          printf 'BRAND_ID=sytest\nBRAND_PROC=SyTest\nBRAND_PRODUCT="SyTest Gateway"\n' > /tmp/sytest.env
+          BRAND_ENV=/tmp/sytest.env GOFLAGS=-mod=vendor dataplane/build-syedge.sh -o dist-brand
       - name: brand runtime check
-        run: sudo scripts/ci/brand-runtime.sh "$(ls dist-brand/syedge-*.tar.gz)" syedge SyEdge
+        run: sudo scripts/ci/brand-runtime.sh "$(ls dist-brand/sytest-*.tar.gz)" sytest SyTest
 
   dataplane-gm:
-    # 国密变体：铜锁（NTLS）静态构建 → 渲染器国密配置过真实 syapp -t → 国密 TLCP 与标准 TLS 握手（同一 443，按 SNI 选证书）。
+    # 国密变体：铜锁（NTLS）静态构建 → 渲染器国密配置过真实 syedge -t → 国密 TLCP 与标准 TLS 握手（同一 443，按 SNI 选证书）。
     # 构建产物按数据面输入缓存，数据面不变时只跑验收（约 1 分钟）。
     runs-on: ubuntu-24.04
     steps:
@@ -188,13 +188,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist-gm
-          key: syapp-gm-${{ hashFiles('dataplane/UPSTREAM', 'dataplane/DEPS', 'dataplane/build-syapp.sh', 'dataplane/patches/**', 'dataplane/packaging/html/**', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
-      - name: build syapp (Tongsuo, NTLS, static)
+          key: syedge-gm-${{ hashFiles('dataplane/UPSTREAM', 'dataplane/DEPS', 'dataplane/build-syedge.sh', 'dataplane/patches/**', 'dataplane/packaging/html/**', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+      - name: build syedge (Tongsuo, NTLS, static)
         if: steps.gm-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p dist-gm
-          KEEP_TLS_CLI="$PWD/dist-gm/tongsuo" dataplane/build-syapp.sh -t tongsuo -o dist-gm
-      - name: GM acceptance (syapp -t, TLCP and TLS handshakes)
+          KEEP_TLS_CLI="$PWD/dist-gm/tongsuo" dataplane/build-syedge.sh -t tongsuo -o dist-gm
+      - name: GM acceptance (syedge -t, TLCP and TLS handshakes)
         run: scripts/ci/gm-handshake.sh dist-gm
 
   web:

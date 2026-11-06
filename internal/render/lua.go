@@ -14,11 +14,11 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
-// Lua 规则（P10）：只在节点装有 syapp-lua 附加包时可用（控制台负责门禁，未装时 syapp -t 失败、agent 自动回滚）。
+// Lua 规则（P10）：只在节点装有 syedge-lua 附加包时可用（控制台负责门禁，未装时 syedge -t 失败、agent 自动回滚）。
 //
 // 不开放客户自定义 Lua：渲染器只生成固定模板，参数一律写成 \ddd 转义的 Lua 字符串字面量（不出现引号、
 // 花括号、$ 等任何可改变语法的字符）。密钥写入版本目录的 lua/*.key 文件（0640，预览中不显示），
-// 由附加包中审核过的库（/opt/syapp/modules/lua/lualib/etos）在 init 阶段读取，随后关闭文件、
+// 由附加包中审核过的库（/opt/syedge/modules/lua/lualib/etos）在 init 阶段读取，随后关闭文件、
 // 进程、代码加载与 C 模块加载能力。
 
 // LuaModulesDir 是附加包模块目录（软链，指向与运行中二进制版本匹配的 lua-<版本>）。
@@ -150,7 +150,7 @@ func luaFiles(in Input) map[string][]byte {
 	return out
 }
 
-// renderLuaHTTP 生成 http 层的 Lua 设置与 init 块（写入 syapp.conf）。
+// renderLuaHTTP 生成 http 层的 Lua 设置与 init 块（写入 syedge.conf）。
 func renderLuaHTTP(in Input) string {
 	var rules []jwtRule
 	for _, s := range in.Sites {

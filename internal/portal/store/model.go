@@ -1,4 +1,4 @@
-// Package store 是厂商授权后台（syapp-license-server serve，规格书 8.8 / 8.8.1）的数据层。
+// Package store 是厂商授权后台（syedge-license-server serve，规格书 8.8 / 8.8.1）的数据层。
 //
 // 授权后台只保存公钥与业务数据，从不保存任何签名私钥。修改模型必须在 migrations.go 末尾新增迁移
 // （TestModelsMatchMigrations 检查）；业务代码通过 gorm/gen 生成的 query 包访问数据库。

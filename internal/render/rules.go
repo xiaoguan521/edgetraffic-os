@@ -15,7 +15,7 @@ import (
 // 访问规则（P10 规则积木，规格书 12.5）：界面上用“条件 + 动作”搭规则，由渲染器生成配置。
 //
 // 原生规则只用官方模块（geo / map / if+return / limit_req / auth_request），所有版本都能用；
-// JWT 校验需要 Lua 附加包（syapp-lua），见 lua.go。用户输入只经下面的校验与转义函数进入配置，
+// JWT 校验需要 Lua 附加包（syedge-lua），见 lua.go。用户输入只经下面的校验与转义函数进入配置，
 // 不拼接任何未校验的字符串。
 //
 // 执行顺序按请求处理阶段：拒绝 / 跳转 → JWT（rewrite，Lua）→ 限速（preaccess）→ 外部鉴权（access）。

@@ -1,0 +1,52 @@
+# syedge-agent 软件包：agent、提权 wrapper、sudoers 与 systemd 单元。安装后写入初始配置并启动 syedge。
+name: syedge-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: SyEdge <support@edgetraffic.invalid>
+vendor: SyEdge
+homepage: https://github.com/xiaoguan521/edgetraffic-os
+license: Proprietary
+description: |
+  syedge-agent: SyEdge edge agent. Connects outbound to the console only and never listens on any port.
+depends:
+  - syedge
+  - sudo
+recommends:
+  - nftables   # 仅可选的 syedge-firewall 需要
+contents:
+  - src: ${STAGE}/agent/syedge-agent
+    dst: /usr/bin/syedge-agent
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/agent/syedge-wrapper
+    dst: /usr/libexec/syedge/syedge-wrapper
+    file_info: { mode: 0755, owner: root, group: root }
+  - src: ${STAGE}/agent/sudoers
+    dst: /etc/sudoers.d/syedge-agent
+    type: config
+    file_info: { mode: 0440, owner: root, group: root }
+  - src: ${STAGE}/agent/syedge-agent.service
+    dst: /usr/lib/systemd/system/syedge-agent.service
+  - src: ${STAGE}/agent/syedge-agent@.service
+    dst: /usr/lib/systemd/system/syedge-agent@.service
+  # 同机多实例管理：add / remove / list / check / reopen-all（设计 0001 第 5.7 节）
+  - src: ${STAGE}/agent/syedge-instance
+    dst: /usr/sbin/syedge-instance
+    file_info: { mode: 0755, owner: root, group: root }
+  # 可选的节点防火墙：默认不启用，由管理员执行 syedge-firewall enable --ssh-from ...
+  - src: ${STAGE}/agent/syedge-firewall
+    dst: /usr/sbin/syedge-firewall
+    file_info: { mode: 0755, owner: root, group: root }
+  - src: ${STAGE}/agent/syedge-firewall.service
+    dst: /usr/lib/systemd/system/syedge-firewall.service
+  # 发布与实例增删后按实例配置刷新防火墙规则（防火墙未启用时不运行）
+  - src: ${STAGE}/agent/syedge-firewall-refresh.service
+    dst: /usr/lib/systemd/system/syedge-firewall-refresh.service
+  - src: ${STAGE}/agent/syedge-firewall-refresh.path
+    dst: /usr/lib/systemd/system/syedge-firewall-refresh.path
+scripts:
+  preinstall: ${STAGE}/scripts/agent-preinstall.sh
+  postinstall: ${STAGE}/scripts/agent-postinstall.sh
+  preremove: ${STAGE}/scripts/agent-preremove.sh

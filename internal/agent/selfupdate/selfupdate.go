@@ -1,6 +1,6 @@
 // Package selfupdate 是 agent 自升级（规格书 12.6：agent 自升级使用同一种签名包，只重启 agent 进程）。
 //
-// 新版本安装在状态目录 agent/<版本>/ 下，连同升级包与签名一起保存；/usr/bin/syapp-agent 启动时（MaybeExec）
+// 新版本安装在状态目录 agent/<版本>/ 下，连同升级包与签名一起保存；/usr/bin/syedge-agent 启动时（MaybeExec）
 // 再次校验签名与二进制哈希，只有版本更新且校验通过才 exec 到新版本。agent 以普通用户运行，自升级不涉及提权；
 // 未签名或被改动的二进制永远不会被执行。
 package selfupdate
@@ -37,7 +37,7 @@ var ErrRejected = errors.New("agent package rejected")
 
 func dir(state, ver string) string { return filepath.Join(state, "agent", ver) }
 
-// extract 校验签名并取出 bin/syapp-agent。
+// extract 校验签名并取出 bin/syedge-agent。
 func extract(data, sigJSON []byte, arch string, keys map[string]ed25519.PublicKey) (*pkgsig.Sig, []byte, error) {
 	sig, err := pkgsig.Parse(sigJSON)
 	if err != nil {

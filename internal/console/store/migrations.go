@@ -535,7 +535,7 @@ func migrateGMTLS(tx *gorm.DB) error {
 	return tx.AutoMigrate(&Node{})
 }
 
-// ---- 202610310002_rules_lua：规则积木的 IP 集 / 地域库与 syapp-lua 附加包上报（P10）----
+// ---- 202610310002_rules_lua：规则积木的 IP 集 / 地域库与 syedge-lua 附加包上报（P10）----
 
 func migrateRulesLua(tx *gorm.DB) error {
 	type IPSet struct {

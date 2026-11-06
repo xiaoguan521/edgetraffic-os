@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# EdgeTraffic OS 演示助手。在 demo/ 目录下运行。
+# SyEdge 演示助手。在 demo/ 目录下运行。
 #
 #   ./demo.sh up                 构建并启动演示环境（首次约 5–10 分钟）；执行过 pull 后直接用已拉取的镜像
 #   ./demo.sh pull [版本]        从 GitHub 容器仓库拉取预构建镜像并启动，免构建（默认 mvp，可填 v0.1.0 等）
@@ -8,10 +8,10 @@
 #   ./demo.sh license-expired    签发一份已过期的授权，用于演示“过期只读”
 #   ./demo.sh enroll <node> <控制台“添加节点”给出的命令>
 #                                在节点容器里执行注册命令，例如：
-#                                ./demo.sh enroll node1 sudo syapp-agent enroll -server ... -token ... -ca-fingerprint ...
+#                                ./demo.sh enroll node1 sudo syedge-agent enroll -server ... -token ... -ca-fingerprint ...
 #   ./demo.sh cert <域名> [天数]  生成演示用自签证书 out/<域名>.crt 与 .key（默认 30 天），在“证书”页上传
 #   ./demo.sh traffic [秒数]     向两台节点持续发请求，让总览页出现流量曲线（默认 300 秒）
-#   ./demo.sh ps <node>          查看节点上的进程（展示进程名为 syapp）
+#   ./demo.sh ps <node>          查看节点上的进程（展示进程名为 syedge）
 #   ./demo.sh status             查看容器状态与访问地址
 #   ./demo.sh down               停止（保留数据）
 #   ./demo.sh reset              停止并清空全部数据，回到初始状态
@@ -34,10 +34,10 @@ host_ip() { hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1; }
 issue() {
   [[ -f "$KEY" ]] || { echo "缺少演示签名私钥 $KEY（请向项目负责人索取，放到 demo/keys/ 下，不要提交到仓库）" >&2; exit 1; }
   local inst
-  inst=$($DC exec -T console sh -c 'cat /var/lib/syapp-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
+  inst=$($DC exec -T console sh -c 'cat /var/lib/syedge-console/installation.json' | sed -E 's/.*"installation_id":"([^"]+)".*/\1/')
   [[ "$inst" == inst_* ]] || { echo "读取控制台安装 ID 失败，控制台是否已启动？" >&2; exit 1; }
   mkdir -p out
-  $DC exec -T console syapp-license-server issue -key /keys/etos-demo-2026.key -kid etos-demo-2026 \
+  $DC exec -T console syedge-license-server issue -key /keys/etos-demo-2026.key -kid etos-demo-2026 \
     -installation-id "$inst" -binding installation_only -customer "${CUSTOMER:-演示客户}" \
     -edition "${EDITION:-professional}" -nodes "${NODES:-10}" -sites "${SITES:-200}" "$@" > out/"$OUT"
   echo "已签发：demo/out/$OUT（安装 ID $inst）"
@@ -114,7 +114,7 @@ case "${1:-}" in
     done
     ;;
   ps)
-    $DC exec "${2:?usage: ./demo.sh ps <node1|node2>}" sh -c 'syapp -v; echo; ps -eo user,pid,comm,args | grep -E "syapp|COMMAND" | grep -v grep'
+    $DC exec "${2:?usage: ./demo.sh ps <node1|node2>}" sh -c 'syedge -v; echo; ps -eo user,pid,comm,args | grep -E "syedge|COMMAND" | grep -v grep'
     ;;
   status)
     $DC ps

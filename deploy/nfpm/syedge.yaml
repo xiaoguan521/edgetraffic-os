@@ -1,0 +1,38 @@
+# syedge 数据面软件包（RPM / DEB）。由 scripts/release/package.sh pkg 调用 nfpm 生成。
+name: syedge
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: SyEdge <support@edgetraffic.invalid>
+vendor: SyEdge
+homepage: https://github.com/xiaoguan521/edgetraffic-os
+license: BSD-2-Clause
+description: |
+  syedge: SyEdge edge data plane (static and dynamic web traffic proxy).
+  Based on NGINX Open Source (BSD-2-Clause). Statically linked with OpenSSL, PCRE2 and zlib.
+contents:
+  - src: ${STAGE}/syedge/opt/syedge
+    dst: /opt/syedge
+    type: tree
+  - src: /opt/syedge/sbin/syedge
+    dst: /usr/sbin/syedge
+    type: symlink
+  - src: ${STAGE}/syedge/syedge.service
+    dst: /usr/lib/systemd/system/syedge.service
+  - src: ${STAGE}/syedge/syedge@.service
+    dst: /usr/lib/systemd/system/syedge@.service
+  - src: ${STAGE}/syedge/tmpfiles.conf
+    dst: /usr/lib/tmpfiles.d/syedge.conf
+  - src: ${STAGE}/syedge/logrotate
+    dst: /etc/logrotate.d/syedge
+    type: config|noreplace
+  - dst: /var/log/syedge
+    type: dir
+  - dst: /var/cache/syedge
+    type: dir
+scripts:
+  preinstall: ${STAGE}/scripts/syedge-preinstall.sh
+  postinstall: ${STAGE}/scripts/syedge-postinstall.sh
+  preremove: ${STAGE}/scripts/syedge-preremove.sh

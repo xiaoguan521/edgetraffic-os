@@ -5,13 +5,14 @@ import { reactive } from 'vue'
 export interface Brand {
   id: string // 命令名、路径、包名，例如数据面命令
   proc: string // 进程标题与对外显示名
-  product: string // 产品名
+  product: string // 产品名（简称）
+  fullname: string // 产品中文全称
   agent: string // agent 程序名
   lua: string // Lua 附加包名
   instance: string // 同机多实例管理命令
 }
 
-export const brand = reactive<Brand>({ id: '', proc: '', product: '', agent: '', lua: '', instance: '' })
+export const brand = reactive<Brand>({ id: '', proc: '', product: '', fullname: '', agent: '', lua: '', instance: '' })
 
 export async function loadBrand(): Promise<void> {
   // 用 fetch 而不是 api 客户端：客户端依赖路由，路由又要用品牌名设置标题

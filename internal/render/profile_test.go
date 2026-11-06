@@ -21,17 +21,17 @@ func TestRenderInstanceProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	main := string(b.Files["syapp.conf"])
+	main := string(b.Files["syedge.conf"])
 	for _, want := range []string{
-		"pid   /run/syapp-blue/syapp.pid;",
-		"error_log  /var/log/syapp-blue/error.log  warn;",
-		"access_log  /var/log/syapp-blue/access.json  edge_json;",
-		"client_body_temp_path  /var/cache/syapp-blue/client_temp;",
-		"proxy_temp_path        /var/cache/syapp-blue/proxy_temp;",
+		"pid   /run/syedge-blue/syedge.pid;",
+		"error_log  /var/log/syedge-blue/error.log  warn;",
+		"access_log  /var/log/syedge-blue/access.json  edge_json;",
+		"client_body_temp_path  /var/cache/syedge-blue/client_temp;",
+		"proxy_temp_path        /var/cache/syedge-blue/proxy_temp;",
 		"listen       18080  default_server;",
 		"listen       18443  ssl  default_server;",
 		"listen       127.0.0.1:8082;",
-		"location = /__syapp_status {",
+		"location = /__syedge_status {",
 	} {
 		if !strings.Contains(main, want) {
 			t.Errorf("main config missing %q", want)
@@ -43,13 +43,13 @@ func TestRenderInstanceProfile(t *testing.T) {
 			all += string(c)
 		}
 	}
-	for _, bad := range []string{"/run/syapp/", "/var/log/syapp/", "/opt/syapp/conf/", " 80;", " 80 ", " 443 ", " 443;", ":8081"} {
+	for _, bad := range []string{"/run/syedge/", "/var/log/syedge/", "/opt/syedge/conf/", " 80;", " 80 ", " 443 ", " 443;", ":8081"} {
 		if strings.Contains(all, bad) {
 			t.Errorf("instance render still contains default %q", bad)
 		}
 	}
 	site := string(b.Files["conf.d/site-blog.conf"])
-	if !strings.Contains(site, "listen       18080;") || !strings.Contains(site, "alias  /opt/syapp/instances/blue/conf/current/sites/blog/") {
+	if !strings.Contains(site, "listen       18080;") || !strings.Contains(site, "alias  /opt/syedge/instances/blue/conf/current/sites/blog/") {
 		t.Errorf("site config not using profile:\n%s", site)
 	}
 	if !strings.Contains(string(b.Files["conf.d/site-shop.conf"]), "listen       18443  ssl;") {
@@ -65,13 +65,13 @@ func TestRenderUserProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	main := string(b.Files["syapp.conf"])
+	main := string(b.Files["syedge.conf"])
 	if strings.Contains(main, "\nuser ") {
 		t.Error("user mode must not emit the user directive")
 	}
 	for _, want := range []string{
 		"worker_rlimit_nofile  4096;",
-		"pid   /home/ops/edge/run/syapp.pid;",
+		"pid   /home/ops/edge/run/syedge.pid;",
 		"error_log  /home/ops/edge/logs/error.log  warn;",
 		"client_body_temp_path  /home/ops/edge/cache/client_temp;",
 		"load_module  /home/ops/edge/modules/lua/ndk_http_module.so;",
@@ -126,26 +126,26 @@ func TestProfileValidation(t *testing.T) {
 // 证书续期重打包时，只改写本实例版本目录下的绝对路径。
 func TestRebaseRevisionUsesProfile(t *testing.T) {
 	p := instanceProfile()
-	src := map[string][]byte{"a.conf": []byte(p.ReleasesDir() + "r000001/certs/x /opt/syapp/conf/releases/r000001/y")}
+	src := map[string][]byte{"a.conf": []byte(p.ReleasesDir() + "r000001/certs/x /opt/syedge/conf/releases/r000001/y")}
 	out := RebaseRevisionFor(p, src, "r000001", "r000002")
-	want := p.ReleasesDir() + "r000002/certs/x /opt/syapp/conf/releases/r000001/y"
+	want := p.ReleasesDir() + "r000002/certs/x /opt/syedge/conf/releases/r000001/y"
 	if got := string(out["a.conf"]); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
-// 具名实例与 user 模式的渲染结果也必须通过真实 syapp -t（CLAUDE.md「配置」：修改模板须过真实 syapp -t）。
+// 具名实例与 user 模式的渲染结果也必须通过真实 syedge -t（CLAUDE.md「配置」：修改模板须过真实 syedge -t）。
 // 在 ci 工作流的 dataplane 任务中以 root 运行；没有二进制或非 root 时跳过。
-func TestRenderProfileSyappSyntax(t *testing.T) {
-	bin := os.Getenv("SYAPP_BIN")
+func TestRenderProfileSyedgeSyntax(t *testing.T) {
+	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syapp/sbin/syapp"
+		bin = "/opt/syedge/sbin/syedge"
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Skip("syapp binary not installed")
+		t.Skip("syedge binary not installed")
 	}
 	if os.Geteuid() != 0 {
-		t.Skip("syapp -t needs root to check user and log paths")
+		t.Skip("syedge -t needs root to check user and log paths")
 	}
 	userRoot := filepath.Join(t.TempDir(), "edge")
 	for name, p := range map[string]Profile{
@@ -155,7 +155,7 @@ func TestRenderProfileSyappSyntax(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := sampleInput(t)
 			in.Profile = p
-			if mt, err := os.ReadFile("/opt/syapp/share/defaults/mime.types"); err == nil {
+			if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
 				in.MimeTypes = mt
 			}
 			in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>x</h1>")}
@@ -179,9 +179,9 @@ func TestRenderProfileSyappSyntax(t *testing.T) {
 			if err := b.WriteDir(dir); err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syapp.conf")).CombinedOutput()
+			out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
 			if err != nil {
-				t.Fatalf("syapp -t failed: %v\n%s", err, out)
+				t.Fatalf("syedge -t failed: %v\n%s", err, out)
 			}
 		})
 	}
@@ -197,7 +197,7 @@ func TestNoUserDirective(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if main := string(b.Files["syapp.conf"]); strings.Contains(main, "\nuser ") {
+		if main := string(b.Files["syedge.conf"]); strings.Contains(main, "\nuser ") {
 			t.Fatalf("profile %+v emits a user directive", p)
 		}
 	}
