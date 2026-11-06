@@ -158,7 +158,9 @@ system_phase() {
   echo "== D5 运行时不使用 root：升级前以 root 运行的 master 无中断切换"
   # 模拟升级前的节点：单元以 root 运行（旧版本的单元），master 以 root 启动
   mkdir -p /etc/systemd/system/syapp.service.d
-  printf '[Service]\nUser=\nGroup=\nAmbientCapabilities=\nCapabilityBoundingSet=\nNoNewPrivileges=no\n' > /etc/systemd/system/syapp.service.d/legacy-root.conf
+  # 旧单元以 root 运行（不限制能力）。CapabilityBoundingSet= 置空会清空边界集（连 root 也无法绑定 80），
+  # 因此清空后重新列出旧版 root master 实际用到的能力
+  printf '[Service]\nUser=\nGroup=\nAmbientCapabilities=\nCapabilityBoundingSet=\nCapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE\nNoNewPrivileges=no\n' > /etc/systemd/system/syapp.service.d/legacy-root.conf
   systemctl daemon-reload && systemctl restart syapp.service
   local LD=/run/syapp/syapp.pid
   [[ "$(uid_of "$(masterpid $LD)")" == 0 ]] && ok "模拟升级前：master 以 root 运行" || bad "模拟升级前的 master 不是 root"
