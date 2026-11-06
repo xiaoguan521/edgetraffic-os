@@ -198,9 +198,17 @@ func (a *Agent) writeAtomic(name string, b []byte) error {
 
 func fp(der []byte) string { s := sha256.Sum256(der); return hex.EncodeToString(s[:]) }
 
-func machineFingerprint() string {
-	b, _ := os.ReadFile("/etc/machine-id")
-	return fp(bytes.TrimSpace(b))
+func machineFingerprint() string { return fingerprintOf("/etc/machine-id") }
+
+// fingerprintOf 返回机器 ID 的 sha256；文件缺失或为空时返回空串（未知主机）：容器镜像常常没有机器 ID，
+// 若对空内容取哈希，所有这样的机器得到同一个指纹，控制台会把不同主机当成同一台而拒绝注册（HOST_CONFLICT）。
+func fingerprintOf(path string) string {
+	b, _ := os.ReadFile(path)
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 {
+		return ""
+	}
+	return fp(b)
 }
 
 func (a *Agent) load() (*tls.Config, error) {

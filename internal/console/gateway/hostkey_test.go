@@ -11,7 +11,9 @@ func TestHostKey(t *testing.T) {
 	if HostKey(ok) != ok {
 		t.Fatal("valid fingerprint rejected")
 	}
-	for _, bad := range []string{"", strings.ToUpper(ok), ok + "0", ok[:63], "../../etc/machine-id", strings.Repeat("g", 64)} {
+	// 空 /etc/machine-id 的 sha256（容器镜像中常见，所有容器相同）：不能据此认定为同一台主机
+	empty := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	for _, bad := range []string{"", strings.ToUpper(ok), ok + "0", ok[:63], "../../etc/machine-id", strings.Repeat("g", 64), empty} {
 		if HostKey(bad) != "" {
 			t.Errorf("%q accepted", bad)
 		}

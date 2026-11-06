@@ -38,7 +38,9 @@ echo "== 控制台就绪"
 for _ in $(seq 1 90); do curl -sf --noproxy '*' "$B/setup/status" >/dev/null && break; sleep 2; done
 st=$(curl -s --noproxy '*' "$B/setup/status")
 expect "控制台 API 可访问" "$st" "initialized"
-expect "前端页面可访问" "$(curl -s --noproxy '*' "http://127.0.0.1:${CONSOLE_PORT:-8443}/login")" "SyEdge"
+expect "前端页面可访问" "$(curl -s --noproxy '*' "http://127.0.0.1:${CONSOLE_PORT:-8443}/login")" '<div id="app">'
+# 页面本身不写产品名（前端供任何品牌使用），产品名在运行时从 /api/v1/brand 读取
+expect "品牌接口给出产品名" "$(curl -s --noproxy '*' "http://127.0.0.1:${CONSOLE_PORT:-8443}/api/v1/brand")" '"product":"SyEdge"'
 
 echo "== 初始化与授权"
 "${C[@]}" -X POST "$B/setup" -d '{"username":"admin","password":"Demo@2026!"}' >/dev/null

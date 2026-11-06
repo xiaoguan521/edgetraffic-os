@@ -5,6 +5,10 @@
 #  2. 等待管理员在控制台“添加节点”后执行注册命令
 #  3. 注册完成后以 syedge-agent 用户运行 agent（提权只经 sudo + syedge-wrapper）
 set -euo pipefail
+# 每个容器模拟一台独立的服务器：镜像中没有机器 ID，首次启动时生成一个（同机多实例检查以机器 ID 识别主机）
+if [[ ! -s /etc/machine-id ]]; then
+  tr -d '-' < /proc/sys/kernel/random/uuid > /etc/machine-id
+fi
 mkdir -p /run/syedge /run/syedge-agent /var/log/syedge /var/cache/syedge /var/lib/syedge-agent /opt/syedge/conf/releases
 chown -R syedge-agent:syedge /opt/syedge/conf /run/syedge-agent /var/lib/syedge-agent
 chmod 0750 /var/lib/syedge-agent

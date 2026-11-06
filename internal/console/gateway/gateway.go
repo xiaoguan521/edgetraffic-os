@@ -590,9 +590,12 @@ func (s *Server) FetchPackage(req *agentv1.FetchPackageRequest, stream agentv1.A
 
 var hostKeyRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// HostKey 返回 agent 上报的机器指纹（/etc/machine-id 的 sha256）；格式不符时为空（视为未知主机，不参与同机检查）。
+// emptyMachineID 是空 /etc/machine-id 的 sha256：v0.3.0 及之前的 agent 在没有机器 ID 的容器中上报它，所有这样的容器相同。
+const emptyMachineID = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// HostKey 返回 agent 上报的机器指纹（/etc/machine-id 的 sha256）；格式不符或是空机器 ID 的哈希时为空（视为未知主机，不参与同机检查）。
 func HostKey(fp string) string {
-	if hostKeyRe.MatchString(fp) {
+	if hostKeyRe.MatchString(fp) && fp != emptyMachineID {
 		return fp
 	}
 	return ""
