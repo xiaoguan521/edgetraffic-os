@@ -128,7 +128,7 @@ func (d *Service) CheckEnrollHost(groupID uint, hostKey string, selfNodeID uint)
 // groupHostKeys 返回组内节点所在的主机。
 func (d *Service) groupHostKeys(groupID uint) []string {
 	q := d.q()
-	nodes, _ := q.Node.WithContext(bg).Select(q.Node.HostKey).Where(q.Node.GroupID.Eq(groupID), q.Node.HostKey.Neq("")).Find()
+	nodes, _ := q.Node.WithContext(bg).Select(q.Node.HostKey).Where(q.Node.GroupID.Eq(groupID), q.Node.HostKey.Neq(""), q.Node.Status.Neq("revoked")).Find()
 	seen := map[string]bool{}
 	var out []string
 	for _, n := range nodes {
@@ -193,7 +193,8 @@ func (d *Service) hostConflicts(groupID uint, p render.Profile, streams []render
 		return nil
 	}
 	q := d.q()
-	others, err := q.Node.WithContext(bg).Where(q.Node.HostKey.In(hostKeys...)).Find()
+	// 已吊销的节点不再占用主机（吊销后在同一台机器上重新添加是正常操作）
+	others, err := q.Node.WithContext(bg).Where(q.Node.HostKey.In(hostKeys...), q.Node.Status.Neq("revoked")).Find()
 	if err != nil {
 		return err
 	}
