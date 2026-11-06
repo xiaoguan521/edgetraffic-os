@@ -228,11 +228,13 @@ jobs:
         run: |
           for f in "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/*.deb "$OUT"/*.rpm; do
             [[ -f "$f" ]] || continue
-            for try in 1 2 3; do
+            # GitHub 托管的 arm64 runner 访问 api.github.com 时偶发 TLS 错误（“unrecognized name”），持续时间可达一分钟：
+            # 多试几次并逐步拉长间隔（合计约 5 分钟），--clobber 保证重传是幂等的
+            for try in 1 2 3 4 5 6; do
               if err=$(gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "$f" 2>&1); then echo "uploaded $(basename "$f")"; break; fi
               echo "::warning title=upload $(basename "$f") try $try::${err//$'\n'/ }"
-              [[ $try == 3 ]] && { echo "::error title=upload::$(basename "$f"): ${err//$'\n'/ }"; exit 1; }
-              sleep $((try * 10))
+              [[ $try == 6 ]] && { echo "::error title=upload::$(basename "$f"): ${err//$'\n'/ }"; exit 1; }
+              sleep $((try * 15))
             done
           done
 
