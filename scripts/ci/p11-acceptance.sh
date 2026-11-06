@@ -196,9 +196,15 @@ system_phase() {
   echo "== MI-02 端口冲突"
   out=$(syapp-instance add red --http 18080 --https 38443 --status 8084 2>&1) && bad "与 blue 端口冲突未被拒绝" \
     || { [[ "$out" == *18080* ]] && ok "与 blue 的端口冲突被拒绝并指出端口" || bad "冲突信息不明：$out"; }
-  python3 -m http.server -b 0.0.0.0 38080 >/dev/null 2>&1 & local hp=$!; sleep 1
-  out=$(syapp-instance add red --http 38080 --https 38443 --status 8084 2>&1) && bad "被其他程序占用的端口未被拒绝" \
-    || ok "被其他程序占用的端口被拒绝"
+  python3 -m http.server -b 0.0.0.0 38080 >/dev/null 2>&1 & local hp=$!
+  # 等占用端口的程序真正开始监听再测（CI 机器负载高时 python 启动可能超过 1 秒）
+  for _ in $(seq 1 50); do (exec 3<>/dev/tcp/127.0.0.1/38080) 2>/dev/null && break; sleep 0.2; done
+  if out=$(syapp-instance add red --http 38080 --https 38443 --status 8084 2>&1); then
+    bad "被其他程序占用的端口未被拒绝"
+    syapp-instance remove red >/dev/null 2>&1
+  else
+    ok "被其他程序占用的端口被拒绝"
+  fi
   kill $hp 2>/dev/null
   out=$(syapp-instance check 2>&1) && ok "syapp-instance check 未发现问题" || bad "check：$out"
 
