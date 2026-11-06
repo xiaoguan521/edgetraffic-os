@@ -23,7 +23,6 @@ func TestRenderInstanceProfile(t *testing.T) {
 	}
 	main := string(b.Files["syapp.conf"])
 	for _, want := range []string{
-		"user  syapp;",
 		"pid   /run/syapp-blue/syapp.pid;",
 		"error_log  /var/log/syapp-blue/error.log  warn;",
 		"access_log  /var/log/syapp-blue/access.json  edge_json;",
@@ -185,5 +184,21 @@ func TestRenderProfileSyappSyntax(t *testing.T) {
 				t.Fatalf("syapp -t failed: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+// D5：system 模式的 master 也不以 root 运行，worker 与 master 同一用户，配置中不再有 user 指令
+// （非 root 的 master 会忽略它并在启动时告警）。
+func TestNoUserDirective(t *testing.T) {
+	for _, p := range []Profile{{}, instanceProfile()} {
+		in := sampleInput(t)
+		in.Profile = p
+		b, err := Render(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if main := string(b.Files["syapp.conf"]); strings.Contains(main, "\nuser ") {
+			t.Fatalf("profile %+v emits a user directive", p)
+		}
 	}
 }

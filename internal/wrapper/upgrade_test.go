@@ -217,7 +217,7 @@ http {
 	if err := UpgradeAbort(p); err != nil {
 		t.Fatal(err)
 	}
-	if workers(pid1) == 0 {
+	if !waitFor(3*time.Second, func() bool { return workers(pid1) > 0 }) {
 		t.Fatal("previous master has no workers after abort")
 	}
 	if pid, _ := readPid(p.PidFile); pid != pid1 || alive(pid2) && isMaster(pid2) {

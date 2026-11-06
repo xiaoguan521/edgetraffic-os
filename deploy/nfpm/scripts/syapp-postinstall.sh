@@ -1,5 +1,16 @@
-mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp /run/syapp
+mkdir -p /opt/syapp/conf/releases /var/log/syapp /var/cache/syapp /run/syapp /opt/syapp/versions /opt/syapp/modules
 chown -R root:root /opt/syapp/sbin /opt/syapp/share /opt/syapp/html
+# 运行时不使用 root（设计 0001 D5）：master 与 worker 以 syapp 运行，运行时目录、日志与缓存归 syapp；
+# 二进制所在目录、版本库与模块目录由 wrapper（同样以 syapp 运行）在热升级时写入
+chown -R syapp:syapp /var/log/syapp /var/cache/syapp /run/syapp /opt/syapp/versions
+chown syapp:syapp /opt/syapp/sbin /opt/syapp/modules
+if [ -x /usr/sbin/syapp-instance ]; then
+  # 与 syapp-agent 同时升级：升级前以 root 启动的 master 无中断切换为 syapp 运行（旧版 agent 包没有该命令时忽略）
+  /usr/sbin/syapp-instance nonroot >/dev/null 2>&1 || true
+elif [ -f /run/syapp/syapp.pid ] && [ "$(awk '/^Uid:/{print $2}' /proc/"$(cat /run/syapp/syapp.pid)"/status 2>/dev/null)" = "0" ]; then
+  echo "提示：运行中的 syapp master 仍以 root 运行（升级前启动）。安装 syapp-agent 后会自动无中断切换；" >&2
+  echo "      独立使用时请在维护窗口执行 systemctl restart syapp，之后以 syapp 用户运行。" >&2
+fi
 if has_systemd; then
   systemctl daemon-reload || true
   if systemctl is-active -q syapp.service; then

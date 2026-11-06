@@ -22,6 +22,9 @@ base=standard
 
 M="$ROOT/modules"
 mkdir -p "$M"
+# 模块目录本身交给数据面用户：wrapper（以 syapp 运行，运行时不使用 root）热升级时在这里安装新版本并切换软链；
+# 已安装的模块文件仍由 root 拥有
+[[ -n "${SYAPP_ROOT:-}" ]] || { id syapp >/dev/null 2>&1 && chown syapp:syapp "$M"; }
 dest="$M/lua-$pkg"; tmp="$M/.lua-$pkg.tmp"
 rm -rf "$tmp"; mkdir -p "$tmp"
 install -m 0644 "$HERE/addon/$base/ndk_http_module.so" "$HERE/addon/$base/ngx_http_lua_module.so" "$tmp/"

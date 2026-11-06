@@ -63,7 +63,7 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
 fi
 
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf /opt/syapp /var/lib/syapp-agent /var/lib/syapp-agent-* /var/log/syapp /var/cache/syapp /etc/syapp-agent /run/syapp /run/syapp-* /run/syapp-agent /run/syapp-agent-*
+  rm -rf /opt/syapp /var/lib/syapp-agent /var/lib/syapp-agent-* /var/lib/syapp-firewall /var/log/syapp /var/cache/syapp /etc/syapp-agent /run/syapp /run/syapp-* /run/syapp-agent /run/syapp-agent-*
   echo "已卸载 EdgeTraffic OS 节点并清理全部配置与数据（--purge）。"
 else
   echo "已卸载 EdgeTraffic OS 节点程序（保留 /opt/syapp/conf 与 /var/log/syapp；如需彻底清除请加 --purge）。"

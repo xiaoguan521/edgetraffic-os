@@ -10,6 +10,13 @@
 set -uo pipefail
 DIST=$(realpath "$1"); BASE=$2
 : "${PKG_KEY:?}" "${PKG_KID:?}" "${WRAPPER:?}" "${LIC:?}"
+# wrapper 按自身的安装位置确定运行方式（system 模式只接受固定路径）：装到正式位置后调用
+sudo install -D -m 0755 "$WRAPPER" /usr/libexec/syapp/syapp-wrapper
+WRAPPER=/usr/libexec/syapp/syapp-wrapper
+# 与 syapp-instance nonroot 设置的相同：wrapper 以 syapp 运行，带 CAP_NET_BIND_SERVICE（permitted / inheritable）供 -t 绑定 80/443
+command -v setcap >/dev/null || sudo apt-get install -y -qq libcap2-bin >/dev/null
+id syapp >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin syapp
+sudo chown root:syapp "$WRAPPER" && sudo chmod 0750 "$WRAPPER" && sudo setcap cap_net_bind_service=ip "$WRAPPER"
 ARCH=$(uname -m); GOARCH=amd64; [[ $ARCH == aarch64 ]] && GOARCH=arm64
 W=$(mktemp -d); chmod 755 "$W"
 # 意外退出（例如命令不存在、变量未定义）时也留下注解：原始日志不一定能下载
@@ -38,7 +45,10 @@ echo "== 基础包 $(basename "$basepkg")，附加包 $(basename "$luapkg")"
 echo "== 安装基础包"
 sudo tar -C / -xzf "$basepkg"
 sudo useradd -r -s /usr/sbin/nologin syapp 2>/dev/null || true
-sudo mkdir -p /run/syapp /var/log/syapp /var/cache/syapp /var/lib/syapp-agent/upgrade /opt/syapp/conf/releases
+sudo mkdir -p /run/syapp /var/log/syapp /var/cache/syapp /var/lib/syapp-agent/upgrade /opt/syapp/conf/releases /opt/syapp/versions /opt/syapp/modules
+# 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syapp 运行
+sudo chown -R syapp:syapp /run/syapp /var/log/syapp /var/cache/syapp /opt/syapp/versions
+sudo chown syapp:syapp /opt/syapp/sbin /opt/syapp/modules
 sudo ip addr add 10.99.0.1/32 dev lo 2>/dev/null || true
 VER=$($SY -v 2>&1 | sed -n 's|.*syapp/\([0-9.]*\).*|\1|p')
 bin_sha=$(sha256sum "$SY" | cut -c1-64)
@@ -100,12 +110,17 @@ fi
 render() { # <版本> <是否含 Lua>
   sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV="$1" ACCEPT_LUA="$2" \
     ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" \
-    go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1
+    go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1 || return 1
+  # 与 agent 写出的版本一致：数据面用户所在组可读（私钥 0640）
+  sudo chgrp -R syapp /opt/syapp/conf && sudo chmod -R g+rX /opt/syapp/conf
 }
 render r900100 1 || die "render/syapp -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syapp -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 /opt/syapp/conf/current
-sudo $SY || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
+# 与 syapp.service 相同的身份：syapp 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
+sudo setpriv --reuid=syapp --regid=syapp --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- $SY \
+  || die "syapp did not start: $(sudo tail -5 /var/log/syapp/error.log)"
+m=$(cat /run/syapp/syapp.pid); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syapp)" ]] && ok "master 以 syapp 运行（不是 root）" || bad "master 以 root 运行"
 sleep 1
 
 TOK() { python3 scripts/ci/jwtgen.py "$@"; }
@@ -184,7 +199,7 @@ if [[ $BASE == gmssl ]]; then
 fi
 
 echo "== reload"
-out=$(sudo "$WRAPPER" reload 2>&1) || bad "wrapper reload failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "wrapper reload failed: $out"
 sleep 1
 check "reload 后 JWT 仍然生效（init 重新执行）" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/a)$(body)" "200backend user=alice"
 check "reload 后拒绝无令牌请求" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
@@ -208,24 +223,24 @@ mkpkgs() { # <版本>
 up2="$VER-2"; up3="$VER-3"
 mkpkgs "$up2"
 sudo rm -f "/var/lib/syapp-agent/upgrade/syapp-lua-$up2.tar.gz"
-out=$(sudo "$WRAPPER" upgrade-start "$up2" 2>&1)
+out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up2" 2>&1)
 check "缺少附加包时拒绝升级（未改动任何东西）" "$out" "add-on"
 check "拒绝后模块软链不变" "$(readlink /opt/syapp/modules/lua)" "lua-$VER"
 mkpkgs "$up2"
-out=$(sudo "$WRAPPER" upgrade-start "$up2" 2>&1) || bad "upgrade-start $up2 failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up2" 2>&1) || bad "upgrade-start $up2 failed: $out"
 check "升级后模块软链指向新版本" "$(readlink /opt/syapp/modules/lua)" "lua-$up2"
 sleep 1
 check "升级中（新 worker）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/a)$(body)" "200backend user=alice"
-out=$(sudo "$WRAPPER" upgrade-commit 2>&1) || bad "upgrade-commit failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" upgrade-commit 2>&1) || bad "upgrade-commit failed: $out"
 sleep 1
 check "提交后 JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/x)" "200"
 mkpkgs "$up3"
-out=$(sudo "$WRAPPER" upgrade-start "$up3" 2>&1) || bad "upgrade-start $up3 failed: $out"
-out=$(sudo "$WRAPPER" upgrade-abort 2>&1) || bad "upgrade-abort failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" upgrade-start "$up3" 2>&1) || bad "upgrade-start $up3 failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" upgrade-abort 2>&1) || bad "upgrade-abort failed: $out"
 check "中止后模块软链切回" "$(readlink /opt/syapp/modules/lua)" "lua-$up2"
 sleep 1
 check "中止后（旧 master 重载配置）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/y)$(body)" "200backend user=alice"
-out=$(sudo "$WRAPPER" reload 2>&1) || bad "reload after abort failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload after abort failed: $out"
 check "中止后 reload 正常" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
 check "进程名为 syapp" "$(ps -eo comm | sort -u | grep -i syapp | tr '\n' ' ')" "syapp"
 nocheck "没有上游名进程" "$(ps -eo comm,args | grep -vi ' grep' | grep -i 'ngi''nx' || true)" "ngi"
@@ -292,12 +307,12 @@ echo "== 附加包卸载"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) && bad "配置仍使用 Lua 时卸载被允许" || check "配置仍使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
 render r900101 0 || bad "render without Lua failed"
 sudo ln -sfn releases/r900101 /opt/syapp/conf/current
-out=$(sudo "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
 sleep 1
 check "切换到不含 Lua 的配置后原生规则仍生效" "$(req -H "$H" -A BadBot http://127.0.0.1/)" "403"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) || bad "uninstall failed: $out"
 [[ ! -e /opt/syapp/modules/lua ]] && ! ls -d /opt/syapp/modules/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
-out=$(sudo "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"
+out=$(sudo -n -u syapp "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"
 sleep 1
 check "卸载后 syapp 正常服务" "$(req -H "$H" http://127.0.0.1/)" "200"
 check "卸载后（未装附加包）含 Lua 的版本被 syapp -t 拒绝（agent 会回滚）" "$(sudo $SY -t -q -c /opt/syapp/conf/releases/r900100/syapp.conf 2>&1)" "modules/lua"

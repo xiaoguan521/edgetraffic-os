@@ -34,6 +34,11 @@ type Env struct {
 	Home        string                                                    // 当前用户的主目录（写 systemd --user 单元）
 	UserSystemd func() bool                                               // systemd --user 是否可用
 	Spawn       func(pidFile, logFile, name string, args ...string) error // 在后台启动进程（脱离终端）并写 pid 文件
+
+	// Handover 把以 root 运行的实例 master 无中断地切换为数据面用户（nonroot，见 nonroot.go）
+	Handover func(instance string) error
+	// SetCaps 给文件写入 security.capability 扩展属性（wrapper 的 CAP_NET_BIND_SERVICE，见 nonroot.go）
+	SetCaps func(path string, value []byte) error
 }
 
 func (e Env) path(p string) string { return filepath.Join(e.Root, filepath.FromSlash(p)) }
@@ -115,7 +120,9 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	if err := e.Run("useradd", "-r", "-g", group, "-d", "/nonexistent", "-s", "/usr/sbin/nologin", user); err != nil {
 		return fmt.Errorf("创建用户 %s: %w", user, err)
 	}
-	// 目录：实例前缀与档案属于 root（wrapper 据此确认实例由 root 创建）；配置目录与 agent 状态目录属于该实例的 agent 用户
+	// 目录：实例前缀与档案属于 root（wrapper 据此确认实例由 root 创建）；配置目录与 agent 状态目录属于该实例的 agent 用户；
+	// 运行时目录、日志与缓存属于数据面用户（master 不以 root 运行，设计 0001 D5）
+	dp := layout.WorkerUser()
 	for _, d := range []struct {
 		dir   string
 		mode  os.FileMode
@@ -124,11 +131,11 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 		{l.Prefix(), 0o755, ""},
 		{l.ConfRoot(), 0o755, user},
 		{l.ReleasesDir(), 0o755, user},
-		{l.LogDir(), 0o755, ""},
-		{l.CacheDir(), 0o755, ""},
+		{l.LogDir(), 0o755, dp},
+		{l.CacheDir(), 0o755, dp},
 		{l.AgentState(), 0o750, user},
 		// syapp -t 会检查 pid 文件所在目录；平时由服务单元的 RuntimeDirectory= 与 tmpfiles 创建，启动前先建好
-		{l.RunDir(), 0o755, ""},
+		{l.RunDir(), 0o755, dp},
 	} {
 		if err := os.MkdirAll(e.path(d.dir), d.mode); err != nil {
 			return err
@@ -137,7 +144,11 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 			return err
 		}
 		if d.owner != "" {
-			if err := e.Run("chown", d.owner+":"+group, d.dir); err != nil {
+			g := group
+			if d.owner == dp {
+				g = dp
+			}
+			if err := e.Run("chown", d.owner+":"+g, d.dir); err != nil {
 				return err
 			}
 		}
@@ -147,19 +158,7 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 		return err
 	}
 	// sudoers：写入临时文件，visudo 校验通过才生效
-	sp := e.path(l.SudoersFile())
-	if err := os.MkdirAll(filepath.Dir(sp), 0o750); err != nil {
-		return err
-	}
-	tmp := sp + ".new"
-	if err := writeFile(tmp, []byte(Sudoers(l)), 0o440); err != nil {
-		return err
-	}
-	if err := e.Run("visudo", "-cf", l.SudoersFile()+".new"); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("sudoers 校验失败: %w", err)
-	}
-	if err := os.Rename(tmp, sp); err != nil {
+	if err := e.writeSudoers(l); err != nil {
 		return err
 	}
 	if err := e.Run("systemctl", "daemon-reload"); err != nil {
@@ -169,8 +168,25 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	if err := e.Run("runuser", "-u", user, "--", l.AgentBin(), "bootstrap", "-instance", l.Instance()); err != nil {
 		return fmt.Errorf("生成初始配置: %w", err)
 	}
-	if err := e.Run(l.Bin(), "-t", "-q", "-c", l.CurrentConf()); err != nil {
+	// 经 wrapper 以数据面用户校验（与运行时相同的身份与能力，不会以 root 身份创建日志文件）
+	if err := e.wrapperCaps(); err != nil {
+		return err
+	}
+	if err := e.Run("runuser", "-u", dp, "--", l.WrapperBin(), "--instance", l.Instance(), "test", "r000000"); err != nil {
 		return fmt.Errorf("初始配置校验失败: %w", err)
+	}
+	if n := o.Profile.NoFile; n > defaultUnitNoFile {
+		// 非 root 的 master 不能把打开文件数调到单元限制之上：按档案写单元附加配置
+		dir := e.path("/etc/systemd/system/" + l.DataplaneUnit() + ".d")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err := writeFile(filepath.Join(dir, "nofile.conf"), []byte(fmt.Sprintf("[Service]\nLimitNOFILE=%d\n", n)), 0o644); err != nil {
+			return err
+		}
+		if err := e.Run("systemctl", "daemon-reload"); err != nil {
+			return err
+		}
 	}
 	if err := e.Run("systemctl", "enable", "--now", l.DataplaneUnit()); err != nil {
 		return fmt.Errorf("启动 %s: %w", l.DataplaneUnit(), err)
@@ -231,6 +247,7 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		return err
 	}
 	_ = e.Run("userdel", l.AgentUser())
+	_ = os.RemoveAll(e.path("/etc/systemd/system/" + l.DataplaneUnit() + ".d"))
 	for _, d := range dirs {
 		if err := removeInstanceDir(e.path(d), name); err != nil {
 			return err
@@ -270,14 +287,17 @@ func (e Env) syncFirewall() {
 	}
 	_ = e.Run("systemctl", "daemon-reload")
 	_ = e.Run("systemctl", "try-restart", FirewallRefreshUnit())
-	fw := "/usr/sbin/" + brand.Firewall()
-	if _, err := os.Stat(e.path(fw)); err != nil {
+	if _, err := os.Stat(e.path("/usr/sbin/" + brand.Firewall())); err != nil {
 		return
 	}
-	if err := e.Run(fw, "refresh"); err != nil {
-		e.say("警告：防火墙规则刷新失败（%v），现有规则保持不变；请检查后执行 %s refresh", err, fw)
+	// 经刷新服务执行（以防火墙专用用户、只带 CAP_NET_ADMIN 运行，不以 root 运行）；未启用防火墙时服务的条件不满足，什么都不做
+	if err := e.Run("systemctl", "start", FirewallRefreshService()); err != nil {
+		e.say("警告：防火墙规则刷新失败（%v），现有规则保持不变；请查看 journalctl -u %s", err, FirewallRefreshService())
 	}
 }
+
+// FirewallRefreshService 是刷新防火墙规则的服务。
+func FirewallRefreshService() string { return brand.Firewall() + "-refresh.service" }
 
 // removeInstanceDir 删除一个属于该实例的目录；路径必须带实例名，防止误删共用目录。
 func removeInstanceDir(dir, name string) error {
@@ -449,7 +469,7 @@ func Sudoers(l layout.Layout) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s —— 实例 %s 的 agent 只能操作本实例（%s instance add 生成，请勿手改）\n", l.SudoersFile(), l.Instance(), brand.ID())
 	for _, sub := range []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"} {
-		fmt.Fprintf(&b, "%s ALL=(root) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), l.WrapperBin(), l.Instance(), sub)
+		fmt.Fprintf(&b, "%s ALL=(%s) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), layout.WorkerUser(), l.WrapperBin(), l.Instance(), sub)
 	}
 	return b.String()
 }

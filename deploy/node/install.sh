@@ -42,6 +42,9 @@ echo "== 创建用户"
 getent group syapp >/dev/null || groupadd -r syapp
 id syapp >/dev/null 2>&1 || useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp
 id syapp-agent >/dev/null 2>&1 || useradd -r -g syapp -d /nonexistent -s /usr/sbin/nologin syapp-agent
+# 可选节点防火墙的专用用户：开机加载与自动刷新规则时只带 CAP_NET_ADMIN（运行时不使用 root）
+getent group syapp-firewall >/dev/null || groupadd -r syapp-firewall
+id syapp-firewall >/dev/null 2>&1 || useradd -r -g syapp-firewall -d /nonexistent -s /usr/sbin/nologin syapp-firewall
 
 echo "== 安装文件"
 # 可执行文件先写临时文件再 rename：正在运行的程序不能原地覆盖（Text file busy），
@@ -76,7 +79,19 @@ if [[ ! -e /opt/syapp/conf/current ]]; then
   syapp-agent bootstrap
 fi
 chown -R syapp-agent:syapp /opt/syapp/conf /var/lib/syapp-agent /run/syapp-agent
-/opt/syapp/sbin/syapp -t -q
+
+echo "== 运行时不使用 root"
+# 旧版本把防火墙规则放在 /etc/syapp：迁移到防火墙用户的目录
+if [[ -f /etc/syapp/firewall.nft && ! -e /var/lib/syapp-firewall/firewall.nft ]]; then
+  install -d -m 0700 -o syapp-firewall -g syapp-firewall /var/lib/syapp-firewall
+  for f in firewall.nft firewall.nft.args; do
+    [[ -f /etc/syapp/$f ]] && mv /etc/syapp/$f /var/lib/syapp-firewall/$f && chown syapp-firewall: /var/lib/syapp-firewall/$f
+  done
+fi
+systemctl daemon-reload
+# 交出运行时目录；升级前以 root 启动的 master 无中断切换为 syapp 运行（与二进制热升级同一机制，不重启）
+/usr/sbin/syapp-instance nonroot
+runuser -u syapp -- /opt/syapp/sbin/syapp -t -q
 
 echo "== 启动 syapp"
 systemctl daemon-reload

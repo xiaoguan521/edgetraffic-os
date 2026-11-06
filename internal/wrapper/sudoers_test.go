@@ -13,7 +13,7 @@ func TestSudoersContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const prefix = "syapp-agent ALL=(root) NOPASSWD: /usr/libexec/syapp/syapp-wrapper "
+	const prefix = "syapp-agent ALL=(syapp) NOPASSWD: /usr/libexec/syapp/syapp-wrapper "
 	want := []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"}
 	var got []string
 	for _, line := range strings.Split(string(b), "\n") {

@@ -11,8 +11,12 @@
 # 实例增删（syapp-instance）与每次发布（syapp-firewall-refresh.path 监视各实例的配置目录）后自动 refresh。
 # 规则只在独立的表 inet syapp_fw 中，不修改其他表；开机由 syapp-firewall.service 加载。
 set -euo pipefail
-RULES=${SYAPP_FW_RULES:-/etc/syapp/firewall.nft}
+# 规则与参数归防火墙专用用户 syapp-firewall 所有：开机加载与自动刷新都以该用户运行，只带 CAP_NET_ADMIN（运行时不使用 root，设计 0001 D5）
+RULES=${SYAPP_FW_RULES:-/var/lib/syapp-firewall/firewall.nft}
 ARGS="$RULES.args"   # enable 的参数（refresh 时沿用）
+FW_USER=${SYAPP_FW_USER:-syapp-firewall}
+# own <文件...>：以 root 执行（enable）时把文件交给防火墙用户；以该用户执行（refresh）时文件本来就属于它
+own() { if [[ $EUID -eq 0 ]] && id "$FW_USER" >/dev/null 2>&1; then chown "$FW_USER:" "$@"; fi; }
 UNIT=syapp-firewall.service
 REFRESH=syapp-firewall-refresh.path
 AGENT=${SYAPP_AGENT:-/usr/bin/syapp-agent}
@@ -25,7 +29,9 @@ usage() { sed -n '4,7p' "$0" | sed 's/^# \{0,3\}//'; exit 2; }
 # load <规则文件>：校验后原子替换并加载
 load() {
   "$NFT" -c -f "$1" || die "nft 校验失败"
-  install -o root -g root -m 0600 -D "$1" "$RULES.new"
+  mkdir -p "$(dirname "$RULES")"
+  install -m 0600 "$1" "$RULES.new"
+  own "$RULES.new"
   mv -f "$RULES.new" "$RULES"
   "$NFT" -f "$RULES"
 }
@@ -65,8 +71,10 @@ case "$cmd" in
       fi
     done
     load "$tmp"
-    install -o root -g root -m 0600 /dev/null "$ARGS"
+    install -m 0600 /dev/null "$ARGS"
     printf '%s\n' "${saved[@]}" > "$ARGS"
+    own "$ARGS"
+    if [[ $EUID -eq 0 ]] && id "$FW_USER" >/dev/null 2>&1; then chown "$FW_USER:" "$(dirname "$RULES")"; chmod 0700 "$(dirname "$RULES")"; fi
     $SYSTEMCTL daemon-reload
     $SYSTEMCTL enable "$UNIT" >/dev/null 2>&1
     $SYSTEMCTL start "$UNIT"   # oneshot + RemainAfterExit：标记为已启用，规则已在上一步加载
@@ -75,7 +83,7 @@ case "$cmd" in
     echo "已启用：对所有来源开放 ${open:-无}；SSH($port) 仅允许 $from"
     ;;
   refresh)
-    [[ $EUID -eq 0 ]] || die "请以 root 运行"
+    # 由 syapp-firewall-refresh.service 以防火墙用户运行（只带 CAP_NET_ADMIN），也可由 root 手工执行
     if [[ ! -f "$ARGS" ]] || ! "$NFT" list table inet syapp_fw >/dev/null 2>&1; then
       echo "防火墙未启用，无需刷新"; exit 0
     fi

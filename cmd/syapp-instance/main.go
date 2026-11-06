@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,10 +20,34 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/instance"
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
+	"github.com/xiaoguan521/edgetraffic-os/internal/wrapper"
 )
 
 func main() {
+	// launcher 模式：nonroot 切换时，以 root 运行的旧 master 经共用软链执行本程序（argv0 为数据面二进制的路径），
+	// 降权为数据面用户后再执行真正的二进制（设计 0001 D5，wrapper.Handover）
+	if filepath.Base(os.Args[0]) == brand.ID() {
+		wrapper.Launch(os.Args[0])
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Geteuid()))
+}
+
+// handover 是生产环境的 Env.Handover：把以 root 运行的实例 master 切换为数据面用户。
+func handover(name string) error {
+	u, err := user.Lookup(layout.WorkerUser())
+	if err != nil {
+		return err
+	}
+	uid, _ := strconv.Atoi(u.Uid)
+	gid, _ := strconv.Atoi(u.Gid)
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		return err
+	}
+	return wrapper.Handover(wrapper.DefaultPathsForInstance(name), self, uid, gid)
 }
 
 func usage(w io.Writer) {
@@ -32,7 +58,9 @@ func usage(w io.Writer) {
   %[1]s remove <实例名> [--purge] [--yes]     不加 --yes 只显示将执行的操作
   %[1]s list
   %[1]s check
-  %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用）
+  %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用，可由数据面用户执行）
+  %[1]s nonroot                               运行时不使用 root：交出运行时目录、仍以 root 运行的 master
+                                              无中断切换为数据面用户（安装与升级软件包时自动执行）
 
 user 模式（普通用户安装，不需要 root；端口须 ≥ 1024）：在以上命令前加 --root <安装根目录>，另有
   %[1]s --root <目录> init --http <端口> --https <端口> --status <端口> [注册参数]   创建该根目录的默认实例
@@ -48,9 +76,13 @@ func env(out io.Writer, userRoot string) instance.Env {
 		UserSystemd: func() bool {
 			return exec.Command("systemctl", "--user", "show-environment").Run() == nil
 		},
-		Spawn: spawn,
-		Root:  "/",
-		Out:   out,
+		Spawn:    spawn,
+		Handover: handover,
+		SetCaps: func(path string, value []byte) error {
+			return syscall.Setxattr(path, "security.capability", value, 0)
+		},
+		Root: "/",
+		Out:  out,
 		Run: func(name string, args ...string) error {
 			c := exec.Command(name, args...) // 参数切片执行，不经过 shell
 			c.Stdout, c.Stderr = out, os.Stderr
@@ -86,7 +118,7 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 	case userRoot != "" && euid == 0:
 		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: user 模式（--root）请以普通用户运行")
 		return 1
-	case userRoot == "" && euid != 0 && cmd != "list" && cmd != "check":
+	case userRoot == "" && euid != 0 && cmd != "list" && cmd != "check" && cmd != "reopen-all":
 		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: 请以 root 运行（普通用户请使用 --root <安装根目录>）")
 		return 1
 	case userRoot == "" && (cmd == "init" || cmd == "ensure"):
@@ -116,6 +148,8 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		_, _ = fmt.Fprintln(stdout, "未发现问题")
 	case "reopen-all":
 		err = e.ReopenAll()
+	case "nonroot":
+		err = e.Nonroot()
 	default:
 		usage(stderr)
 		return 2

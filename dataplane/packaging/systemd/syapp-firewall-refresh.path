@@ -2,7 +2,7 @@
 # 具名实例的配置目录由 syapp-instance 写入 syapp-firewall-refresh.path.d/instances.conf。
 [Unit]
 Description=syapp firewall: refresh rules when instance configurations change
-ConditionPathExists=/etc/syapp/firewall.nft.args
+ConditionPathExists=/var/lib/syapp-firewall/firewall.nft.args
 
 [Path]
 PathChanged=/opt/syapp/conf

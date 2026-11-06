@@ -125,8 +125,6 @@ func (p Profile) reservedPorts() map[int]bool {
 
 // profileView 是模板中 .P 的内容。
 type profileView struct {
-	User        bool   // 输出 user 指令（只在 system 模式下有意义：非 root 的 master 会忽略并告警）
-	Worker      string // worker 进程用户
 	NoFile      int
 	PidFile     string
 	ErrorLog    string
@@ -153,7 +151,7 @@ func (p Profile) view() profileView {
 		mods = l.Modules() + "/"
 	}
 	return profileView{
-		User: l.Mode() == layout.ModeSystem, Worker: brand.ID(), NoFile: p.Files(),
+		NoFile:  p.Files(),
 		PidFile: l.PidFile(), ErrorLog: l.ErrorLog(), AccessLog: l.AccessLog(), StreamLog: l.LogDir() + "/stream.log",
 		CustomTemp: l.CacheDir() != layout.System("").CacheDir(), TempDir: l.CacheDir(),
 		HTTP: p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
