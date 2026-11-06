@@ -536,7 +536,14 @@ func (e Env) ReopenAll() error {
 		} else if in.Name != "" {
 			args = []string{"-c", l.CurrentConf(), "-s", "reopen"}
 		}
-		if err := e.Run(l.Bin(), args...); err != nil && first == nil {
+		bin := l.Bin()
+		// 运行时不使用 root（D5）：`-s reopen` 会先以执行者身份打开错误日志，root 执行会留下 root 所有的日志文件，
+		// 之后以数据面用户运行的 master 与 `-t` 无法写入；以 root 执行时（logrotate）经 runuser 以数据面用户发送
+		if !e.user() && os.Geteuid() == 0 {
+			args = append([]string{"-u", layout.WorkerUser(), "--", bin}, args...)
+			bin = "runuser"
+		}
+		if err := e.Run(bin, args...); err != nil && first == nil {
 			first = fmt.Errorf("%s: %w", label(in.Name), err)
 		}
 	}

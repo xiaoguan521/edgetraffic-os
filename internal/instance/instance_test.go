@@ -348,6 +348,12 @@ func TestReopenAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"/opt/syapp/sbin/syapp -s reopen", "/opt/syapp/sbin/syapp -c /opt/syapp/instances/blue/conf/current/syapp.conf -s reopen"}
+	// 运行时不使用 root（D5）：以 root 执行时经 runuser 以数据面用户发送信号，`-s` 打开的日志不会变成 root 所有
+	if os.Geteuid() == 0 {
+		for i := range want {
+			want[i] = "runuser -u syapp -- " + want[i]
+		}
+	}
 	if strings.Join(f.cmds, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands = %q", f.cmds)
 	}
