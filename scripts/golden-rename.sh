@@ -21,6 +21,7 @@ check "-V 配置路径"                   "\"$BIN\" -V 2>&1 | grep -q -- '--conf
 check "ps -C syapp"                  "ps -C syapp -o comm= | grep -q syapp"
 check "master 进程标题"               "ps -eo args | grep -q '^syapp: master process'"
 check "worker 进程标题"               "ps -eo args | grep -q '^syapp: worker process'"
+check "master 与 worker 都不以 root 运行" "! ps -C syapp -o user= | grep -qx root"
 if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then
   check "systemd 单元 syapp.service"  "systemctl is-active syapp.service"
 else

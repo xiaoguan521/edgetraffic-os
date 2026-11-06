@@ -736,6 +736,34 @@ sudo syapp-firewall disable
 
 刷新时如果某个实例的配置监听了 SSH 端口，会拒绝生成并保留现有规则（日志见 `journalctl -u syapp-firewall-refresh`）。从旧版本升级后需执行一次 `enable`（参数同前），之后才会自动刷新。
 
+### 8.10 运行身份：运行时不使用 root
+
+安装、卸载与 `syapp-instance` 等管理命令需要 root；运行时的进程都不是 root：
+
+| 进程 | 运行身份 | 能力 |
+| --- | --- | --- |
+| `syapp` master 与 worker（`syapp.service`、`syapp@<实例>.service`） | `syapp` | 只有 `CAP_NET_BIND_SERVICE`（绑定 80/443） |
+| `syapp-wrapper`（agent 经 sudo 调用，sudoers 为 `(syapp)`） | `syapp` | 文件能力 `cap_net_bind_service=ip`，只允许 `syapp` 组执行 |
+| `syapp-agent` | `syapp-agent`、`syapp-agent-<实例>` | 无 |
+| 防火墙开机加载与自动刷新 | `syapp-firewall` | 只有 `CAP_NET_ADMIN` |
+
+检查：
+
+```bash
+ps -C syapp -o user=,args=                         # 全部为 syapp
+grep CapEff /proc/$(cat /run/syapp/syapp.pid)/status   # 0000000000000400（只有 CAP_NET_BIND_SERVICE）
+getcap /usr/libexec/syapp/syapp-wrapper            # cap_net_bind_service=ip
+```
+
+从旧版本升级时，运行中的 master 仍以 root 运行。安装脚本与软件包会自动执行 `sudo syapp-instance nonroot`，用与二进制热升级相同的方式（USR2）把它无中断地切换为 `syapp` 运行，不重启、不断开连接。该命令可以重复执行；单独替换了 wrapper 文件（会丢失文件能力）后也应执行一次。
+
+其他变化：
+
+- 日志、缓存、`/run/syapp*`、`/opt/syapp/versions` 归 `syapp`；logrotate 以 `syapp` 身份轮转并重新打开日志。
+- 节点防火墙的规则与参数从 `/etc/syapp/firewall.nft` 移到 `/var/lib/syapp-firewall/`（升级时自动迁移）。
+- 手工校验配置请以 `syapp` 身份经 wrapper 执行：`sudo -u syapp /usr/libexec/syapp/syapp-wrapper test <版本号>`；以 root 直接执行 `syapp -t` 可能创建属于 root 的日志文件，导致 master 无法写入。
+- 配置中不再有 `user` 指令（worker 与 master 同为 `syapp`）。
+
 ## 9. 升级、回滚与备份
 
 ### 9.1 普通软件包升级

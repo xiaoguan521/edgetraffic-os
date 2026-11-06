@@ -58,6 +58,7 @@ load_stop() {
   wc -l < "$W/load-$1.err"
 }
 masterpid() { cat "$1" 2>/dev/null; }
+uid_of() { awk '/^Uid:/{print $2}' "/proc/$1/status" 2>/dev/null; }
 # drop <投放目录>：与 agent 下载后的文件名一致（<品牌>-<版本>.tar.gz 与 .sig）
 drop() { cp "$UPKG" "$1/syapp-$UP.tar.gz"; cp "$UPKG.sig" "$1/syapp-$UP.tar.gz.sig"; }
 exe() { readlink "/proc/$(masterpid "$1")/exe" 2>/dev/null | sed 's/ (deleted)$//'; }
@@ -139,7 +140,7 @@ user_phase() {
 }
 
 system_phase() {
-  echo "== system 模式（MI-01 / MI-02 / MI-03 / MI-04 / MI-05 / MI-07）"
+  echo "== system 模式（MI-01 / MI-02 / MI-03 / MI-04 / MI-05 / MI-07；D5 运行时不使用 root）"
   command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || { bad "system 阶段需要 systemd"; return; }
   systemctl stop syapp.service 'syapp@*' >/dev/null 2>&1 || true
   rm -rf /opt/syapp /var/lib/syapp-agent* /var/log/syapp* /var/cache/syapp*
@@ -148,11 +149,47 @@ system_phase() {
   local P; P=$(ls -d "$W"/nd/edgetraffic-os-node-[0-9]*/ | head -1)
   out=$(cd "$P" && ./install.sh 2>&1) && ok "安装节点包（默认实例）" || { bad "install.sh：$out"; return; }
   install -m 0755 "$W/wrapper" /usr/libexec/syapp/syapp-wrapper   # 注入 CI 公钥（升级包验签）
+  syapp-instance nonroot >/dev/null 2>&1   # 替换文件后重新设置 wrapper 的属组、权限与 CAP_NET_BIND_SERVICE
+  # security.capability：VFS_CAP_REVISION_2，CAP_NET_BIND_SERVICE（bit 10）在 permitted 与 inheritable，不设 effective
+  capx=$(python3 -c "import os,sys;print(os.getxattr(sys.argv[1],'security.capability').hex())" /usr/libexec/syapp/syapp-wrapper 2>&1)
+  [[ "$capx" == 000000020004000000040000* && "$(stat -c '%a %U %G' /usr/libexec/syapp/syapp-wrapper)" == "750 root syapp" ]] \
+    && ok "wrapper 只带 CAP_NET_BIND_SERVICE（不是 setuid），只允许 syapp 组执行" || bad "wrapper 文件能力 $capx / $(stat -c '%a %U %G' /usr/libexec/syapp/syapp-wrapper)"
+
+  echo "== D5 运行时不使用 root：升级前以 root 运行的 master 无中断切换"
+  # 模拟升级前的节点：单元以 root 运行（旧版本的单元），master 以 root 启动
+  mkdir -p /etc/systemd/system/syapp.service.d
+  printf '[Service]\nUser=\nGroup=\nAmbientCapabilities=\nCapabilityBoundingSet=\nNoNewPrivileges=no\n' > /etc/systemd/system/syapp.service.d/legacy-root.conf
+  systemctl daemon-reload && systemctl restart syapp.service
+  local LD=/run/syapp/syapp.pid
+  [[ "$(uid_of "$(masterpid $LD)")" == 0 ]] && ok "模拟升级前：master 以 root 运行" || bad "模拟升级前的 master 不是 root"
+  rm -f /etc/systemd/system/syapp.service.d/legacy-root.conf && systemctl daemon-reload   # 新版本的单元
+  local m0; m0=$(masterpid $LD)
+  load_start legacy 8081
+  out=$(syapp-instance nonroot 2>&1) || bad "nonroot：$out"
+  sleep 1
+  n=$(load_stop legacy)
+  local m1; m1=$(masterpid $LD)
+  [[ "$m1" != "$m0" && "$(uid_of "$m1")" == "$(id -u syapp)" ]] && ok "master 已无中断切换为 syapp 运行（$m0 → $m1）" || bad "切换后 master $m1 uid $(uid_of "$m1")：$out"
+  [[ "$(awk '/^CapEff:/{print $2}' /proc/$m1/status)" == 0000000000000400 ]] && ok "新 master 只有 CAP_NET_BIND_SERVICE" || bad "新 master 能力 $(awk '/^CapEff:/{print $2}' /proc/$m1/status)"
+  [[ "$n" == 0 ]] && ok "切换期间持续请求零错误" || bad "切换期间 $n 次请求失败"
+  systemctl reload syapp.service && systemctl is-active -q syapp.service && ok "切换后 systemctl reload 正常（单元以 syapp 执行）" || bad "切换后 reload 失败"
+  out=$(/usr/libexec/syapp/syapp-wrapper reload 2>&1) && bad "wrapper 以 root 运行未被拒绝" || ok "wrapper 拒绝以 root 运行"
+
+  echo "== D5 防火墙以专用用户运行（只带 CAP_NET_ADMIN）"
+  out=$(env -u SSH_CONNECTION syapp-firewall enable --ssh-from 10.0.0.0/8 2>&1) && ok "启用节点防火墙" || bad "启用防火墙：$out"
+  [[ "$(stat -c %U /var/lib/syapp-firewall/firewall.nft 2>/dev/null)" == syapp-firewall ]] && ok "规则文件属于 syapp-firewall" || bad "规则文件属主 $(stat -c %U /var/lib/syapp-firewall/firewall.nft 2>&1)"
   for spec in "blue 18080 18443 8082" "green 28080 28443 8083"; do
     set -- $spec
     out=$(syapp-instance add "$1" --http "$2" --https "$3" --status "$4" 2>&1) && ok "添加实例 $1" || bad "添加 $1：$out"
   done
   local D=/run/syapp/syapp.pid B=/run/syapp-blue/syapp.pid G=/run/syapp-green/syapp.pid
+  # 实例增删后由刷新服务（防火墙用户）按实例配置放行
+  nft list table inet syapp_fw 2>/dev/null | grep -q 28080 && ok "新增实例 green 后防火墙已放行 28080（刷新服务以非 root 运行）" \
+    || bad "防火墙未放行 28080：$(journalctl -u syapp-firewall-refresh.service --no-pager -n 5 2>&1 | tr '\n' ' ')"
+  [[ "$(systemctl show -p User --value syapp-firewall-refresh.service)" == syapp-firewall ]] && ok "刷新服务以 syapp-firewall 运行" || bad "刷新服务身份不对"
+  # 运行时没有 root 进程：全部实例的 master 与 worker
+  local roots; roots=$(ps -C syapp -o user= | grep -cx root)
+  [[ "$roots" == 0 ]] && ok "D5 三个实例的 master 与 worker 都不以 root 运行" || bad "D5 有 $roots 个数据面进程以 root 运行"
 
   echo "== MI-02 端口冲突"
   out=$(syapp-instance add red --http 18080 --https 38443 --status 8084 2>&1) && bad "与 blue 端口冲突未被拒绝" \
@@ -166,16 +203,16 @@ system_phase() {
   echo "== MI-01 单实例 reload 只替换该实例的 worker"
   local dm bm gm dw bw gw
   dm=$(masterpid $D); bm=$(masterpid $B); gm=$(masterpid $G); dw=$(workers $D); bw=$(workers $B); gw=$(workers $G)
-  runuser -u syapp-agent-blue -- sudo -n /usr/libexec/syapp/syapp-wrapper --instance blue reload >/dev/null 2>&1 || bad "blue 的 agent 用户 reload 失败"
+  runuser -u syapp-agent-blue -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper --instance blue reload >/dev/null 2>&1 || bad "blue 的 agent 用户 reload 失败"
   sleep 1.5
   [[ "$(workers $B)" != "$bw" && "$(masterpid $B)" == "$bm" ]] && ok "blue worker 已替换，master 不变" || bad "blue reload 结果不对"
   [[ "$(masterpid $D)" == "$dm" && "$(workers $D)" == "$dw" && "$(masterpid $G)" == "$gm" && "$(workers $G)" == "$gw" ]] \
     && ok "默认实例与 green 的 master / worker 都不变" || bad "reload blue 影响了其他实例"
 
   echo "== MI-05 跨实例操作被 sudo 拒绝"
-  runuser -u syapp-agent-blue -- sudo -n /usr/libexec/syapp/syapp-wrapper --instance green reload >/dev/null 2>&1 \
+  runuser -u syapp-agent-blue -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper --instance green reload >/dev/null 2>&1 \
     && bad "syapp-agent-blue 能操作 green" || ok "syapp-agent-blue 操作 green 被拒绝"
-  runuser -u syapp-agent-blue -- sudo -n /usr/libexec/syapp/syapp-wrapper reload >/dev/null 2>&1 \
+  runuser -u syapp-agent-blue -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper reload >/dev/null 2>&1 \
     && bad "syapp-agent-blue 能操作默认实例" || ok "syapp-agent-blue 操作默认实例被拒绝"
 
   echo "== MI-07 reopen-all"
@@ -190,9 +227,9 @@ system_phase() {
     mkdir -p "$a/upgrade"; drop "$a/upgrade"
   done
   local newbin=/opt/syapp/versions/$UP/sbin/syapp
-  local W_D=(runuser -u syapp-agent -- sudo -n /usr/libexec/syapp/syapp-wrapper)
-  local W_B=(runuser -u syapp-agent-blue -- sudo -n /usr/libexec/syapp/syapp-wrapper --instance blue)
-  local W_G=(runuser -u syapp-agent-green -- sudo -n /usr/libexec/syapp/syapp-wrapper --instance green)
+  local W_D=(runuser -u syapp-agent -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper)
+  local W_B=(runuser -u syapp-agent-blue -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper --instance blue)
+  local W_G=(runuser -u syapp-agent-green -- sudo -n -u syapp /usr/libexec/syapp/syapp-wrapper --instance green)
   load_start sys 8081 8082 8083
   out=$("${W_D[@]}" upgrade-start $UP 2>&1) || bad "默认实例 upgrade-start：$out"
   "${W_D[@]}" upgrade-commit >/dev/null 2>&1 || bad "默认实例 upgrade-commit"
@@ -220,6 +257,7 @@ system_phase() {
   id syapp-agent-blue >/dev/null 2>&1 && bad "blue 的 agent 用户未删除" || ok "blue 的 agent 用户与 sudoers 已删除"
   out=$(cd "$P" && ./uninstall.sh 2>&1) && bad "有具名实例时卸载未被拒绝" || { [[ "$out" == *green* ]] && ok "MI-04 有具名实例（green）时卸载被拒绝" || bad "卸载拒绝信息不明：$out"; }
   systemctl is-active -q syapp@green.service && ok "被拒绝的卸载没有影响 green" || bad "green 被停止"
+  syapp-firewall disable >/dev/null 2>&1 || true
 }
 
 case "$PHASE" in
