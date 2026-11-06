@@ -119,11 +119,19 @@ user_phase() {
   [[ "$(exe "$dpid")" == "$newbin" && "$(exe "$bpid")" == "$newbin" ]] && ok "MI-03 两个实例都运行新版本" || bad "MI-03 运行版本：$(exe "$dpid") / $(exe "$bpid")"
   [[ "$n" == 0 ]] && ok "MI-03 热升级期间持续请求零错误" || bad "MI-03 热升级期间 $n 次请求失败：$(head -3 "$W/load-user.err" | tr '\n' ' ')"
 
+  # ensure（cron 每分钟执行）：热升级后的 master 运行版本库中的二进制，仍须识别为在运行，不能再启动一份
+  local m0 m1; m0="$(masterpid "$dpid") $(masterpid "$bpid")"
+  out=$("${as[@]}" "$R/bin/syapp-instance" --root "$R" ensure 2>&1)
+  m1="$(masterpid "$dpid") $(masterpid "$bpid")"
+  [[ "$m0" == "$m1" && "$out" != *已启动数据面* ]] && ok "热升级后 ensure 不重复启动数据面" || bad "热升级后 ensure 误判：$out（master $m0 → $m1）"
+
   echo "== 删除 blue（默认实例持续请求）"
   load_start userrm 18181
   out=$("${as[@]}" "$R/bin/syapp-instance" --root "$R" remove blue --yes 2>&1) || bad "remove blue：$out"
   n=$(load_stop userrm)
   [[ ! -d "$R/instances/blue" && -d "$R/removed-logs" ]] && ok "blue 已删除，日志保留在 removed-logs" || bad "blue 删除结果不对"
+  sleep 1
+  pgrep -u "$U" -f "$R/instances/blue/" >/dev/null && bad "删除后 blue 的（已热升级的）master 仍在运行" || ok "删除后 blue 的 master 已退出"
   [[ "$n" == 0 ]] && ok "删除 blue 时默认实例零错误" || bad "删除 blue 时默认实例 $n 次失败"
   # 清理：让默认实例退出
   "${as[@]}" "$R/bin/syapp-wrapper" quit >/dev/null 2>&1

@@ -292,6 +292,9 @@ func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) 
 	if _, err := store.First[store.NodeGroup](d.Store, groupID); err != nil {
 		return nil, err
 	}
+	if variant != "gmssl" && d.HasGMSites(groupID) {
+		return nil, errors.New("节点组有启用国密双证书的站点，只能升级到国密版（gmssl）；如需换成其他变体，请先去掉这些站点的国密证书并发布")
+	}
 	nodes, err := d.upgradeParticipants(groupID)
 	if err != nil {
 		return nil, err

@@ -75,7 +75,7 @@ func TestAddCreatesInstance(t *testing.T) {
 	if st, _ := os.Stat(f.path(l.Prefix())); st == nil || st.Mode().Perm() != 0o755 {
 		t.Fatal("prefix dir must be 0755")
 	}
-	for _, d := range []string{l.ReleasesDir(), l.LogDir(), l.CacheDir(), l.AgentState()} {
+	for _, d := range []string{l.ReleasesDir(), l.LogDir(), l.CacheDir(), l.AgentState(), l.RunDir()} {
 		if _, err := os.Stat(f.path(d)); err != nil {
 			t.Errorf("missing dir %s", d)
 		}
