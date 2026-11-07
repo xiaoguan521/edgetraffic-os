@@ -23,7 +23,7 @@ SyEdge 边缘节点
 在控制台“节点”页点“添加节点”，把生成的命令粘贴到本机执行即可接入，例如：
 
   sudo syedge-agent enroll -server <控制台>:9443 -token <令牌> -ca-fingerprint <指纹> \
-    && sudo systemctl enable --now syedge-agent
+    && sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent
 
 也可以在安装时一步完成：
 
@@ -32,7 +32,7 @@ SyEdge 边缘节点
 独立模式（不接入控制台）：
 
   只安装 syedge 软件包（rpm -i / dnf install / apt install syedge）即可独立使用，安装时写入初始配置：
-    systemctl enable --now syedge
+    systemctl enable syedge && systemctl start syedge
     cp /opt/syedge/share/defaults/standalone-example.conf /opt/syedge/conf/current/conf.d/www.conf
     syedge -t && systemctl reload syedge
   详见 /opt/syedge/share/doc/STANDALONE.txt。之后要接入控制台时，若本机已有自定义配置，注册会被拒绝以免被

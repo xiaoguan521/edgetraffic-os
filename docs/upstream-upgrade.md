@@ -50,28 +50,15 @@
 
 ### 2.3 自动检查脚本
 
-项目提供 `scripts/ci/check-upstream.sh`，可集成到 CI 定时任务或本地 cron：
+`scripts/ci/check-upstream.sh` 检查 `dataplane/UPSTREAM` 与 `dataplane/DEPS` 锁定的版本在**同一版本线**内是否有新版本：
+上游 stable（如 1.30.x）、OpenSSL（如 3.5.x）、PCRE2、zlib、铜锁（如 8.x）。有新版本时退出码为 1，查询失败为 2；
+发现更新的 stable 版本线（如 1.32）时只提示，不算失败（大版本升级见第 4 节）。
 
 ```bash
-#!/usr/bin/env bash
-# 检查 nginx stable 是否有新版本（建议每周运行一次）
-set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/../../dataplane/UPSTREAM"
-
-# 取当前 stable 大版本号（如 1.30）
-major_minor="${UPSTREAM_VERSION%.*}"
-
-latest=$(git ls-remote --tags https://github.com/nginx/nginx.git "release-${major_minor}.*" \
-  | awk -F/ '{print $NF}' | sed 's/release-//' | sort -V | tail -1)
-
-if [[ "$latest" != "$UPSTREAM_VERSION" ]]; then
-  echo "::warning::nginx 新版本可用: $latest（当前 $UPSTREAM_VERSION）"
-  exit 1
-else
-  echo "nginx stable $UPSTREAM_VERSION 已是最新"
-fi
+scripts/ci/check-upstream.sh
 ```
+
+CI 中由 `.github/workflows/upstream-check.yml` 每周一运行一次（也可在 Actions 页手动触发），有新版本时该工作流失败并给出注解。
 
 ## 3. 升级操作步骤
 
@@ -105,32 +92,30 @@ git ls-remote https://github.com/nginx/nginx.git refs/tags/release-1.30.7
 
 `build-syedge.sh` 会自动在新版源码上执行 `patch -p1`。大多数小版本升级 patch 可以直接应用。
 
-**如果 patch 应用失败：**
+**改名 patch 的来源是模板。** 仓库中的 `0001-syedge-rename.patch` 由模板 `dataplane/patches/0001-rename.patch.tmpl`
+经 `dataplane/gen-rename-patch` 生成，两者必须逐字节一致（`TestDefaultBrandMatchesCommittedPatch`），OEM 品牌也从同一个模板生成。
+因此 patch 冲突时**改模板**，不要直接改生成的 patch：
 
 ```bash
-# 手动检查冲突
+# 1. 在新版本源码上试应用，找出冲突的文件
 WORK=$(mktemp -d)
 git clone --depth 1 --branch release-1.30.7 https://github.com/nginx/nginx.git "$WORK/src"
-cd "$WORK/src"
-patch -p1 --dry-run < /path/to/dataplane/patches/0001-syedge-rename.patch
+(cd "$WORK/src" && patch -p1 --dry-run < "$OLDPWD/dataplane/patches/0001-syedge-rename.patch")
 
-# 冲突文件会列出；对照 dataplane/patches/README.md 中的 20 个文件表逐一修复
-# 修复原则（ADR 0001）：只改字符串字面量与宏的值，不改判断、结构体、函数签名、模块 ABI
+# 2. 修改模板中对应的 hunk（上下文行与行号），占位符 @ID@ / @IDUP@ / @PROC@ / @PROCLEN2@ / @HPACK@ 保持不变；
+#    修复原则（ADR 0001）：只改字符串字面量与宏的值，不改判断、结构体、函数签名、模块 ABI；
+#    对照 dataplane/patches/README.md 的文件表逐一检查
 
-# 修复后重新生成 patch
-cd "$WORK"
-git clone --depth 1 --branch release-1.30.7 https://github.com/nginx/nginx.git orig
-diff -ruN orig/src src/src > /path/to/dataplane/patches/0001-syedge-rename.patch
+# 3. 由模板重新生成默认品牌的 patch，并跑生成器测试与其他品牌的矩阵
+go run ./dataplane/gen-rename-patch -id syedge -proc SyEdge -o dataplane/patches/0001-syedge-rename.patch
+go test ./dataplane/gen-rename-patch/
+make brand-matrix
 ```
 
 修复后同步更新 `dataplane/patches/README.md` 中的版本号和文件表。
 
-**HTTP/2 server 头特殊处理：** 如果品牌名变化或 HPACK 编码有变，需要重新生成编码值：
-
-```bash
-go run ./dataplane/hpack-gen syedge
-# 把输出的字节序列更新到 patch 中对应 v2 filter 的位置
-```
+**HTTP/2 server 头：** 模板中的 `@HPACK@` 由 `gen-rename-patch` 按品牌自动计算，无需手工处理；
+需要单独查看编码值时可以运行 `go run ./dataplane/hpack-gen syedge`。
 
 ### 3.4 更新静态依赖（按需）
 
@@ -158,8 +143,8 @@ dataplane/build-syedge.sh -S -o dist/
 # 国密变体构建
 dataplane/build-syedge.sh -S -t tongsuo -o dist/
 
-# Lua 变体构建（如适用）
-dataplane/build-syedge-lua.sh -S -o dist/
+# Lua 附加包构建（如适用；同时产出标准版与国密版基础包到 dist-lua/base，-v 可指定附加包版本）
+dataplane/build-syedge-lua.sh -o dist-lua/
 
 # 项目测试
 make test
@@ -218,4 +203,4 @@ git commit -m "upgrade: nginx $OLD_VERSION -> $NEW_VERSION
 
 | 日期 | nginx 版本 | 主要原因 | PR |
 |---|---|---|---|
-| 2026-10-14 | 1.30.6 | 修复 CVE-2026-15176 等 5 个中危漏洞 | 初始版本 |
+| 2026-10-14 | 1.30.6 | 初始锁定版本（修复的 CVE 以上游安全公告为准：https://nginx.org/en/security_advisories.html） | 初始版本 |

@@ -35,9 +35,15 @@ func (e Env) Nonroot() error {
 	if err != nil {
 		return err
 	}
+	if err := e.writeRuntimeTmpfiles(); err != nil {
+		return err
+	}
 	if e.RootMaster || e.rootMaster() || (e.Ambient != nil && !e.Ambient()) {
 		return e.rootMasterSetup(insts)
 	}
+	// 离开（或从未进入）兼容模式：删除生成的覆盖单元与旧版附加配置，软件包单元生效
+	e.removeCompatUnits()
+	_ = e.Run("systemctl", "daemon-reload")
 	dp := layout.WorkerUser()
 	owner := dp + ":" + dp
 	def := layout.System("")

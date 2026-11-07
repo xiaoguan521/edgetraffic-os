@@ -235,7 +235,7 @@ sudo syedge-agent enroll \
   -token <一次性令牌> \
   -ca-fingerprint <控制台CA的SHA256指纹>
 
-sudo systemctl enable --now syedge-agent
+sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent
 sudo systemctl status syedge-agent --no-pager
 ```
 
@@ -266,14 +266,14 @@ RPM 系统：
 
 ```bash
 sudo dnf install ./syedge-<版本>*.rpm ./syedge-agent-<版本>*.rpm
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 Debian/Ubuntu：
 
 ```bash
 sudo apt install ./syedge_<版本>*.deb ./syedge-agent_<版本>*.deb
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 首次安装后，按照“4.2 安装后注册到控制台”注册 Agent。`syedge-agent` 软件包依赖 `syedge` 和 `sudo`；可选的 `syedge-firewall` 需要额外安装 `nftables`。
@@ -313,7 +313,7 @@ sudo syedge-agent bootstrap
 sudo chown -R syedge-agent:syedge /opt/syedge/conf /var/lib/syedge-agent /run/syedge-agent
 sudo syedge -t -q
 sudo systemctl daemon-reload
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 手工组装容易出现用户、权限、systemd 和默认配置不一致，生产环境应优先使用完整节点包或 RPM/DEB。
@@ -402,7 +402,7 @@ ETOS_DATA=/var/lib/syedge-console
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now syedge-console
+sudo systemctl enable syedge-console && sudo systemctl start syedge-console
 sudo systemctl status syedge-console --no-pager
 ```
 
@@ -533,7 +533,7 @@ Lua 模块与 `syedge` 二进制版本强绑定。升级带 Lua 的节点时，�
 只运行数据面、不接入控制台时，安装后的基线配置已经存在：
 
 ```bash
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 sudo cp /opt/syedge/share/defaults/standalone-example.conf \
   /opt/syedge/conf/current/conf.d/www.conf
 sudo vi /opt/syedge/conf/current/conf.d/www.conf
@@ -618,12 +618,14 @@ sudo syedge-instance remove blue           # 只显示将执行的操作
 sudo syedge-instance remove blue --yes     # 优雅停止并删除实例（保留日志；加 --purge 一并删除日志与缓存）
 ```
 
-删除实例后，请在控制台“节点”页删除对应节点。日志轮转（logrotate）会对所有实例执行 `syedge-instance reopen-all`。
+删除实例后，请在控制台“节点”页吊销对应节点；不再使用的节点组可随后删除（见下）。日志轮转（logrotate）会对所有实例执行 `syedge-instance reopen-all`。
 
 **卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syedge-instance remove`，或执行 `uninstall.sh --all`。软件包升级不会停止任何实例。
 
 **控制台中的同机多实例**：
 
+- 节点组的生命周期都在“节点”页完成：“新建节点组”（管理员）→“节点组设置”中改名、修改说明与回源网段、编辑实例档案（操作员）→“节点组设置 → 删除节点组…”（管理员）。
+  删除前会列出将随组删除的站点、上游、版本与发布记录等；组内还有未吊销的节点、有进行中的发布 / 审批 / 灰度 / 升级，或者它是最后一个节点组时不能删除；需输入组名确认。删除只在控制台侧进行，不向节点下发任何命令，证书库与审计日志不受影响。
 - 节点组的实例档案在“节点 → 节点组设置 → 实例档案”中编辑。组内已有节点后实例名、运行方式与安装目录不能再改，端口可以改（改后需在各节点上按新端口重建实例）。
 - “节点”页可切换为“按主机”查看：同一台服务器上的实例、各自的端口与实际运行的数据面版本；实例版本不一致时会标出（同时有“同机实例版本不一致”告警规则）。
 - 数据面升级以主机为单位：升级某个节点组时，这些节点所在主机上其他节点组的实例会随主机一起升级（本组实例先、同机实例后，依次热升级）。同机第二个实例失败时，该实例回到旧 master，主机标为“部分升级”，升级记录中提供“重试未完成的实例”和“主机整体回退”。任何实例都不会停止。
@@ -780,8 +782,19 @@ getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 | `syedge-agent` | `syedge-agent`（不变） |
 | 防火墙开机加载与自动刷新 | `root` |
 
-模式记录在 `/etc/syedge/root-master`（root 所有、他人不可写，否则不被信任），单元附加配置在
-`/etc/systemd/system/syedge.service.d/root-master.conf` 与 `syedge@.service.d/`。热升级、多实例、reload、日志轮转的用法都不变。
+模式记录在 `/etc/syedge/root-master`（root 所有、他人不可写，否则不被信任）。单元不用附加配置，而是由软件包单元生成完整的
+覆盖单元 `/etc/systemd/system/syedge.service`、`syedge@.service` 与两个防火墙单元（只替换运行身份与能力相关的行，第一行注明
+“syedge-instance nonroot 生成”）：systemd 229 以下（如 CentOS 7.0/7.1 的 208）对多行 `CapabilityBoundingSet=` 取交集，
+附加配置无法放宽软件包单元的能力边界，master 会缺少 `CAP_SETGID`，worker 报 `setgid(...) failed (1: Operation not permitted)`。
+覆盖单元在每次 `syedge-instance nonroot`（软件包安装与升级、`install.sh`）时按软件包单元重新生成；v0.4.1 写入的
+`*.service.d/root-master.conf` 会被自动删除。热升级、多实例、reload、日志轮转的用法都不变。
+
+**systemd 208（CentOS 7.0/7.1 未更新）**：建议先 `yum update` 到 CentOS 7.9（systemd 219）。不能更新时也可以使用：
+`systemctl enable --now` 一律拆成 `enable` 与 `start`；208 不支持的 `RuntimeDirectory=` 由 `syedge-instance` 写入的
+`/etc/tmpfiles.d/syedge-instances.conf`（各实例的 `/run/syedge-<实例>` 与 `/run/syedge-agent[-<实例>]`）在开机时重建；
+`ProtectHome=`、`StateDirectory=` 等不认识的指令只在日志中警告，不影响启动。在 v0.4.1 上手工写的
+`/etc/systemd/system/syedge@<实例>.service`、`/etc/sudoers.d/syedge-notty` 与手工创建的 `/run` 目录，升级后请删除前两项
+（实例单元会覆盖模板生成的兼容单元），再执行一次 `syedge-instance nonroot`。
 检查：`ps -C syedge -o user=,args=` 中 master 为 root、worker 为 syedge。
 
 ## 9. 升级、回滚与备份

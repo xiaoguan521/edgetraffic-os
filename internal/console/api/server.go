@@ -129,6 +129,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/node-groups", s.listGroups)
 	a.POST("/node-groups", role(store.RoleAdmin), s.writable, s.createGroup)
 	a.PUT("/node-groups/:id", role(store.RoleOperator), s.writable, s.updateGroup)
+	a.GET("/node-groups/:id/usage", s.groupUsage)
+	a.DELETE("/node-groups/:id", role(store.RoleAdmin), s.writable, s.deleteGroup)
 	a.GET("/node-groups/:id/profile", s.getProfile)
 	a.PUT("/node-groups/:id/profile", role(store.RoleOperator), s.writable, s.setProfile)
 	a.POST("/node-groups/:id/enroll", role(store.RoleOperator), s.writable, s.enrollToken)
@@ -306,6 +308,12 @@ func failErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(c, http.StatusNotFound, "NOT_FOUND", "not found")
+	case errors.Is(err, deploy.ErrGroupHasNodes):
+		fail(c, http.StatusConflict, "GROUP_HAS_NODES", err.Error())
+	case errors.Is(err, deploy.ErrGroupBusy):
+		fail(c, http.StatusConflict, "GROUP_BUSY", err.Error())
+	case errors.Is(err, deploy.ErrLastGroup):
+		fail(c, http.StatusConflict, "LAST_GROUP", err.Error())
 	case errors.Is(err, deploy.ErrBusy):
 		fail(c, http.StatusConflict, "DEPLOY_BUSY", err.Error())
 	case errors.Is(err, deploy.ErrNoChanges):

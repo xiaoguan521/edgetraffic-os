@@ -124,7 +124,7 @@ if [[ -n "$SERVER$TOKEN$CAFP" ]]; then
   echo "== 注册到控制台 $SERVER"
   syedge-agent enroll -server "$SERVER" -token "$TOKEN" -ca-fingerprint "$CAFP" ${REPLACE_LOCAL[@]+"${REPLACE_LOCAL[@]}"}
   chown -R syedge-agent:syedge /var/lib/syedge-agent
-  systemctl enable --now syedge-agent.service
+  systemctl enable syedge-agent.service && systemctl start syedge-agent.service   # 不用 --now：systemd 220 以下不支持
   echo "syedge-agent 已启动，几秒后节点会出现在控制台。"
 elif [[ -f /var/lib/syedge-agent/node.json ]]; then
   systemctl enable syedge-agent.service >/dev/null 2>&1

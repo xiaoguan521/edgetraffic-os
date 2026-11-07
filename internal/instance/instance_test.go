@@ -120,9 +120,13 @@ func TestAddCreatesInstance(t *testing.T) {
 		"visudo -cf ",
 		"runuser -u syedge-agent-blue -- /usr/bin/syedge-agent bootstrap -instance blue",
 		"runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper --instance blue test r000000",
-		"systemctl enable --now syedge@blue.service",
+		// systemd 220 以下没有 enable --now：分两步
+		"systemd-tmpfiles --create /etc/tmpfiles.d/syedge-instances.conf",
+		"systemctl enable syedge@blue.service",
+		"systemctl start syedge@blue.service",
 		"runuser -u syedge-agent-blue -- /usr/bin/syedge-agent enroll -instance blue -server console.example.com:9443 -token tok -ca-fingerprint abc",
-		"systemctl enable --now syedge-agent@blue.service",
+		"systemctl enable syedge-agent@blue.service",
+		"systemctl start syedge-agent@blue.service",
 	}
 	i := 0
 	for _, c := range f.cmds {
@@ -132,6 +136,19 @@ func TestAddCreatesInstance(t *testing.T) {
 	}
 	if i != len(want) {
 		t.Fatalf("commands out of order or missing (matched %d of %d):\n%s", i, len(want), strings.Join(f.cmds, "\n"))
+	}
+	if f.ran("--now") {
+		t.Fatal("systemctl --now needs systemd 220+")
+	}
+	// 运行时目录登记到 tmpfiles（systemd 211 以下 RuntimeDirectory= 不生效，/run 开机清空）
+	tf, err := os.ReadFile(f.path(RuntimeTmpfiles()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"d /run/syedge-blue 0755 syedge syedge -\n", "d /run/syedge-agent-blue 0755 syedge-agent-blue syedge -\n"} {
+		if !strings.Contains(string(tf), want) {
+			t.Errorf("tmpfiles missing %q:\n%s", want, tf)
+		}
 	}
 	// 再次添加同名实例：拒绝
 	if err := f.Add(AddOptions{Profile: blue}); err == nil || !strings.Contains(err.Error(), "already") {
@@ -218,7 +235,8 @@ func TestRemove(t *testing.T) {
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"systemctl disable --now syedge-agent@blue.service", "systemctl disable --now syedge@blue.service", "userdel syedge-agent-blue"} {
+	for _, want := range []string{"systemctl stop syedge-agent@blue.service", "systemctl disable syedge-agent@blue.service",
+		"systemctl stop syedge@blue.service", "systemctl disable syedge@blue.service", "userdel syedge-agent-blue"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q", want)
 		}
@@ -227,6 +245,9 @@ func TestRemove(t *testing.T) {
 		if _, err := os.Stat(f.path(gone)); err == nil {
 			t.Errorf("%s not removed", gone)
 		}
+	}
+	if tf, _ := os.ReadFile(f.path(RuntimeTmpfiles())); strings.Contains(string(tf), "blue") || !strings.Contains(string(tf), "/run/syedge-green ") {
+		t.Errorf("tmpfiles after remove:\n%s", tf)
 	}
 	// 不加 --purge 保留日志
 	if _, err := os.Stat(f.path(l.LogDir())); err != nil {

@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -266,5 +267,30 @@ func TestBadLogMatchesInitByLuaError(t *testing.T) {
 	}
 	if badLog.MatchString(`2026/11/07 07:10:01 [error] 13#13: *5 lua entry thread aborted: runtime error: api:p1:content:1: boom`) {
 		t.Error("a runtime error of one request must not fail the release")
+	}
+}
+
+// 锁被占用是并发冲突（CONFLICT）；锁目录缺失或不可写（如 systemd 211 以下没有 RuntimeDirectory=）不是冲突，报告为 REJECTED。
+func TestLockFailureIsNotConflict(t *testing.T) {
+	dir := t.TempDir()
+	a := &Applier{C: Config{ConfRoot: dir, LockFile: dir + "/lock"}}
+	unlock, err := a.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.lock()
+	unlock()
+	if r := lockFailed(err); r.Status != Conflict {
+		t.Fatalf("held lock: %+v", r)
+	}
+	ro := filepath.Join(dir, "ro")
+	if err := os.WriteFile(ro, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 父路径是普通文件：无法创建锁目录
+	b := &Applier{C: Config{ConfRoot: dir, LockFile: filepath.Join(ro, "sub", "apply.lock")}}
+	_, err = b.lock()
+	if r := lockFailed(err); err == nil || r.Status != Rejected || strings.Contains(r.Message, "another apply") {
+		t.Fatalf("missing lock dir: %v %+v", err, r)
 	}
 }

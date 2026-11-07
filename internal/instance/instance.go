@@ -194,7 +194,12 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 			return err
 		}
 	}
-	if err := e.Run("systemctl", "enable", "--now", l.DataplaneUnit()); err != nil {
+	// 运行时目录登记到 tmpfiles：开机后 /run 被清空，systemd 低于 211（不支持 RuntimeDirectory=）时也能重建
+	if err := e.writeRuntimeTmpfiles(); err != nil {
+		return err
+	}
+	// enable 与 start 分开执行：systemctl enable --now 需要 systemd 220 以上（CentOS 7.0/7.1 为 208）
+	if err := e.enableStart(l.DataplaneUnit()); err != nil {
 		return fmt.Errorf("启动 %s: %w", l.DataplaneUnit(), err)
 	}
 	p := o.Profile
@@ -203,14 +208,14 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	if o.Console == "" {
 		e.say("下一步：在控制台为实例档案为 %s 的节点组生成注册令牌，然后执行：", l.Instance())
 		e.say("  runuser -u %s -- %s enroll -instance %s -server <控制台> -token <令牌> -ca-fingerprint <指纹>", user, l.AgentBin(), l.Instance())
-		e.say("  systemctl enable --now %s", l.AgentUnit())
+		e.say("  systemctl enable %s && systemctl start %s", l.AgentUnit(), l.AgentUnit())
 		return nil
 	}
 	if err := e.Run("runuser", "-u", user, "--", l.AgentBin(), "enroll", "-instance", l.Instance(),
 		"-server", o.Console, "-token", o.Token, "-ca-fingerprint", o.CAFingerprint); err != nil {
 		return fmt.Errorf("注册到控制台: %w", err)
 	}
-	if err := e.Run("systemctl", "enable", "--now", l.AgentUnit()); err != nil {
+	if err := e.enableStart(l.AgentUnit()); err != nil {
 		return fmt.Errorf("启动 %s: %w", l.AgentUnit(), err)
 	}
 	e.say("%s 已启动，几秒后节点会出现在控制台。", l.AgentUnit())
@@ -247,8 +252,10 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		return nil
 	}
 	// 先停 agent，再让数据面优雅退出；单元不存在等错误不影响后续清理
-	_ = e.Run("systemctl", "disable", "--now", l.AgentUnit())
-	_ = e.Run("systemctl", "disable", "--now", l.DataplaneUnit())
+	for _, u := range []string{l.AgentUnit(), l.DataplaneUnit()} {
+		_ = e.Run("systemctl", "stop", u)
+		_ = e.Run("systemctl", "disable", u)
+	}
 	if err := os.Remove(e.path(l.SudoersFile())); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -260,8 +267,54 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		}
 	}
 	_ = e.Run("systemctl", "daemon-reload")
+	_ = e.writeRuntimeTmpfiles()
 	e.syncFirewall()
-	e.say("实例 %s 已删除。请在控制台“节点”页删除对应节点。", name)
+	e.say("实例 %s 已删除。请在控制台“节点”页吊销对应节点。", name)
+	return nil
+}
+
+// enableStart 设为开机启动并立即启动（等同 systemctl enable --now，但兼容 systemd 220 以下）。
+func (e Env) enableStart(unit string) error {
+	if err := e.Run("systemctl", "enable", unit); err != nil {
+		return err
+	}
+	return e.Run("systemctl", "start", unit)
+}
+
+// RuntimeTmpfiles 是 system 模式各实例运行时目录的 tmpfiles 配置（默认实例的数据面目录由软件包提供）。
+func RuntimeTmpfiles() string { return "/etc/tmpfiles.d/" + brand.ID() + "-instances.conf" }
+
+// writeRuntimeTmpfiles 按本机实例重写运行时目录的 tmpfiles 配置并立即创建目录：数据面的 pid 目录属于数据面用户，
+// agent 的发布锁目录属于该实例的 agent 用户。服务单元的 RuntimeDirectory= 在 systemd 211 以下不生效，
+// 而 /run 每次开机都会清空，因此这些目录交给 tmpfiles 在开机时重建。
+func (e Env) writeRuntimeTmpfiles() error {
+	if e.user() {
+		return nil
+	}
+	insts, err := e.installed()
+	if err != nil {
+		return err
+	}
+	dp := layout.WorkerUser()
+	var b strings.Builder
+	b.WriteString("# 由 " + brand.ID() + "-instance 生成：各实例的运行时目录（开机时重建）。请勿手改\n")
+	for _, in := range insts {
+		l := layout.System(in.Name)
+		if in.Name != "" {
+			fmt.Fprintf(&b, "d %s 0755 %s %s -\n", l.RunDir(), dp, dp)
+		}
+		fmt.Fprintf(&b, "d %s 0755 %s %s -\n", filepath.Dir(l.AgentLock()), l.AgentUser(), layout.Group())
+	}
+	p := RuntimeTmpfiles()
+	if err := os.MkdirAll(e.path(filepath.Dir(p)), 0o755); err != nil {
+		return err
+	}
+	if err := writeFile(e.path(p), []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+	if err := e.Run("systemd-tmpfiles", "--create", p); err != nil {
+		e.say("警告：systemd-tmpfiles --create %s 未完成：%v", p, err)
+	}
 	return nil
 }
 
