@@ -39,6 +39,11 @@ type Env struct {
 	Handover func(instance string) error
 	// SetCaps 给文件写入 security.capability 扩展属性（wrapper 的 CAP_NET_BIND_SERVICE，见 nonroot.go）
 	SetCaps func(path string, value []byte) error
+
+	// Ambient 报告本机内核与 systemd 是否支持 ambient 能力（nil = 支持）；不支持时 nonroot 进入兼容模式（rootmaster.go）
+	Ambient func() bool
+	// RootMaster：nonroot 显式选择兼容模式（--root-master），与传统 Web 服务器相同由 root 运行 master
+	RootMaster bool
 }
 
 func (e Env) path(p string) string { return filepath.Join(e.Root, filepath.FromSlash(p)) }
@@ -172,7 +177,8 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	if err := e.wrapperCaps(); err != nil {
 		return err
 	}
-	if err := e.Run("runuser", "-u", dp, "--", l.WrapperBin(), "--instance", l.Instance(), "test", "r000000"); err != nil {
+	c := e.asWrapperUser(l.WrapperBin(), "--instance", l.Instance(), "test", "r000000")
+	if err := e.Run(c[0], c[1:]...); err != nil {
 		return fmt.Errorf("初始配置校验失败: %w", err)
 	}
 	if n := o.Profile.NoFile; n > defaultUnitNoFile {
@@ -465,11 +471,14 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // Sudoers 返回该实例 agent 的 sudoers 内容：7 行，实例名写死，只有 test 与 upgrade-start 带参数通配。
-func Sudoers(l layout.Layout) string {
+func Sudoers(l layout.Layout) string { return SudoersAs(l, layout.WorkerUser()) }
+
+// SudoersAs 与 Sudoers 相同，wrapper 以 runas 身份运行（兼容模式为 root，见 rootmaster.go）。
+func SudoersAs(l layout.Layout, runas string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s —— 实例 %s 的 agent 只能操作本实例（%s instance add 生成，请勿手改）\n", l.SudoersFile(), l.Instance(), brand.ID())
 	for _, sub := range []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"} {
-		fmt.Fprintf(&b, "%s ALL=(%s) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), layout.WorkerUser(), l.WrapperBin(), l.Instance(), sub)
+		fmt.Fprintf(&b, "%s ALL=(%s) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), runas, l.WrapperBin(), l.Instance(), sub)
 	}
 	return b.String()
 }
@@ -538,8 +547,9 @@ func (e Env) ReopenAll() error {
 		}
 		bin := l.Bin()
 		// 运行时不使用 root（D5）：`-s reopen` 会先以执行者身份打开错误日志，root 执行会留下 root 所有的日志文件，
-		// 之后以数据面用户运行的 master 与 `-t` 无法写入；以 root 执行时（logrotate）经 runuser 以数据面用户发送
-		if !e.user() && os.Geteuid() == 0 {
+		// 之后以数据面用户运行的 master 与 `-t` 无法写入；以 root 执行时（logrotate）经 runuser 以数据面用户发送。
+		// 兼容模式下 master 是 root，信号只能由 root 发出
+		if !e.user() && os.Geteuid() == 0 && !e.rootMaster() {
 			args = append([]string{"-u", layout.WorkerUser(), "--", bin}, args...)
 			bin = "runuser"
 		}

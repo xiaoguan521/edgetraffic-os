@@ -24,6 +24,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/conn"
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/selfupdate"
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
@@ -76,14 +77,7 @@ func main() {
 		*confRoot = lay.ConfRoot()
 	}
 	if *wrapper == "" {
-		// wrapper 以数据面用户运行（不是 root，设计 0001 D5），sudoers 只允许这 7 条命令
-		*wrapper = "sudo -n -u " + brand.ID() + " " + lay.WrapperBin()
-		if userMode {
-			*wrapper = lay.WrapperBin() // 与数据面同一用户：直接调用，校验与验签规则不变
-		}
-		if lay.Instance() != "" {
-			*wrapper += " --instance " + lay.Instance()
-		}
+		*wrapper = defaultWrapper(lay, userMode, !userMode && layout.RootMasterAt("/"))
 	}
 	cfg := conn.Config{
 		Server: *server, StateDir: *stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
@@ -196,4 +190,20 @@ func fatal(log *slog.Logger, what string, err error) {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version | firewall render|covers ...")
 	os.Exit(2)
+}
+
+// defaultWrapper 返回调用 wrapper 的命令：wrapper 以数据面用户运行（不是 root，设计 0001 D5），sudoers 只允许这 7 条命令；
+// 兼容模式（master 以 root 运行，与传统 Web 服务器相同）以 root 运行；user 模式与数据面同一用户，直接调用。
+func defaultWrapper(lay layout.Layout, userMode, rootMaster bool) string {
+	w := "sudo -n -u " + brand.ID() + " " + lay.WrapperBin()
+	switch {
+	case userMode:
+		w = lay.WrapperBin()
+	case rootMaster:
+		w = "sudo -n " + lay.WrapperBin()
+	}
+	if lay.Instance() != "" {
+		w += " --instance " + lay.Instance()
+	}
+	return w
 }

@@ -23,6 +23,8 @@
   （单元的 AmbientCapabilities；wrapper 为文件能力，只允许 syedge 组执行）；防火墙的开机加载与刷新以 syedge-firewall 运行，
   只带 CAP_NET_ADMIN。sudoers 以 (syedge) 运行 wrapper，wrapper 拒绝以 root 运行。已以 root 运行的 master 由
   syedge-instance nonroot 经热升级机制无中断切换，不得用 restart。只有安装、卸载与 syedge-instance 等管理命令以 root 执行。
+  唯一例外是兼容模式（内核或 systemd 不支持 ambient 能力，如 CentOS 7；或 --root-master 显式选择）：与 nginx 相同，
+  master 与 wrapper 以 root 运行、worker 仍以 syedge 运行，sudoers 为 (root)；模式只由 root 所有的 /etc/syedge/root-master 决定。
 
 ## 配置
 - 禁止用字符串拼接用户输入生成配置；一律经 internal/render 的校验器 + 模板 + 转义函数。

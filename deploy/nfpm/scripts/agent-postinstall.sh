@@ -18,8 +18,14 @@ fi
 has_systemd && systemctl daemon-reload
 # 运行时不使用 root：交出运行时目录；升级前以 root 启动的 master 无中断切换为 syedge 运行（不重启）
 /usr/sbin/syedge-instance nonroot || echo "警告：syedge-instance nonroot 未完成（数据面照常服务），请检查后手工执行" >&2
-# 经 wrapper 以 syedge 校验（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不以 root 运行）
-runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test "$(basename "$(readlink /opt/syedge/conf/current)")"
+# 经 wrapper 校验：默认以 syedge（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443）；
+# 兼容模式（内核或 systemd 不支持 ambient 能力，如 CentOS 7）下 master 与 wrapper 以 root 运行
+REV="$(basename "$(readlink /opt/syedge/conf/current)")"
+if [ -f /etc/syedge/root-master ]; then
+  /usr/libexec/syedge/syedge-wrapper test "$REV"
+else
+  runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test "$REV"
+fi
 if has_systemd; then
   systemctl daemon-reload
   systemctl enable syedge.service >/dev/null 2>&1 || true
