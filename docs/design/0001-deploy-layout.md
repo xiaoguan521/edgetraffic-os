@@ -312,7 +312,7 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 
 **兼容模式（2026-11-07 决定：与 nginx 保持一致）**：ambient 能力需要内核 4.3 与 systemd 229 起，CentOS 7（内核 3.10、systemd 219）不支持。
 `B-instance nonroot` 检测到不支持（`/proc/self/status` 没有 `CapAmb`，或 `systemctl --version` < 229）时，或指定 `--root-master` 时，
-写入 root 所有的标记 `/etc/B/root-master` 与单元附加配置 `root-master.conf`（`User=root`，边界集只列 root master 用到的能力），
+写入 root 所有的标记 `/etc/B/root-master`，并由软件包单元生成完整的覆盖单元 `/etc/systemd/system/B.service` 等（`User=root`，只有一行边界集，列出 root master 用到的能力；不用附加配置：systemd 229 以下多行边界集取交集，无法放宽软件包单元，2026-11-07 在 systemd 208 上发现），
 sudoers 改为 `(root)`（7 行不变），agent 以 `sudo -n` 调用 wrapper，wrapper 只在标记可信（root 所有、他人不可写）时接受以 root 运行。
 master 以 root 绑定端口，worker 按编译进二进制的默认用户（`--user=B`）运行，与 nginx 相同；热升级、多实例与日志轮转的流程不变。
 nonroot 只写配置、不停止也不重启数据面；验收：`scripts/ci/p11-acceptance.sh` 的 root-master 阶段。

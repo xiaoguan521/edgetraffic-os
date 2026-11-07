@@ -185,6 +185,11 @@ system_phase() {
     out=$(syedge-instance add "$1" --http "$2" --https "$3" --status "$4" 2>&1) && ok "添加实例 $1" || bad "添加 $1：$out"
   done
   local D=/run/syedge/syedge.pid B=/run/syedge-blue/syedge.pid G=/run/syedge-green/syedge.pid
+  # 运行时目录登记在 tmpfiles：/run 开机清空，systemd 211 以下 RuntimeDirectory= 不生效时由 tmpfiles 重建（模拟开机）
+  rm -rf /run/syedge-agent-green
+  systemd-tmpfiles --create /etc/tmpfiles.d/syedge-instances.conf
+  [[ "$(stat -c '%U %G %a' /run/syedge-agent-green 2>&1)" == "syedge-agent-green syedge 755" && "$(stat -c %U /run/syedge-green 2>&1)" == syedge ]] \
+    && ok "tmpfiles 重建实例的运行时目录（属主正确）" || bad "tmpfiles 未重建运行时目录：$(cat /etc/tmpfiles.d/syedge-instances.conf 2>&1 | tr '\n' ' ')"
   # 实例增删后由刷新服务（防火墙用户）按实例配置放行
   nft list table inet syedge_fw 2>/dev/null | grep -q 28080 && ok "新增实例 green 后防火墙已放行 28080（刷新服务以非 root 运行）" \
     || bad "防火墙未放行 28080：$(journalctl -u syedge-firewall-refresh.service --no-pager -n 5 2>&1 | tr '\n' ' ')"
@@ -287,6 +292,12 @@ root_master_phase() {
   local D=/run/syedge/syedge.pid G=/run/syedge-green/syedge.pid dp; dp=$(id -u syedge)
   out=$(syedge-instance nonroot --root-master 2>&1) || bad "nonroot --root-master：$out"
   [[ -f /etc/syedge/root-master && "$(stat -c %u /etc/syedge/root-master)" == 0 ]] && ok "写入兼容模式标记（root 所有）" || bad "没有兼容模式标记"
+  # 覆盖单元（不是附加配置）：只有一行能力边界，systemd 208 上也不会与软件包单元取交集而丢掉 CAP_SETGID
+  for u in syedge.service syedge@.service; do
+    f=/etc/systemd/system/$u
+    head -1 "$f" | grep -q 'syedge-instance nonroot 生成' && [[ "$(grep -c '^CapabilityBoundingSet=' "$f")" == 1 ]] && grep -q '^User=root$' "$f" \
+      && [[ ! -e /etc/systemd/system/$u.d/root-master.conf ]] && ok "$u：兼容模式覆盖单元（单行能力边界）" || bad "$u 不是预期的覆盖单元：$(tr '\n' ' ' <"$f" | cut -c1-300)"
+  done
   for f in /etc/sudoers.d/syedge-agent /etc/sudoers.d/syedge-agent-green; do
     grep -q '=(root)' "$f" && ! grep -q '=(syedge)' "$f" && [[ "$(grep -c NOPASSWD "$f")" == 7 ]] \
       && ok "$(basename "$f")：7 行，以 root 运行 wrapper" || bad "$f 未切换为 (root)"
@@ -299,6 +310,9 @@ root_master_phase() {
     [[ "$(uid_of "$m")" == 0 ]] && ok "$p：master 以 root 运行" || bad "$p：master uid $(uid_of "$m")"
     local bad_w=0; for w in $(workers $p); do [[ "$(uid_of "$w")" == "$dp" ]] || bad_w=1; done
     [[ -n "$(workers $p)" && $bad_w == 0 ]] && ok "$p：worker 都以 syedge 运行" || bad "$p：worker 身份不对"
+    # master 的能力边界含 CAP_SETUID（bit 7）与 CAP_SETGID（bit 6）：worker 才能切换到 syedge
+    local bnd; bnd=$(awk '/^CapBnd:/{print $2}' /proc/$m/status)
+    (( (16#$bnd & 16#c0) == 16#c0 )) && ok "$p：master 能力边界含 CAP_SETUID / CAP_SETGID" || bad "$p：master CapBnd $bnd"
   done
   local W_D=(runuser -u syedge-agent -- sudo -n /usr/libexec/syedge/syedge-wrapper)
   local W_G=(runuser -u syedge-agent-green -- sudo -n /usr/libexec/syedge/syedge-wrapper --instance green)
