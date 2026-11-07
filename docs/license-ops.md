@@ -217,6 +217,55 @@ syedge-license-server import -request sign-request-B0001.json -signed signed-B00
 
 导入时逐条验签，并核对签名内容与请求中批准的 payload **完全一致**、条目一一对应、请求 SHA-256 一致；任何一项不符都拒绝。通过后写出 `licenses/<License 编号>.lic`，发给客户在控制台导入。
 
+### 4.4 预签发：客户安装前先签好授权
+
+默认流程是客户先装控制台、导出激活申请、厂商再签发（授权绑定安装 ID + 主机特征，5 项中 3 项一致即有效）。
+销售需要“交付即可用”的完整安装内容时，可以改为由厂商事先指定安装 ID，签一份只绑定安装 ID 的授权（`installation_only`），
+连同安装包一起交付。两种方式并存，按客户选用；本流程不需要改动任何程序。
+
+原理：控制台首次启动时，若数据库为空而数据目录中已有 `installation.json`，就采用其中的安装 ID，不再自己生成
+（`internal/console/licsvc/licsvc.go` 的 `Init`）。
+
+1. **定安装 ID**：每套控制台一个，登记到台账（客户、订单、安装 ID、License 编号），不得重复使用：
+
+   ```bash
+   echo "inst_$(openssl rand -hex 16)"
+   ```
+
+2. **生成签名请求**：用 `-installation-id` 代替 `-request`，必须加 `-binding installation_only`；其余参数、离线签名（4.2）与导入核对（4.3）照常：
+
+   ```bash
+   syedge-license-server request -batch B0003 -kid etos-prod-2027 \
+       -installation-id inst_0123456789abcdef0123456789abcdef -binding installation_only \
+       -customer "某某公司" -customer-id C0003 -edition professional -nodes 10 -sites 500 -days 365 \
+       -out sign-request-B0003.json
+   ```
+
+3. **交付内容**：控制台安装包、签好的 `<License 编号>.lic`，以及只含安装 ID 的 `installation.json`：
+
+   ```json
+   {"installation_id":"inst_0123456789abcdef0123456789abcdef"}
+   ```
+
+4. **客户安装**（顺序不能错：必须在控制台第一次启动之前放好）：
+
+   ```bash
+   install -d -o syedge-console -g syedge-console -m 0700 /var/lib/syedge-console
+   install -o syedge-console -g syedge-console -m 0600 installation.json /var/lib/syedge-console/installation.json
+   systemctl enable --now syedge-console
+   ```
+
+   打开控制台创建管理员后，在“系统 → 授权”导入 `.lic`。“系统 → 授权”显示的安装 ID 应与台账一致。
+
+注意：
+
+- **不绑定硬件**：拿到 `installation.json` 与 `.lic` 的人可以在任意多台机器上各起一套控制台。离线授权无法联网核对，
+  只能靠合同与台账约束；对这类风险敏感的客户仍用默认流程。
+- **已经启动过的控制台不能再用预签授权**：它已生成自己的安装 ID，此时改走默认流程（导出激活申请再签），或清空数据目录与数据库后重装。
+- 使用 PostgreSQL 时同样适用：数据库为空、数据目录里有 `installation.json` 时采用文件中的 ID；之后数据库与文件中的 ID 不一致会被视为复制部署，授权失效。
+- 授权文件需要客户手工导入一次（控制台首次启动不会自动导入）。
+- 授权后台（4.0）暂无“预签发”入口，按上面的命令行流程操作。
+
 ## 5. 吊销
 
 吊销列表（CRL）是累积的：每份新列表包含之前全部吊销项，序号加 1。控制台只接受序号更大的列表（不能用旧列表“撤销吊销”），并拒绝列表中的 License 与 kid。
