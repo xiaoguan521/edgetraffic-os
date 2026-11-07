@@ -167,6 +167,33 @@ syedge-license-server request -batch B0001 -kid etos-prod-2027 \
 
 批次号按顺序递增（`B` 加 4–10 位数字）。用传输 U 盘把 `sign-request-B0001.json` 拷到离线机。
 
+#### 版本（`-edition`）决定授权包含哪些功能
+
+签发时只选版本，工具按下表把功能清单写进 License（`internal/license/build.go` 的 `EditionFeatures`）；
+客户控制台只看 License 里列出的功能，版本名只用于显示。节点数（`-nodes`，按实例计数）、站点数（`-sites`）、
+有效期（`-days` 或 `-expires`）、宽限天数（`-grace`，默认 15）与维保截止（`-maintenance`）和版本无关，单独填写。
+
+| 功能（License 中的名字） | 控制台里对应什么 | 试用 `trial` | 标准 `standard` | 专业 `professional` | 企业 `enterprise` |
+|---|---|---|---|---|---|
+| 基础 `core` | 节点、站点、上游、证书与 ACME、发布与回滚、漂移检测、原生访问规则、静态资源、邮件 / Webhook 告警、审计查看 | ✓ | ✓ | ✓ | ✓ |
+| 开放 API `api_token` | 创建 API 令牌 | | ✓ | ✓ | ✓ |
+| 批量发布 `batch_release` | 多个节点组一次发布 | | | ✓ | ✓ |
+| 发布审批 `release_approval` | 双人复核后才能发布 | | | ✓ | ✓ |
+| 单点登录 `sso` | LDAP / OIDC 登录 | | | ✓ | ✓ |
+| 审计导出 `audit_export` | 导出审计日志 | | | ✓ | ✓ |
+| 即时通讯告警 `alert_im` | 企业微信 / 钉钉告警通道 | | | ✓ | ✓ |
+| 四层代理 `stream` | TCP / UDP / SNI 代理 | | | ✓ | ✓ |
+| 控制台高可用 `ha` | 主备控制台（PostgreSQL 选主） | | | ✓ | ✓ |
+| Lua 规则 `lua` | JWT 校验规则（节点须装 `syedge-lua` 附加包） | | | ✓ | ✓ |
+| 灰度发布 `canary` | 先发一部分节点、5xx 超限自动回滚 | | | | ✓ |
+| 国密 `gm_tls` | 国密 SM2 双证书、TLCP（节点须装国密版数据面） | | | | ✓ |
+
+选法：只用基本的反向代理与发布选 `standard`；要审批、单点登录、四层代理或 Lua 规则选 `professional`；
+要国密或灰度发布必须选 `enterprise`。`trial` 只用于短期试用。
+
+当前限制：`alert_im` 与 `ha` 虽然写进了 License，控制台还没有按它们限制功能（任何版本都能用企业微信 / 钉钉告警与主备）；
+签发工具不支持在版本之外单独增减功能，需要特殊组合时先选能覆盖需求的最低版本。
+
 ### 4.2 离线签名机：核对并签名
 
 ```bash
