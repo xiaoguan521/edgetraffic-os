@@ -75,6 +75,28 @@ function profileChanged() {
   return pform.instance !== (p.instance || '') || pform.mode !== (p.mode || 'system') || pform.root !== (p.root || '') ||
     pform.http_port !== e.http_port || pform.https_port !== e.https_port || pform.status_port !== e.status_port || pform.nofile !== (p.nofile || 0)
 }
+// 新建节点组（仅管理员）：沿用当前组的回源网段，建好后打开“节点组设置”填写实例档案
+const creating = ref(false)
+const cform = reactive({ name: '', description: '' })
+function openCreate() {
+  Object.assign(cform, { name: '', description: '' })
+  creating.value = true
+}
+async function createGroup() {
+  try {
+    const base = group.value || {}
+    const g = await api.post('/node-groups', { name: cform.name.trim(), description: cform.description, allowed_cidrs: base.allowed_cidrs || '', real_ip_from: base.real_ip_from || '' })
+    creating.value = false
+    gid.value = g.id
+    view.value = 'group'
+    await load()
+    message.success(`已创建节点组 ${g.name}，请设置实例档案`)
+    openGroup()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
 async function saveGroup() {
   try {
     await api.put(`/node-groups/${gid.value}`, gform)
@@ -158,6 +180,7 @@ function mb(b: number) {
       </div>
       <a-space>
         <a-segmented v-model:value="view" :options="[{ label: '按节点组', value: 'group' }, { label: '按主机', value: 'host' }]" />
+        <a-button v-if="session.can('admin')" :disabled="!session.writable" @click="openCreate">新建节点组</a-button>
         <a-button v-if="session.can('operator')" @click="openGroup">节点组设置</a-button>
         <a-button v-if="session.can('operator')" type="primary" :loading="enrolling" :disabled="!session.writable" @click="addNode">添加节点</a-button>
       </a-space>
@@ -252,6 +275,17 @@ function mb(b: number) {
       </template>
     </a-modal>
 
+    <a-modal v-model:open="creating" title="新建节点组" ok-text="创建" :ok-button-props="{ disabled: !/^[a-z0-9][a-z0-9-]{1,62}$/.test(cform.name.trim()) }" @ok="createGroup">
+      <p class="sub" style="margin-top: 0">一个节点组对应一套配置。同一台服务器上运行多套 {{ brand.id }}（同机多实例）时，每套属于不同的节点组；创建后在“节点组设置”里填写实例名与端口。</p>
+      <a-form layout="vertical">
+        <a-form-item label="名称" extra="小写字母、数字和短横线，2–63 个字符，例如 edge-blue。创建后不能改名。">
+          <a-input v-model:value="cform.name" placeholder="edge-blue" />
+        </a-form-item>
+        <a-form-item label="说明（可选）">
+          <a-input v-model:value="cform.description" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
     <a-modal v-model:open="editing" title="节点组设置" ok-text="保存" @ok="saveGroup">
       <a-form layout="vertical">
         <a-form-item label="说明"><a-input v-model:value="gform.description" /></a-form-item>
