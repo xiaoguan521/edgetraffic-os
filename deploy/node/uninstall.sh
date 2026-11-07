@@ -36,9 +36,9 @@ if [[ ${#insts[@]} -gt 0 ]]; then
 fi
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
-  systemctl disable --now syedge-agent.service >/dev/null 2>&1 || true
+  systemctl stop syedge-agent.service >/dev/null 2>&1; systemctl disable syedge-agent.service >/dev/null 2>&1 || true
   systemctl stop 'syedge-agent@*.service' >/dev/null 2>&1 || true
-  systemctl disable --now syedge.service >/dev/null 2>&1 || true
+  systemctl stop syedge.service >/dev/null 2>&1; systemctl disable syedge.service >/dev/null 2>&1 || true
   systemctl stop 'syedge@*.service' >/dev/null 2>&1 || true
   if systemctl is-enabled -q syedge-firewall.service 2>/dev/null || systemctl is-active -q syedge-firewall.service 2>/dev/null; then
     /usr/sbin/syedge-firewall disable >/dev/null 2>&1 || true

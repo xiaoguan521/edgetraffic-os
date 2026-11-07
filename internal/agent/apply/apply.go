@@ -115,7 +115,7 @@ func (a *Applier) Apply(ctx context.Context, rev, parent string, bundle []byte, 
 	}
 	unlock, err := a.lock()
 	if err != nil {
-		return Result{Status: Conflict, Message: "another apply is running: " + err.Error()}
+		return lockFailed(err)
 	}
 	defer unlock()
 
@@ -140,7 +140,7 @@ func (a *Applier) Restore(ctx context.Context, rev string, bundle []byte, digest
 	}
 	unlock, err := a.lock()
 	if err != nil {
-		return Result{Status: Conflict, Message: "another apply is running: " + err.Error()}
+		return lockFailed(err)
 	}
 	defer unlock()
 	if cur := a.Current(); cur != rev {
@@ -193,7 +193,7 @@ func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck) 
 	}
 	unlock, err := a.lock()
 	if err != nil {
-		return Result{Status: Conflict, Message: "another apply is running: " + err.Error()}
+		return lockFailed(err)
 	}
 	defer unlock()
 	if _, err := os.Stat(filepath.Join(a.releases(), rev, brand.ConfName())); err != nil {
@@ -253,6 +253,16 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 		a.cleanup()
 	}
 	return Result{Status: Applied, Message: "applied " + rev}
+}
+
+// lockFailed 区分“另一次发布正在进行”（锁被占用）与“无法创建锁”（运行时目录缺失或无权限）：
+// 后者不是并发冲突，报告为 REJECTED 并说明原因，避免误导排查。
+func lockFailed(err error) Result {
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return Result{Status: Conflict, Message: "another apply is running"}
+	}
+	return Result{Status: Rejected, Message: "cannot take the apply lock (agent runtime directory missing or not writable; " +
+		"it is created by the service unit or systemd-tmpfiles): " + err.Error()}
 }
 
 func (a *Applier) lock() (func(), error) {

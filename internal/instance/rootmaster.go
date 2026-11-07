@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
@@ -14,28 +15,128 @@ import (
 // （CentOS 7）上，非 root 的 master 无法绑定 80/443。这类系统上 master 由 systemd 以 root 启动，绑定端口后按编译进二进制的
 // 默认用户启动 worker（与数据面用户相同，处理流量的进程仍不是 root）；wrapper 经 sudo 以 root 运行，才能向 master 发信号。
 
-// rootMasterUnit 是数据面单元的附加配置：User / Group 写明 root（不用空值重置：老版本 systemd 对空值的处理不同）。边界集先清空再列出 root master 用到的能力：
-// 只写 `CapabilityBoundingSet=` 会清空边界集，连 root 也无法绑定 80。
-const rootMasterUnit = `# %s-instance nonroot 写入（兼容模式：master 以 root 运行，与传统 Web 服务器相同；worker 以 %s 运行）。请勿手改
-[Service]
-User=root
-Group=root
-AmbientCapabilities=
-CapabilityBoundingSet=
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE
-NoNewPrivileges=no
-`
+// 兼容模式的单元不用附加配置（.d/*.conf），而是由软件包单元生成完整的覆盖单元 /etc/systemd/system/<单元>：
+// systemd 229 以下（如 CentOS 7.0/7.1 的 208）对多行 CapabilityBoundingSet= 取交集、不支持空值重置，
+// 附加配置无法放宽软件包单元中的 CapabilityBoundingSet=CAP_NET_BIND_SERVICE，master 会拿不到 CAP_SETGID / CAP_SETUID，
+// worker 切换到数据面用户时失败（setgid … Operation not permitted）。覆盖单元只替换运行身份与能力相关的行，
+// 其余内容与软件包单元一致；每次 nonroot（软件包安装与升级、install.sh）重新生成，因此跟随软件包更新。
 
-// rootFirewallUnit：防火墙的加载与刷新同样需要 ambient 能力，兼容模式下以 root 运行（只保留需要的能力）。
-const rootFirewallUnit = `# %s-instance nonroot 写入（兼容模式：防火墙以 root 运行）。请勿手改
-[Service]
-User=root
-Group=root
-AmbientCapabilities=
-CapabilityBoundingSet=
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
-NoNewPrivileges=no
-`
+// rootMasterCaps 是 root master 用到的能力（绑定端口、切换 worker 用户、创建目录与文件、向 worker 发信号、调整限制）。
+const rootMasterCaps = "CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE"
+
+// rootFirewallCaps：防火墙的加载与刷新同样需要 ambient 能力，兼容模式下以 root 运行（只保留需要的能力）。
+const rootFirewallCaps = "CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER"
+
+// legacyRootMasterDropIn 是 v0.4.1 及以前兼容模式写入的附加配置，现由覆盖单元取代。
+const legacyRootMasterDropIn = "root-master.conf"
+
+// vendorUnitDirs 是软件包安装单元文件的目录（rpm / deb）；tar 包（install.sh）直接安装在 /etc/systemd/system。
+var vendorUnitDirs = []string{"/usr/lib/systemd/system", "/lib/systemd/system"}
+
+func overrideHeader() string { return "# " + brand.ID() + "-instance nonroot 生成" }
+
+// rootMasterUnits 返回兼容模式需要覆盖的单元及其能力。
+func rootMasterUnits() map[string]string {
+	return map[string]string{
+		layout.System("").DataplaneUnit():        rootMasterCaps,
+		brand.ID() + "@.service":                 rootMasterCaps,
+		brand.ID() + "-firewall.service":         rootFirewallCaps,
+		brand.ID() + "-firewall-refresh.service": rootFirewallCaps,
+	}
+}
+
+// compatUnit 由软件包单元生成兼容模式的覆盖单元：去掉运行身份与能力相关的行，在 [Service] 开头写入 root 运行与能力边界。
+// 对已生成的覆盖单元再执行一次得到相同结果（tar 包安装时在原文件上生成）。
+func compatUnit(src, caps, dp string) string {
+	drop := []string{"User=", "Group=", "AmbientCapabilities=", "CapabilityBoundingSet=", "NoNewPrivileges="}
+	var b strings.Builder
+	b.WriteString(overrideHeader() + "（兼容模式：master 以 root 运行，与传统 Web 服务器相同；worker 以 " + dp + " 运行）。请勿手改：\n")
+	b.WriteString("# 每次执行 " + brand.ID() + "-instance nonroot 都会按软件包单元重新生成；删除 " + layout.RootMasterMarker() + " 后执行 nonroot 恢复\n")
+	lines := strings.Split(strings.TrimRight(src, "\n"), "\n")
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, overrideHeader()) || strings.HasPrefix(t, "# 每次执行 "+brand.ID()+"-instance nonroot") {
+			continue
+		}
+		skip := false
+		for _, d := range drop {
+			if strings.HasPrefix(t, d) {
+				skip = true
+			}
+		}
+		if skip {
+			continue
+		}
+		b.WriteString(ln + "\n")
+		if t == "[Service]" {
+			b.WriteString("User=root\nGroup=root\nCapabilityBoundingSet=" + caps + "\nNoNewPrivileges=no\n")
+		}
+	}
+	return b.String()
+}
+
+// unitSource 找到单元的软件包版本：先找软件包目录，再找 /etc/systemd/system（tar 包安装）。返回路径与内容。
+func (e Env) unitSource(unit string) (string, []byte, bool) {
+	for _, d := range append(append([]string{}, vendorUnitDirs...), "/etc/systemd/system") {
+		p := d + "/" + unit
+		if b, err := os.ReadFile(e.path(p)); err == nil {
+			return p, b, true
+		}
+	}
+	return "", nil, false
+}
+
+// writeCompatUnits 生成覆盖单元并删除旧版附加配置。
+func (e Env) writeCompatUnits() error {
+	dp := layout.WorkerUser()
+	units := rootMasterUnits()
+	names := make([]string, 0, len(units))
+	for u := range units {
+		names = append(names, u)
+	}
+	sort.Strings(names)
+	for _, unit := range names {
+		_ = os.Remove(e.path("/etc/systemd/system/" + unit + ".d/" + legacyRootMasterDropIn))
+		src, b, ok := e.unitSource(unit)
+		if !ok {
+			continue // 未安装该单元（例如只装了数据面）
+		}
+		dst := e.path("/etc/systemd/system/" + unit)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := writeFile(dst, []byte(compatUnit(string(b), units[unit], dp)), 0o644); err != nil {
+			return err
+		}
+		e.say("   %s：已按 %s 生成兼容模式单元 /etc/systemd/system/%s", unit, src, unit)
+	}
+	return nil
+}
+
+// removeCompatUnits 离开兼容模式：删除生成的覆盖单元（软件包单元随即生效）与旧版附加配置。
+// tar 包安装时覆盖单元就是安装的单元本身，不能删除：提示重新执行 install.sh 恢复。
+func (e Env) removeCompatUnits() {
+	for unit := range rootMasterUnits() {
+		_ = os.Remove(e.path("/etc/systemd/system/" + unit + ".d/" + legacyRootMasterDropIn))
+		p := e.path("/etc/systemd/system/" + unit)
+		b, err := os.ReadFile(p)
+		if err != nil || !strings.HasPrefix(string(b), overrideHeader()) {
+			continue
+		}
+		vendor := false
+		for _, d := range vendorUnitDirs {
+			if _, err := os.Stat(e.path(d + "/" + unit)); err == nil {
+				vendor = true
+			}
+		}
+		if vendor {
+			_ = os.Remove(p)
+			e.say("已删除兼容模式单元 /etc/systemd/system/%s，恢复软件包单元", unit)
+		} else {
+			e.say("警告：/etc/systemd/system/%s 是兼容模式单元（tar 包安装）：请重新执行发布包中的 install.sh 恢复", unit)
+		}
+	}
+}
 
 // rootMaster 报告本机是否处于兼容模式（标记文件存在且属于 root）。
 func (e Env) rootMaster() bool { return !e.user() && layout.RootMasterAt(e.Root) }
@@ -68,24 +169,8 @@ func (e Env) rootMasterSetup(insts []Info) error {
 	}
 	_ = os.Chown(marker, 0, 0)
 	def := layout.System("")
-	units := map[string]string{
-		def.DataplaneUnit():                      rootMasterUnit,
-		brand.ID() + "@.service":                 rootMasterUnit,
-		brand.ID() + "-firewall.service":         rootFirewallUnit,
-		brand.ID() + "-firewall-refresh.service": rootFirewallUnit,
-	}
-	for unit, tmpl := range units {
-		dir := e.path("/etc/systemd/system/" + unit + ".d")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		body := fmt.Sprintf(tmpl, brand.ID(), dp)
-		if tmpl == rootFirewallUnit {
-			body = fmt.Sprintf(tmpl, brand.ID())
-		}
-		if err := writeFile(filepath.Join(dir, "root-master.conf"), []byte(body), 0o644); err != nil {
-			return err
-		}
+	if err := e.writeCompatUnits(); err != nil {
+		return err
 	}
 	// 运行时目录、日志与版本库仍交给数据面用户（worker 写日志、缓存；与默认模式一致，切回默认模式时无需再改）
 	for _, in := range insts {

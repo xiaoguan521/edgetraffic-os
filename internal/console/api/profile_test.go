@@ -62,7 +62,7 @@ func TestProfileHTTP(t *testing.T) {
 
 func TestEnrollCommand(t *testing.T) {
 	def := enrollCommand(render.Profile{}, "c:9443", "tok", "fp")
-	if def != "sudo syedge-agent enroll -server c:9443 -token tok -ca-fingerprint fp && sudo systemctl enable --now syedge-agent" {
+	if def != "sudo syedge-agent enroll -server c:9443 -token tok -ca-fingerprint fp && sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent" {
 		t.Fatalf("default = %q", def)
 	}
 	inst := enrollCommand(render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}, "c:9443", "tok", "fp")

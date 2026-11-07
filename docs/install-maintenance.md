@@ -235,7 +235,7 @@ sudo syedge-agent enroll \
   -token <一次性令牌> \
   -ca-fingerprint <控制台CA的SHA256指纹>
 
-sudo systemctl enable --now syedge-agent
+sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent
 sudo systemctl status syedge-agent --no-pager
 ```
 
@@ -266,14 +266,14 @@ RPM 系统：
 
 ```bash
 sudo dnf install ./syedge-<版本>*.rpm ./syedge-agent-<版本>*.rpm
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 Debian/Ubuntu：
 
 ```bash
 sudo apt install ./syedge_<版本>*.deb ./syedge-agent_<版本>*.deb
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 首次安装后，按照“4.2 安装后注册到控制台”注册 Agent。`syedge-agent` 软件包依赖 `syedge` 和 `sudo`；可选的 `syedge-firewall` 需要额外安装 `nftables`。
@@ -313,7 +313,7 @@ sudo syedge-agent bootstrap
 sudo chown -R syedge-agent:syedge /opt/syedge/conf /var/lib/syedge-agent /run/syedge-agent
 sudo syedge -t -q
 sudo systemctl daemon-reload
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 手工组装容易出现用户、权限、systemd 和默认配置不一致，生产环境应优先使用完整节点包或 RPM/DEB。
@@ -402,7 +402,7 @@ ETOS_DATA=/var/lib/syedge-console
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now syedge-console
+sudo systemctl enable syedge-console && sudo systemctl start syedge-console
 sudo systemctl status syedge-console --no-pager
 ```
 
@@ -533,7 +533,7 @@ Lua 模块与 `syedge` 二进制版本强绑定。升级带 Lua 的节点时，�
 只运行数据面、不接入控制台时，安装后的基线配置已经存在：
 
 ```bash
-sudo systemctl enable --now syedge
+sudo systemctl enable syedge && sudo systemctl start syedge
 sudo cp /opt/syedge/share/defaults/standalone-example.conf \
   /opt/syedge/conf/current/conf.d/www.conf
 sudo vi /opt/syedge/conf/current/conf.d/www.conf
@@ -780,8 +780,19 @@ getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 | `syedge-agent` | `syedge-agent`（不变） |
 | 防火墙开机加载与自动刷新 | `root` |
 
-模式记录在 `/etc/syedge/root-master`（root 所有、他人不可写，否则不被信任），单元附加配置在
-`/etc/systemd/system/syedge.service.d/root-master.conf` 与 `syedge@.service.d/`。热升级、多实例、reload、日志轮转的用法都不变。
+模式记录在 `/etc/syedge/root-master`（root 所有、他人不可写，否则不被信任）。单元不用附加配置，而是由软件包单元生成完整的
+覆盖单元 `/etc/systemd/system/syedge.service`、`syedge@.service` 与两个防火墙单元（只替换运行身份与能力相关的行，第一行注明
+“syedge-instance nonroot 生成”）：systemd 229 以下（如 CentOS 7.0/7.1 的 208）对多行 `CapabilityBoundingSet=` 取交集，
+附加配置无法放宽软件包单元的能力边界，master 会缺少 `CAP_SETGID`，worker 报 `setgid(...) failed (1: Operation not permitted)`。
+覆盖单元在每次 `syedge-instance nonroot`（软件包安装与升级、`install.sh`）时按软件包单元重新生成；v0.4.1 写入的
+`*.service.d/root-master.conf` 会被自动删除。热升级、多实例、reload、日志轮转的用法都不变。
+
+**systemd 208（CentOS 7.0/7.1 未更新）**：建议先 `yum update` 到 CentOS 7.9（systemd 219）。不能更新时也可以使用：
+`systemctl enable --now` 一律拆成 `enable` 与 `start`；208 不支持的 `RuntimeDirectory=` 由 `syedge-instance` 写入的
+`/etc/tmpfiles.d/syedge-instances.conf`（各实例的 `/run/syedge-<实例>` 与 `/run/syedge-agent[-<实例>]`）在开机时重建；
+`ProtectHome=`、`StateDirectory=` 等不认识的指令只在日志中警告，不影响启动。在 v0.4.1 上手工写的
+`/etc/systemd/system/syedge@<实例>.service`、`/etc/sudoers.d/syedge-notty` 与手工创建的 `/run` 目录，升级后请删除前两项
+（实例单元会覆盖模板生成的兼容单元），再执行一次 `syedge-instance nonroot`。
 检查：`ps -C syedge -o user=,args=` 中 master 为 root、worker 为 syedge。
 
 ## 9. 升级、回滚与备份

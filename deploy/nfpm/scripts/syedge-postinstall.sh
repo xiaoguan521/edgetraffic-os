@@ -28,7 +28,7 @@ if [ ! -e /opt/syedge/conf/current ] && [ -f /opt/syedge/share/defaults/baseline
   mkdir -p /opt/syedge/conf/releases/r000000/conf.d
   ln -sfn releases/r000000 /opt/syedge/conf/current
   echo "syedge 已安装，并写入了初始配置（未匹配域名的请求直接断开）。"
-  echo "  独立使用：systemctl enable --now syedge，站点配置放在 /opt/syedge/conf/current/conf.d/，"
+  echo "  独立使用：systemctl enable syedge && systemctl start syedge，站点配置放在 /opt/syedge/conf/current/conf.d/，"
   echo "            示例 /opt/syedge/share/defaults/standalone-example.conf，说明 /opt/syedge/share/doc/STANDALONE.txt"
   echo "  接入控制台：安装 syedge-agent 后在控制台“节点”页添加节点。"
 fi

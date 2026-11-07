@@ -11,5 +11,5 @@ if has_systemd; then
   fi
 fi
 echo "syedge-console 已安装。编辑 /etc/syedge-console/console.env（至少填写 ETOS_GRPC_HOSTS），然后执行："
-echo "  systemctl enable --now syedge-console"
+echo "  systemctl enable syedge-console && systemctl start syedge-console"
 exit 0

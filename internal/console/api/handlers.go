@@ -437,8 +437,9 @@ func enrollCommand(p render.Profile, server, token, caFP string) string {
 		return cmd + fmt.Sprintf(" --console %s --token %s --ca-fingerprint %s", server, token, caFP)
 	}
 	if p.Instance == "" {
-		return fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable --now %s",
-			brand.Agent(), server, token, caFP, brand.Agent())
+		// 不用 systemctl enable --now：systemd 220 以下（CentOS 7.0/7.1）不支持
+		return fmt.Sprintf("sudo %s enroll -server %s -token %s -ca-fingerprint %s && sudo systemctl enable %s && sudo systemctl start %s",
+			brand.Agent(), server, token, caFP, brand.Agent(), brand.Agent())
 	}
 	cmd := fmt.Sprintf("sudo %s-instance add %s --http %d --https %d --status %d", brand.ID(), p.Instance, p.HTTP(), p.HTTPS(), p.Status())
 	if p.NoFile != 0 {
