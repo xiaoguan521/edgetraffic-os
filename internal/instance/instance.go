@@ -477,6 +477,8 @@ func Sudoers(l layout.Layout) string { return SudoersAs(l, layout.WorkerUser()) 
 func SudoersAs(l layout.Layout, runas string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s —— 实例 %s 的 agent 只能操作本实例（%s instance add 生成，请勿手改）\n", l.SudoersFile(), l.Instance(), brand.ID())
+	// agent 是没有终端的后台服务：部分系统（CentOS 7）的 sudo 默认 requiretty，只对该 agent 用户取消，不授予任何命令
+	fmt.Fprintf(&b, "Defaults:%s !requiretty\n", l.AgentUser())
 	for _, sub := range []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"} {
 		fmt.Fprintf(&b, "%s ALL=(%s) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), runas, l.WrapperBin(), l.Instance(), sub)
 	}

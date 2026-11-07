@@ -295,9 +295,14 @@ root_master_phase() {
   done
   local W_D=(runuser -u syedge-agent -- sudo -n /usr/libexec/syedge/syedge-wrapper)
   local W_G=(runuser -u syedge-agent-green -- sudo -n /usr/libexec/syedge/syedge-wrapper --instance green)
+  # CentOS 7 的 sudo 默认 requiretty（agent 是没有终端的后台服务）：模拟该默认值，agent 仍能调用 wrapper
+  echo 'Defaults requiretty' > /etc/sudoers.d/00-requiretty && chmod 0440 /etc/sudoers.d/00-requiretty
   local w0; w0=$(workers $D)
   "${W_D[@]}" reload >/dev/null 2>&1 && sleep 1
-  [[ "$(workers $D)" != "$w0" ]] && ok "agent 经 sudo（root）调用 wrapper reload" || bad "兼容模式 reload 后 worker 未替换"
+  [[ "$(workers $D)" != "$w0" ]] && ok "agent 经 sudo（root）调用 wrapper reload（sudo 默认 requiretty 时同样可用）" || bad "兼容模式 reload 后 worker 未替换"
+  w0=$(workers $G); "${W_G[@]}" reload >/dev/null 2>&1 && sleep 1
+  [[ "$(workers $G)" != "$w0" ]] && ok "具名实例 agent 在 requiretty 下调用 wrapper" || bad "requiretty 下具名实例 reload 失败"
+  rm -f /etc/sudoers.d/00-requiretty
   runuser -u syedge-agent -- sudo -n -u syedge /usr/libexec/syedge/syedge-wrapper reload >/dev/null 2>&1 \
     && bad "兼容模式下仍允许以 syedge 调用 wrapper" || ok "sudoers 只允许以 root 调用 wrapper"
   # 标记不可信时（不属于 root 或他人可写）wrapper 照旧拒绝以 root 运行
