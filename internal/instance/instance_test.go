@@ -330,11 +330,24 @@ func TestSudoersPassesVisudo(t *testing.T) {
 		t.Skip("visudo not installed")
 	}
 	f := filepath.Join(t.TempDir(), "sudoers")
-	if err := os.WriteFile(f, []byte(Sudoers(layout.System("blue"))), 0o440); err != nil {
+	body := Sudoers(layout.System("blue"))
+	if err := os.WriteFile(f, []byte(body), 0o440); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(visudo, "-cf", f).CombinedOutput(); err != nil {
-		t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
+		// CentOS 7 accepts requiretty and needs the per-agent override. Newer
+		// sudo releases reject the obsolete option, so validate the portable
+		// form as the runtime writer does.
+		fallback := withoutRequireTTY(body)
+		if fallback == body {
+			t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
+		}
+		if writeErr := os.WriteFile(f, []byte(fallback), 0o440); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if retryOut, retryErr := exec.Command(visudo, "-cf", f).CombinedOutput(); retryErr != nil {
+			t.Fatalf("visudo rejected generated sudoers and portable fallback: %v\n%s\nportable: %v\n%s", err, out, retryErr, retryOut)
+		}
 	}
 }
 

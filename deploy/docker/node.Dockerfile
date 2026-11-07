@@ -10,7 +10,9 @@ COPY node/rootfs/opt/syedge /opt/syedge
 COPY node/rootfs/usr/bin/syedge-agent /usr/bin/syedge-agent
 COPY node/rootfs/usr/libexec/syedge/syedge-wrapper /usr/libexec/syedge/syedge-wrapper
 COPY node/rootfs/etc/sudoers.d/syedge-agent /etc/sudoers.d/syedge-agent
-RUN chmod 0440 /etc/sudoers.d/syedge-agent && visudo -c && ln -s /opt/syedge/sbin/syedge /usr/sbin/syedge \
+RUN chmod 0440 /etc/sudoers.d/syedge-agent && \
+ (visudo -c || (sed -i '/^Defaults:[^[:space:]]* !requiretty$/d' /etc/sudoers.d/syedge-agent && visudo -c)) && \
+ ln -s /opt/syedge/sbin/syedge /usr/sbin/syedge \
  && /opt/syedge/sbin/syedge -v
 COPY node/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY node/systemctl /usr/local/bin/systemctl

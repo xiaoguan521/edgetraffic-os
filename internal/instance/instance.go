@@ -485,6 +485,21 @@ func SudoersAs(l layout.Layout, runas string) string {
 	return b.String()
 }
 
+// withoutRequireTTY removes the CentOS 7-only sudo default override. Newer sudo
+// versions reject the option instead of ignoring it, and do not need the
+// override because requiretty is not enabled there.
+func withoutRequireTTY(s string) string {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Defaults:") && strings.HasSuffix(trimmed, " !requiretty") {
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
 func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
