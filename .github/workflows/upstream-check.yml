@@ -1,0 +1,19 @@
+name: upstream-check
+
+# 每周检查数据面锁定的上游源码与静态依赖是否有新版本（docs/upstream-upgrade.md 第 2.3 节）。
+# 有新版本时本工作流失败并给出注解，提醒按升级手册处理；不构建、不修改任何内容。
+on:
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/ci/check-upstream.sh
