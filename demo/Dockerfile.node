@@ -30,7 +30,8 @@ COPY dataplane/packaging/sudoers/syedge-agent /etc/sudoers.d/syedge-agent
 # 运行时不使用 root（D5）：wrapper 以 syedge 运行，-t 绑定 80/443 需要文件能力；只允许 syedge 组执行
 RUN chown root:syedge /usr/libexec/syedge/syedge-wrapper && chmod 0750 /usr/libexec/syedge/syedge-wrapper \
  && setcap cap_net_bind_service=ip /usr/libexec/syedge/syedge-wrapper
-RUN chmod 0440 /etc/sudoers.d/syedge-agent && visudo -c
+RUN chmod 0440 /etc/sudoers.d/syedge-agent && \
+    (visudo -c || (sed -i '/^Defaults:[^[:space:]]* !requiretty$/d' /etc/sudoers.d/syedge-agent && visudo -c))
 COPY demo/node/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY demo/node/systemctl /usr/local/bin/systemctl
 EXPOSE 80 443

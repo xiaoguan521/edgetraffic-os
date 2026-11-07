@@ -140,8 +140,18 @@ func (e Env) rootSudoersDefault() error {
 		return err
 	}
 	if err := e.Run("visudo", "-cf", l.SudoersFile()+".new"); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("sudoers 校验失败: %w", err)
+		// Ubuntu and newer sudo releases reject the CentOS 7-only requiretty
+		// option. Retry without that optional override; any other syntax error
+		// still fails the second validation.
+		fallback := withoutRequireTTY(s)
+		if fallback == s || writeFile(tmp, []byte(fallback), 0o440) != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("sudoers 校验失败: %w", err)
+		}
+		if retryErr := e.Run("visudo", "-cf", l.SudoersFile()+".new"); retryErr != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("sudoers 校验失败: %w", retryErr)
+		}
 	}
 	return os.Rename(tmp, sp)
 }

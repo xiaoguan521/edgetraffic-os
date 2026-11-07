@@ -40,7 +40,8 @@
 - 所有外部命令用 exec.Command 切片调用，禁止 sh -c。
 - wrapper 只接受子命令 test|reload|reopen|quit|upgrade-start|upgrade-commit|upgrade-abort（升级三个在 P8 实现）；
   test 只接受 ^r[0-9]{6,12}$，upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$；每个子命令都必须有注入测试；
-  sudoers 每个子命令单独一行（共 7 行，以 (syedge) 身份运行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验。
+  sudoers 每个子命令单独一行（共 7 行，以 (syedge) 身份运行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验；
+  另有一行 `Defaults:<agent 用户> !requiretty`（agent 无终端，CentOS 7 的 sudo 默认 requiretty），不授予任何命令。
 - 私钥、凭据、License 签名私钥不得出现在代码、日志、前端响应中。
 - 数据库访问只用参数化查询；MVP 阶段集中在 internal/console/store 封装，正式版迁移到 gorm/gen。每个写接口写审计。
 

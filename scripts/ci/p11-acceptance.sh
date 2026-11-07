@@ -196,19 +196,26 @@ system_phase() {
   echo "== MI-02 端口冲突"
   out=$(syedge-instance add red --http 18080 --https 38443 --status 8084 2>&1) && bad "与 blue 端口冲突未被拒绝" \
     || { [[ "$out" == *18080* ]] && ok "与 blue 的端口冲突被拒绝并指出端口" || bad "冲突信息不明：$out"; }
-  # 占用端口的程序：-I 不从当前目录导入模块；确认它出现在 /proc/net/tcp 的监听表中（add 正是读这张表）再测
-  python3 -I -c 'import socket,time
-s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 38080)); s.listen(); time.sleep(120)' \
-    >/tmp/occupier.log 2>&1 & local hp=$!
-  local lst=0
-  for _ in $(seq 1 50); do grep -qiE "^ *[0-9]+: [0-9A-F]+:$(printf '%04X' 38080) [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp && { lst=1; break; }; sleep 0.2; done
+  # 占用端口的程序：向系统要一个空闲端口（端口 0）并写出端口号，不写死端口——固定端口可能正被 runner 上的其他连接使用；
+  # -I 不从当前目录导入模块；确认它出现在 /proc/net/tcp 的监听表中（add 正是读这张表）再测
+  rm -f "$W/occupier.port"
+  python3 -I -c 'import socket,sys,time
+s=socket.socket(); s.bind(("0.0.0.0", 0)); s.listen()
+open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occupier.port" \
+    >"$W/occupier.log" 2>&1 & local hp=$!
+  local lst=0 op=""
+  for _ in $(seq 1 50); do
+    op=$(cat "$W/occupier.port" 2>/dev/null)
+    [[ -n "$op" ]] && grep -qiE "^ *[0-9]+: [0-9A-F]+:$(printf '%04X' "$op") [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp && { lst=1; break; }
+    sleep 0.2
+  done
   if [[ $lst == 0 ]]; then
-    bad "占用 38080 的测试程序没有开始监听：$(tr '\n' ' ' </tmp/occupier.log)"
-  elif out=$(syedge-instance add red --http 38080 --https 38443 --status 8084 2>&1); then
-    bad "被其他程序占用的端口未被拒绝：$(grep -iE ":$(printf '%04X' 38080) " /proc/net/tcp | head -2 | tr '\n' ' ')"
+    bad "占用端口的测试程序没有开始监听：$(tr '\n' ' ' <"$W/occupier.log")"
+  elif out=$(syedge-instance add red --http "$op" --https 38443 --status 8084 2>&1); then
+    bad "被其他程序占用的端口 $op 未被拒绝：$(grep -iE ":$(printf '%04X' "$op") " /proc/net/tcp | head -2 | tr '\n' ' ')"
     syedge-instance remove red --yes >/dev/null 2>&1
   else
-    [[ "$out" == *38080* ]] && ok "被其他程序占用的端口被拒绝并指出端口" || bad "占用端口的拒绝信息不明：$out"
+    [[ "$out" == *"$op"* ]] && ok "被其他程序占用的端口（$op）被拒绝并指出端口" || bad "占用端口的拒绝信息不明：$out"
   fi
   kill $hp 2>/dev/null
   out=$(syedge-instance check 2>&1) && ok "syedge-instance check 未发现问题" || bad "check：$out"
@@ -295,9 +302,14 @@ root_master_phase() {
   done
   local W_D=(runuser -u syedge-agent -- sudo -n /usr/libexec/syedge/syedge-wrapper)
   local W_G=(runuser -u syedge-agent-green -- sudo -n /usr/libexec/syedge/syedge-wrapper --instance green)
+  # CentOS 7 的 sudo 默认 requiretty（agent 是没有终端的后台服务）：模拟该默认值，agent 仍能调用 wrapper
+  echo 'Defaults requiretty' > /etc/sudoers.d/00-requiretty && chmod 0440 /etc/sudoers.d/00-requiretty
   local w0; w0=$(workers $D)
   "${W_D[@]}" reload >/dev/null 2>&1 && sleep 1
-  [[ "$(workers $D)" != "$w0" ]] && ok "agent 经 sudo（root）调用 wrapper reload" || bad "兼容模式 reload 后 worker 未替换"
+  [[ "$(workers $D)" != "$w0" ]] && ok "agent 经 sudo（root）调用 wrapper reload（sudo 默认 requiretty 时同样可用）" || bad "兼容模式 reload 后 worker 未替换"
+  w0=$(workers $G); "${W_G[@]}" reload >/dev/null 2>&1 && sleep 1
+  [[ "$(workers $G)" != "$w0" ]] && ok "具名实例 agent 在 requiretty 下调用 wrapper" || bad "requiretty 下具名实例 reload 失败"
+  rm -f /etc/sudoers.d/00-requiretty
   runuser -u syedge-agent -- sudo -n -u syedge /usr/libexec/syedge/syedge-wrapper reload >/dev/null 2>&1 \
     && bad "兼容模式下仍允许以 syedge 调用 wrapper" || ok "sudoers 只允许以 root 调用 wrapper"
   # 标记不可信时（不属于 root 或他人可写）wrapper 照旧拒绝以 root 运行

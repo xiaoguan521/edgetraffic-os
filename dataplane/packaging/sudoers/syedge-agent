@@ -2,7 +2,9 @@
 # 参数安全由 syedge-wrapper 保证：test 只接受 ^r[0-9]{6,12}$，upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$，
 # 升级包必须带厂商升级包签名，由 wrapper 验签后才使用。wrapper 以 syedge 用户运行（与数据面 master 相同），
 # 运行时没有任何 root 进程（设计 0001 第 6.1 节方式 B，D5）。
-# 同机多实例按 docs/design/0001-deploy-layout.md 5.5 节实现（每实例独立 agent 用户与 sudoers），在此之前不提供。
+# 具名实例的 agent 各有自己的 sudoers（syedge-instance add 生成，只能操作本实例）。兼容模式下 7 行改为以 (root) 运行。
+# agent 是没有终端的后台服务：部分系统（CentOS 7）的 sudo 默认 requiretty，这里只对 agent 用户取消，不授予任何命令。
+Defaults:syedge-agent !requiretty
 syedge-agent ALL=(syedge) NOPASSWD: /usr/libexec/syedge/syedge-wrapper test *
 syedge-agent ALL=(syedge) NOPASSWD: /usr/libexec/syedge/syedge-wrapper reload
 syedge-agent ALL=(syedge) NOPASSWD: /usr/libexec/syedge/syedge-wrapper reopen

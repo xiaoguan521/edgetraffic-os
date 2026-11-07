@@ -2,7 +2,12 @@ set -e
 mkdir -p /var/lib/syedge-agent /run/syedge-agent /run/syedge /opt/syedge/conf/releases
 chmod 0750 /var/lib/syedge-agent
 if command -v visudo >/dev/null 2>&1; then
-  visudo -cf /etc/sudoers.d/syedge-agent >/dev/null || { echo "syedge-agent: sudoers 校验失败" >&2; exit 1; }
+  if ! visudo -cf /etc/sudoers.d/syedge-agent >/dev/null 2>&1; then
+    # CentOS 7 supports requiretty; newer sudo releases reject the obsolete
+    # option, where the override is unnecessary.
+    sed -i '/^Defaults:[^[:space:]]* !requiretty$/d' /etc/sudoers.d/syedge-agent
+    visudo -cf /etc/sudoers.d/syedge-agent >/dev/null || { echo "syedge-agent: sudoers 校验失败" >&2; exit 1; }
+  fi
 fi
 if [ ! -e /opt/syedge/conf/current ]; then
   /usr/bin/syedge-agent bootstrap
