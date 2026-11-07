@@ -342,10 +342,11 @@ func TestSudoersPassesVisudo(t *testing.T) {
 		if fallback == body {
 			t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
 		}
-		if writeErr := os.WriteFile(f, []byte(fallback), 0o440); writeErr != nil {
+		portable := f + ".portable"
+		if writeErr := os.WriteFile(portable, []byte(fallback), 0o440); writeErr != nil {
 			t.Fatal(writeErr)
 		}
-		if retryOut, retryErr := exec.Command(visudo, "-cf", f).CombinedOutput(); retryErr != nil {
+		if retryOut, retryErr := exec.Command(visudo, "-cf", portable).CombinedOutput(); retryErr != nil {
 			t.Fatalf("visudo rejected generated sudoers and portable fallback: %v\n%s\nportable: %v\n%s", err, out, retryErr, retryOut)
 		}
 	}
