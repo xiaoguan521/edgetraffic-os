@@ -339,6 +339,9 @@ func (s *Server) createGroup(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	if s.groupNameTaken(c, req.Name, 0) {
+		return
+	}
 	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom}
 	if err := s.q().NodeGroup.WithContext(c.Request.Context()).Create(g); err != nil {
 		failErr(c, err)
@@ -367,15 +370,83 @@ func (s *Server) updateGroup(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	// 改名：名称只用于显示与审计，配置与节点按编号关联，改名不影响已注册的节点与已发布的版本
+	name := g.Name
+	if req.Name != "" && req.Name != g.Name {
+		if err := render.ValidateName(req.Name); err != nil {
+			failErr(c, err)
+			return
+		}
+		if s.groupNameTaken(c, req.Name, g.ID) {
+			return
+		}
+		name = req.Name
+	}
 	ng := s.q().NodeGroup
-	if _, err := ng.WithContext(c.Request.Context()).Where(ng.ID.Eq(g.ID)).UpdateSimple(ng.Description.Value(req.Description),
+	if _, err := ng.WithContext(c.Request.Context()).Where(ng.ID.Eq(g.ID)).UpdateSimple(ng.Name.Value(name), ng.Description.Value(req.Description),
 		ng.AllowedCIDRs.Value(req.AllowedCIDRs), ng.RealIPFrom.Value(req.RealIPFrom)); err != nil {
 		failErr(c, err)
 		return
 	}
-	g.Description, g.AllowedCIDRs, g.RealIPFrom = req.Description, req.AllowedCIDRs, req.RealIPFrom
+	g.Name, g.Description, g.AllowedCIDRs, g.RealIPFrom = name, req.Description, req.AllowedCIDRs, req.RealIPFrom
 	s.audit(c, "group.update", "node_group", fmt.Sprint(id), req)
 	c.JSON(http.StatusOK, g)
+}
+
+// groupNameTaken 检查节点组名称是否已被其他组使用（已写入 409 响应时返回 true）。
+func (s *Server) groupNameTaken(c *gin.Context, name string, self uint) bool {
+	ng := s.q().NodeGroup
+	n, err := ng.WithContext(c.Request.Context()).Where(ng.Name.Eq(name), ng.ID.Neq(self)).Count()
+	if err != nil {
+		failErr(c, err)
+		return true
+	}
+	if n > 0 {
+		fail(c, http.StatusConflict, "NAME_TAKEN", "节点组名称已存在")
+		return true
+	}
+	return false
+}
+
+// groupUsage 返回删除前的占用情况：哪些阻止删除（未吊销的节点、进行中的操作、最后一个组），哪些会随组删除。
+func (s *Server) groupUsage(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	u, err := s.Deploy.GroupUsage(id)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, u)
+}
+
+// deleteGroup 删除节点组（仅管理员）。请求体须带 {"confirm": "<组名>"}，防止误删；审计由 deploy.DeleteGroup 写入。
+func (s *Server) deleteGroup(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Confirm string `json:"confirm"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	g, err := store.First[store.NodeGroup](s.Store, id)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	if req.Confirm != g.Name {
+		fail(c, http.StatusBadRequest, "CONFIRM_MISMATCH", "请输入节点组名称以确认删除")
+		return
+	}
+	u, err := s.Deploy.DeleteGroup(id, c.GetString("user"), c.ClientIP())
+	if err != nil {
+		failErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, u)
 }
 
 func (s *Server) enrollToken(c *gin.Context) {

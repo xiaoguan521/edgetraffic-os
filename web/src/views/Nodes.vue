@@ -18,7 +18,8 @@ const hosts = ref<any[]>([])
 
 async function load() {
   groups.value = await api.get('/node-groups')
-  if (!gid.value && groups.value.length) gid.value = groups.value[0].id
+  // 当前组被删除（或首次进入）时切到第一个组
+  if (groups.value.length && !groups.value.some((g) => g.id === gid.value)) gid.value = groups.value[0].id
   const [n, p, h] = await Promise.all([api.get('/nodes', { group_id: gid.value }), api.get(`/node-groups/${gid.value}/profile`), api.get('/hosts')])
   nodes.value = n.filter((x: any) => x.status !== 'revoked')
   profile.value = p
@@ -59,11 +60,11 @@ function copy(text: string) {
 
 // 节点组设置（含实例档案：同机多实例与 user 模式，设计 0001 第 3.4、5.2 节）
 const editing = ref(false)
-const gform = reactive({ description: '', allowed_cidrs: '', real_ip_from: '' })
+const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '' })
 const pform = reactive({ instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
 const locked = computed(() => nodes.value.length > 0) // 组内已有节点：实例名、模式、根目录不可改
 function openGroup() {
-  Object.assign(gform, { description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
+  Object.assign(gform, { name: group.value.name, description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
   const p = profile.value || {}
   const e = p.effective || {}
   Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
@@ -97,9 +98,10 @@ async function createGroup() {
   }
 }
 
+const nameRe = /^[a-z0-9][a-z0-9-]{1,62}$/
 async function saveGroup() {
   try {
-    await api.put(`/node-groups/${gid.value}`, gform)
+    await api.put(`/node-groups/${gid.value}`, { ...gform, name: gform.name.trim() })
     if (profileChanged()) {
       const body: any = { instance: pform.instance, http_port: pform.http_port, https_port: pform.https_port, status_port: pform.status_port }
       if (pform.mode === 'user') Object.assign(body, { mode: 'user', root: pform.root })
@@ -108,6 +110,46 @@ async function saveGroup() {
     }
     message.success('已保存，发布后生效')
     editing.value = false
+    load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
+// 删除节点组（仅管理员）：先查看占用，组内节点须已全部吊销，输入组名确认
+const removing = ref<any>(null)
+const confirmName = ref('')
+const usageItems = computed(() => {
+  const u = removing.value
+  if (!u) return []
+  return [
+    ['站点', u.sites], ['上游', u.upstreams], ['四层服务', u.streams], ['自定义片段', u.snippets], ['IP 集', u.ip_sets],
+    ['静态资源包', u.static_bundles], ['配置导入记录', u.imports], ['配置版本', u.revisions], ['发布记录', u.deployments], ['已吊销的节点记录', u.revoked_nodes],
+  ].filter(([, n]) => n > 0) as [string, number][]
+})
+const blocker = computed(() => {
+  const u = removing.value
+  if (!u) return ''
+  if (u.last) return '这是最后一个节点组，不能删除。'
+  if (u.nodes > 0) return `组内还有 ${u.nodes} 个未吊销的节点，请先在节点列表中吊销（吊销后数据面继续以当前配置运行，只是不再受控制台管理）。`
+  if (u.busy) return `该节点组${u.busy}，请等待完成或取消后再删除。`
+  return ''
+})
+async function openDelete() {
+  confirmName.value = ''
+  try {
+    removing.value = await api.get(`/node-groups/${gid.value}/usage`)
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+async function deleteGroup() {
+  const name = group.value?.name
+  try {
+    await api.del(`/node-groups/${gid.value}`, { confirm: confirmName.value })
+    removing.value = null
+    editing.value = false
+    message.success(`已删除节点组 ${name}`)
     load()
   } catch (e) {
     message.error(errMsg(e))
@@ -278,7 +320,7 @@ function mb(b: number) {
     <a-modal v-model:open="creating" title="新建节点组" ok-text="创建" :ok-button-props="{ disabled: !/^[a-z0-9][a-z0-9-]{1,62}$/.test(cform.name.trim()) }" @ok="createGroup">
       <p class="sub" style="margin-top: 0">一个节点组对应一套配置。同一台服务器上运行多套 {{ brand.id }}（同机多实例）时，每套属于不同的节点组；创建后在“节点组设置”里填写实例名与端口。</p>
       <a-form layout="vertical">
-        <a-form-item label="名称" extra="小写字母、数字和短横线，2–63 个字符，例如 edge-blue。创建后不能改名。">
+        <a-form-item label="名称" extra="小写字母、数字和短横线，2–63 个字符，例如 edge-blue。之后可在“节点组设置”中改名。">
           <a-input v-model:value="cform.name" placeholder="edge-blue" />
         </a-form-item>
         <a-form-item label="说明（可选）">
@@ -286,8 +328,11 @@ function mb(b: number) {
         </a-form-item>
       </a-form>
     </a-modal>
-    <a-modal v-model:open="editing" title="节点组设置" ok-text="保存" @ok="saveGroup">
+    <a-modal v-model:open="editing" title="节点组设置" ok-text="保存" :ok-button-props="{ disabled: !nameRe.test(gform.name.trim()) }" @ok="saveGroup">
       <a-form layout="vertical">
+        <a-form-item label="名称" extra="改名只影响显示，已注册的节点、站点与已发布的版本不受影响。">
+          <a-input v-model:value="gform.name" class="code" />
+        </a-form-item>
         <a-form-item label="说明"><a-input v-model:value="gform.description" /></a-form-item>
         <a-form-item label="允许回源网段" extra="上游服务器地址必须落在这些网段内（逗号分隔 CIDR）。回环与云元数据地址始终禁止。">
           <a-input v-model:value="gform.allowed_cidrs" class="code" />
@@ -315,7 +360,29 @@ function mb(b: number) {
           <a-form-item label="状态页端口（仅本机）"><a-input-number v-model:value="pform.status_port" :min="1" :max="65535" /></a-form-item>
         </a-space>
         <p v-if="pform.http_port !== 80" class="sub">HTTP 端口不是 80：ACME 自动签发需要前置负载均衡把域名的 80 端口转发到 {{ pform.http_port }}，否则请使用上传证书。</p>
+        <template v-if="session.can('admin')">
+          <a-divider orientation="left" style="font-size: 13px">删除节点组</a-divider>
+          <p class="sub" style="margin-top: -8px">删除节点组会同时删除组内的站点、上游、版本与发布记录；组内节点须先全部吊销。证书库与审计日志不受影响。</p>
+          <a-button danger :disabled="!session.writable" @click="openDelete">删除节点组…</a-button>
+        </template>
       </a-form>
+    </a-modal>
+    <a-modal :open="!!removing" :title="`删除节点组 ${group?.name || ''}`" ok-text="删除" :ok-button-props="{ danger: true, disabled: !!blocker || confirmName !== group?.name }" @ok="deleteGroup" @cancel="removing = null">
+      <template v-if="removing">
+        <a-alert v-if="blocker" type="warning" show-icon :message="blocker" />
+        <template v-else>
+          <p>删除后不能恢复。以下内容会随节点组一起删除：</p>
+          <ul v-if="usageItems.length" class="usage">
+            <li v-for="[k, n] in usageItems" :key="k">{{ k }} <b class="num">{{ n }}</b></li>
+          </ul>
+          <p v-else class="sub">这个节点组是空的。</p>
+          <a-form layout="vertical">
+            <a-form-item :label="`输入节点组名称 ${group?.name} 以确认`">
+              <a-input v-model:value="confirmName" class="code" />
+            </a-form-item>
+          </a-form>
+        </template>
+      </template>
     </a-modal>
     <a-drawer :open="!!drift" :width="760" :title="`${driftNode?.name} 的手工改动`" @close="drift = null">
       <template v-if="drift">
@@ -383,6 +450,14 @@ function mb(b: number) {
 }
 .dfile {
   margin-bottom: 12px;
+}
+.usage {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: #16323a;
+}
+.usage b {
+  margin-left: 6px;
 }
 .restore {
   margin-left: 6px;
