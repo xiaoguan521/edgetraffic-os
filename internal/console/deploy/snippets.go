@@ -94,10 +94,10 @@ func (in *SnippetInput) slot() error {
 		}
 	case render.ScopeLua:
 		if in.SiteID == 0 || in.RoutePath == "" {
-			return errors.New("Lua 脚本需要选择站点和路由")
+			return errors.New("自定义 Lua 脚本需要选择站点和路由")
 		}
 		if !slices.Contains(render.LuaPhases, in.Name) {
-			return fmt.Errorf("Lua 脚本的执行阶段只能是 %s", strings.Join(render.LuaPhases, "、"))
+			return fmt.Errorf("自定义 Lua 脚本的执行阶段只能是 %s", strings.Join(render.LuaPhases, "、"))
 		}
 	default:
 		return fmt.Errorf("未知插入点 %q", in.Scope)
