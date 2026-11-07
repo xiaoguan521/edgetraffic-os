@@ -273,11 +273,70 @@ s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bi
   syedge-firewall disable >/dev/null 2>&1 || true
 }
 
+# 兼容模式（root master，与 nginx 相同）：内核或 systemd 不支持 ambient 能力的系统（CentOS 7）自动使用，
+# 任何系统都可以用 --root-master 选择。CI 的内核支持 ambient，这里用 --root-master 进入同一套配置
+root_master_phase() {
+  echo "== 兼容模式：master 以 root 运行（与传统 Web 服务器相同），worker 以 syedge 运行"
+  local D=/run/syedge/syedge.pid G=/run/syedge-green/syedge.pid dp; dp=$(id -u syedge)
+  out=$(syedge-instance nonroot --root-master 2>&1) || bad "nonroot --root-master：$out"
+  [[ -f /etc/syedge/root-master && "$(stat -c %u /etc/syedge/root-master)" == 0 ]] && ok "写入兼容模式标记（root 所有）" || bad "没有兼容模式标记"
+  for f in /etc/sudoers.d/syedge-agent /etc/sudoers.d/syedge-agent-green; do
+    grep -q '=(root)' "$f" && ! grep -q '=(syedge)' "$f" && [[ "$(grep -c NOPASSWD "$f")" == 7 ]] \
+      && ok "$(basename "$f")：7 行，以 root 运行 wrapper" || bad "$f 未切换为 (root)"
+  done
+  # 测试环境按新装机的方式启动（产品代码从不 stop / restart 数据面：nonroot 只写配置，下次启动生效）
+  systemctl stop syedge@green.service syedge.service
+  systemctl start syedge.service syedge@green.service; sleep 1
+  for p in $D $G; do
+    local m; m=$(masterpid $p)
+    [[ "$(uid_of "$m")" == 0 ]] && ok "$p：master 以 root 运行" || bad "$p：master uid $(uid_of "$m")"
+    local bad_w=0; for w in $(workers $p); do [[ "$(uid_of "$w")" == "$dp" ]] || bad_w=1; done
+    [[ -n "$(workers $p)" && $bad_w == 0 ]] && ok "$p：worker 都以 syedge 运行" || bad "$p：worker 身份不对"
+  done
+  local W_D=(runuser -u syedge-agent -- sudo -n /usr/libexec/syedge/syedge-wrapper)
+  local W_G=(runuser -u syedge-agent-green -- sudo -n /usr/libexec/syedge/syedge-wrapper --instance green)
+  local w0; w0=$(workers $D)
+  "${W_D[@]}" reload >/dev/null 2>&1 && sleep 1
+  [[ "$(workers $D)" != "$w0" ]] && ok "agent 经 sudo（root）调用 wrapper reload" || bad "兼容模式 reload 后 worker 未替换"
+  runuser -u syedge-agent -- sudo -n -u syedge /usr/libexec/syedge/syedge-wrapper reload >/dev/null 2>&1 \
+    && bad "兼容模式下仍允许以 syedge 调用 wrapper" || ok "sudoers 只允许以 root 调用 wrapper"
+  # 标记不可信时（不属于 root 或他人可写）wrapper 照旧拒绝以 root 运行
+  chmod 0666 /etc/syedge/root-master
+  /usr/libexec/syedge/syedge-wrapper reload >/dev/null 2>&1 && bad "可写的标记让 wrapper 以 root 运行" || ok "他人可写的标记不被信任"
+  chmod 0644 /etc/syedge/root-master
+
+  echo "== 兼容模式下的主机级热升级（持续请求）"
+  local UP2=9.2.0
+  OUT="$W/pkg" SYEDGE_UPGRADE_VERSION=$UP2 scripts/release/package.sh syedge-upgrade "$ARCH" "$TGZ" >/dev/null
+  "$W/lic" sign-package -key "$W/keys/etos-ci-pkg-ephemeral.key" -kid etos-ci-pkg-ephemeral -in "$W/pkg/syedge-$UP2-$ARCH.tar.gz" -name syedge -version "$UP2" -arch "$ARCH" -variant standard >/dev/null
+  for a in /var/lib/syedge-agent /var/lib/syedge-agent-green; do
+    mkdir -p "$a/upgrade"
+    cp "$W/pkg/syedge-$UP2-$ARCH.tar.gz" "$a/upgrade/syedge-$UP2.tar.gz"; cp "$W/pkg/syedge-$UP2-$ARCH.tar.gz.sig" "$a/upgrade/syedge-$UP2.tar.gz.sig"
+  done
+  load_start rm 8081 8083
+  out=$("${W_D[@]}" upgrade-start $UP2 2>&1) || bad "兼容模式 默认实例 upgrade-start：$out"
+  "${W_D[@]}" upgrade-commit >/dev/null 2>&1 || bad "兼容模式 默认实例 upgrade-commit"
+  out=$("${W_G[@]}" upgrade-start $UP2 2>&1) || bad "兼容模式 green upgrade-start：$out"
+  "${W_G[@]}" upgrade-commit >/dev/null 2>&1 || bad "兼容模式 green upgrade-commit"
+  sleep 1
+  n=$(load_stop rm)
+  local nb=/opt/syedge/versions/$UP2/sbin/syedge
+  [[ "$(exe $D)" == "$nb" && "$(exe $G)" == "$nb" ]] && ok "两个实例都升级到 $UP2" || bad "兼容模式升级后：$(exe $D) / $(exe $G)"
+  [[ "$(uid_of "$(masterpid $D)")" == 0 && "$(uid_of "$(masterpid $G)")" == 0 ]] && ok "升级后的新 master 仍以 root 运行" || bad "升级后 master 身份不对"
+  [[ "$n" == 0 ]] && ok "兼容模式热升级期间持续请求零错误" || bad "兼容模式热升级 $n 次请求失败"
+
+  echo "== 兼容模式下 logrotate 的 reopen-all（以 root 发信号）"
+  mv /var/log/syedge/error.log /var/log/syedge/error.log.r
+  syedge-instance reopen-all >/dev/null 2>&1; sleep 1
+  [[ -f /var/log/syedge/error.log ]] && ok "reopen-all 重新打开日志" || bad "兼容模式 reopen-all 后没有 error.log"
+}
+
 case "$PHASE" in
   user) user_phase ;;
   system) system_phase ;;
-  all) user_phase; system_phase ;;
-  *) echo "phase: user|system|all" >&2; exit 2 ;;
+  all) user_phase; system_phase; root_master_phase ;;
+  root-master) root_master_phase ;;
+  *) echo "phase: user|system|root-master|all" >&2; exit 2 ;;
 esac
 rm -rf "$W"
 echo "---- $fail failed"

@@ -29,6 +29,9 @@ func RaiseBindCap() error {
 		return e
 	}
 	if _, _, e := syscall.RawSyscall6(syscall.SYS_PRCTL, prCapAmbient, prCapAmbientRaise, capNetBindService, 0, 0, 0); e != 0 {
+		if e == syscall.EINVAL {
+			return nil // 内核不支持 ambient 能力（4.3 之前，如 CentOS 7）：这类系统用兼容模式，wrapper 以 root 运行
+		}
 		return e
 	}
 	return nil

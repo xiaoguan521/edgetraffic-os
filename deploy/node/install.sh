@@ -7,11 +7,13 @@
 #   sudo ./install.sh ... --replace-local-config         本机原为独立模式且有自定义配置时，备份后由控制台接管
 #   sudo ./install.sh --firewall-ssh-from 10.0.0.0/8[,IP...]
 #                                                       同时启用节点防火墙（可选，见 syedge-firewall）
+#   sudo ./install.sh --root-master                     兼容模式：与传统 Web 服务器相同由 root 运行 master（worker 仍以 syedge 运行）。
+#                                                       内核或 systemd 不支持 ambient 能力（如 CentOS 7）时自动使用
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; REPLACE_LOCAL=()
+SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
@@ -19,7 +21,8 @@ while [[ $# -gt 0 ]]; do
     --ca-fingerprint) CAFP="$2";   shift 2 ;;
     --firewall-ssh-from) FW_FROM="$2"; shift 2 ;;
     --replace-local-config) REPLACE_LOCAL=(-replace-local-config); shift ;;
-    -h|--help)        sed -n '2,11p' "$0"; exit 0 ;;
+    --root-master)    ROOT_MASTER=(--root-master); shift ;;
+    -h|--help)        sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -90,9 +93,15 @@ if [[ -f /etc/syedge/firewall.nft && ! -e /var/lib/syedge-firewall/firewall.nft 
 fi
 systemctl daemon-reload
 # 交出运行时目录；升级前以 root 启动的 master 无中断切换为 syedge 运行（与二进制热升级同一机制，不重启）
-/usr/sbin/syedge-instance nonroot
-# 经 wrapper 以 syedge 校验（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不以 root 运行，也不会创建属于 root 的日志）
-runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test "$(basename "$(readlink /opt/syedge/conf/current)")"
+/usr/sbin/syedge-instance nonroot ${ROOT_MASTER[@]+"${ROOT_MASTER[@]}"}
+# 经 wrapper 校验：默认以 syedge（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不会创建属于 root 的日志）；
+# 兼容模式下 master 以 root 运行，wrapper 也以 root 运行
+REV="$(basename "$(readlink /opt/syedge/conf/current)")"
+if [[ -f /etc/syedge/root-master ]]; then
+  /usr/libexec/syedge/syedge-wrapper test "$REV"
+else
+  runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test "$REV"
+fi
 
 echo "== 启动 syedge"
 systemctl daemon-reload

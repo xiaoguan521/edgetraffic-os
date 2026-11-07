@@ -309,6 +309,14 @@ user 模式下，agent 和数据面 worker 是同一个用户。worker 一旦被
 - **已以 root 运行的 master**（升级前启动）不能 restart，由 `B-instance nonroot`（安装与升级软件包时自动执行，可重复执行）无中断切换：共用软链临时指向 root 所有的 `B-instance`（launcher），USR2 → 旧 master exec launcher → launcher 读取 root 所有的 `versions/.handover.json`，降权为 `B`、只保留 `CAP_NET_BIND_SERVICE`（ambient），exec 真正的二进制；监听套接字随 exec 继承 → 软链立即切回 → WINCH / QUIT 旧 master。新 master 身份或能力不对时让它退出，旧 master 照常服务。`nonroot` 同时交出目录、重写具名实例的 sudoers、设置 wrapper 的文件能力、重启 agent（只重启 agent）。
 - 安全权衡：master 与 worker 同一用户，二进制目录与版本库对 `B` 可写。worker 被攻破时可以替换二进制或读取私钥（与以前 worker 能读私钥相同），但没有任何 root 进程可被利用，替换后的二进制也只以 `B` 身份、带 `CAP_NET_BIND_SERVICE` 运行。升级包仍须厂商签名才会被 wrapper 安装。
 
+
+**兼容模式（2026-11-07 决定：与 nginx 保持一致）**：ambient 能力需要内核 4.3 与 systemd 229 起，CentOS 7（内核 3.10、systemd 219）不支持。
+`B-instance nonroot` 检测到不支持（`/proc/self/status` 没有 `CapAmb`，或 `systemctl --version` < 229）时，或指定 `--root-master` 时，
+写入 root 所有的标记 `/etc/B/root-master` 与单元附加配置 `root-master.conf`（`User=root`，边界集只列 root master 用到的能力），
+sudoers 改为 `(root)`（7 行不变），agent 以 `sudo -n` 调用 wrapper，wrapper 只在标记可信（root 所有、他人不可写）时接受以 root 运行。
+master 以 root 绑定端口，worker 按编译进二进制的默认用户（`--user=B`）运行，与 nginx 相同；热升级、多实例与日志轮转的流程不变。
+nonroot 只写配置、不停止也不重启数据面；验收：`scripts/ci/p11-acceptance.sh` 的 root-master 阶段。
+
 ### 6.6 控制台的非 root 运行
 
 控制台本来就以 `syedge-console` 普通用户运行，端口为 8443 和 9443，数据目录可以通过 `-data` 指定。这里只需要补充：免安装包、`systemd --user` 单元示例，以及授权后台的同类说明。

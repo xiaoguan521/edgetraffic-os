@@ -59,8 +59,10 @@ func usage(w io.Writer) {
   %[1]s list
   %[1]s check
   %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用，可由数据面用户执行）
-  %[1]s nonroot                               运行时不使用 root：交出运行时目录、仍以 root 运行的 master
-                                              无中断切换为数据面用户（安装与升级软件包时自动执行）
+  %[1]s nonroot [--root-master]               运行时不使用 root：交出运行时目录、仍以 root 运行的 master
+                                              无中断切换为数据面用户（安装与升级软件包时自动执行）。
+                                              内核或 systemd 不支持 ambient 能力（如 CentOS 7）时，或加 --root-master，
+                                              进入兼容模式：与传统 Web 服务器相同由 root 运行 master，worker 以数据面用户运行
 
 user 模式（普通用户安装，不需要 root；端口须 ≥ 1024）：在以上命令前加 --root <安装根目录>，另有
   %[1]s --root <目录> init --http <端口> --https <端口> --status <端口> [注册参数]   创建该根目录的默认实例
@@ -89,7 +91,22 @@ func env(out io.Writer, userRoot string) instance.Env {
 			return c.Run()
 		},
 		Listening: func() (map[string]bool, error) { return instance.ListeningFromProc("/") },
+		Ambient:   ambientSupported,
 	}
+}
+
+// ambientSupported：内核支持 ambient 能力（4.3 起，/proc/self/status 有 CapAmb 行）且 systemd 支持
+// AmbientCapabilities（229 起）。任一不满足（CentOS 7：内核 3.10、systemd 219）即用兼容模式。
+func ambientSupported() bool {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil || !strings.Contains(string(b), "\nCapAmb:") {
+		return false
+	}
+	out, err := exec.Command("systemctl", "--version").Output()
+	if err != nil {
+		return true // 没有 systemd（容器等）：不经 systemd 授予能力，按内核判断
+	}
+	return instance.SystemdAtLeast(string(out), 229)
 }
 
 func run(args []string, stdout, stderr io.Writer, euid int) int {
@@ -149,6 +166,14 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 	case "reopen-all":
 		err = e.ReopenAll()
 	case "nonroot":
+		// --root-master：兼容模式（与传统 Web 服务器相同，master 以 root 运行）。内核或 systemd 不支持 ambient 能力时自动进入
+		switch {
+		case len(rest) == 1 && rest[0] == "--root-master":
+			e.RootMaster = true
+		case len(rest) > 0:
+			usage(stderr)
+			return 2
+		}
 		err = e.Nonroot()
 	default:
 		usage(stderr)

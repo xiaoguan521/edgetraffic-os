@@ -31,12 +31,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "user-mode wrapper must not run as root")
 		os.Exit(wrapper.ExitUsage)
 	}
-	// system 模式：运行时不使用 root（设计 0001 D5）。sudoers 以数据面用户运行 wrapper，与 master 同一身份
-	if root == "" && os.Geteuid() == 0 {
+	// system 模式：运行时不使用 root（设计 0001 D5）。sudoers 以数据面用户运行 wrapper，与 master 同一身份。
+	// 例外是兼容模式（内核或 systemd 不支持 ambient 能力，如 CentOS 7）：master 与传统 Web 服务器一样以 root 运行，
+	// wrapper 须以 root 才能向它发信号；是否兼容模式只由 root 所有的标记文件决定（layout.RootMasterAt）
+	if root == "" && os.Geteuid() == 0 && !layout.RootMasterAt("/") {
 		fmt.Fprintln(os.Stderr, "wrapper must not run as root: sudoers runs it as the data-plane user (sudo -u "+layout.WorkerUser()+")")
 		os.Exit(wrapper.ExitUsage)
 	}
-	if root == "" {
+	if root == "" && os.Geteuid() != 0 {
 		// `-t` 绑定配置中的端口（80/443）：把 wrapper 文件带的 CAP_NET_BIND_SERVICE 交给子进程（只此一项）
 		if err := wrapper.RaiseBindCap(); err != nil {
 			fmt.Fprintln(os.Stderr, "raise CAP_NET_BIND_SERVICE:", err)

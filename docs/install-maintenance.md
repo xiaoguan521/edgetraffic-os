@@ -766,6 +766,24 @@ getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 - 手工校验配置请以 `syedge` 身份经 wrapper 执行：`sudo -u syedge /usr/libexec/syedge/syedge-wrapper test <版本号>`；以 root 直接执行 `syedge -t` 可能创建属于 root 的日志文件，导致 master 无法写入。
 - 配置中不再有 `user` 指令（worker 与 master 同为 `syedge`）。
 
+#### 兼容模式：master 以 root 运行（与 nginx 相同）
+
+非 root 的 master 绑定 80/443 依赖 ambient 能力：内核 4.3 起、systemd 229 起。CentOS 7（内核 3.10、systemd 219）等系统不满足，
+`syedge-instance nonroot`（安装与软件包升级时自动执行）会自动进入兼容模式；任何系统也可以用 `./install.sh --root-master`
+（或 `syedge-instance nonroot --root-master`）选择它。兼容模式与 nginx 的做法相同：
+
+| 进程 | 运行身份 |
+| --- | --- |
+| `syedge` master | `root`（绑定端口后按编译进二进制的默认用户启动 worker，配置中仍不写 `user` 指令） |
+| `syedge` worker | `syedge`（处理流量的进程不是 root） |
+| `syedge-wrapper` | `root`（sudoers 为 `(root)`，仍只有 7 行；向 root master 发信号需要 root） |
+| `syedge-agent` | `syedge-agent`（不变） |
+| 防火墙开机加载与自动刷新 | `root` |
+
+模式记录在 `/etc/syedge/root-master`（root 所有、他人不可写，否则不被信任），单元附加配置在
+`/etc/systemd/system/syedge.service.d/root-master.conf` 与 `syedge@.service.d/`。热升级、多实例、reload、日志轮转的用法都不变。
+检查：`ps -C syedge -o user=,args=` 中 master 为 root、worker 为 syedge。
+
 ## 9. 升级、回滚与备份
 
 ### 9.1 普通软件包升级

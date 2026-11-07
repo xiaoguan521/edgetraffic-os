@@ -35,6 +35,9 @@ func (e Env) Nonroot() error {
 	if err != nil {
 		return err
 	}
+	if e.RootMaster || e.rootMaster() || (e.Ambient != nil && !e.Ambient()) {
+		return e.rootMasterSetup(insts)
+	}
 	dp := layout.WorkerUser()
 	owner := dp + ":" + dp
 	def := layout.System("")
@@ -149,7 +152,7 @@ func (e Env) writeSudoers(l layout.Layout) error {
 		return err
 	}
 	tmp := sp + ".new"
-	if err := writeFile(tmp, []byte(Sudoers(l)), 0o440); err != nil {
+	if err := writeFile(tmp, []byte(SudoersAs(l, e.wrapperRunas())), 0o440); err != nil {
 		return err
 	}
 	if err := e.Run("visudo", "-cf", l.SudoersFile()+".new"); err != nil {

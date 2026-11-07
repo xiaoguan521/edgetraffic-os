@@ -1,6 +1,6 @@
 /var/log/syedge/*.log /var/log/syedge/*.json /var/log/syedge-*/*.log /var/log/syedge-*/*.json {
     daily
-    # 日志目录属于数据面用户（运行时不使用 root）：以该用户轮转，postrotate 中的 reopen 也以该用户执行
+    # 日志目录属于数据面用户：以该用户轮转（兼容模式下 root master 新建的日志同样在该目录中）
     su syedge syedge
     rotate 14
     missingok
@@ -10,8 +10,12 @@
     sharedscripts
     postrotate
         # 默认实例与所有具名实例（syedge-instance add 创建）都重新打开日志
+        # syedge-instance 以 root 执行时自行决定发信号的身份：默认以 syedge（master 不是 root），
+        # 兼容模式（master 以 root 运行，与传统 Web 服务器相同）以 root
         if [ -x /usr/sbin/syedge-instance ]; then
-            runuser -u syedge -- /usr/sbin/syedge-instance reopen-all >/dev/null 2>&1 || true
+            /usr/sbin/syedge-instance reopen-all >/dev/null 2>&1 || true
+        elif [ -f /etc/syedge/root-master ]; then
+            /opt/syedge/sbin/syedge -s reopen >/dev/null 2>&1 || true
         else
             runuser -u syedge -- /opt/syedge/sbin/syedge -s reopen >/dev/null 2>&1 || true
         fi
