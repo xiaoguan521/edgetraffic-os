@@ -44,6 +44,34 @@ func TestAcceptanceConfig(t *testing.T) {
 		)
 		// 压测站点的“三条常用规则”：IP 拒绝、UA 拒绝（都不命中）+ 对所有请求的 JWT 校验
 		bench3.Rules = append(bench3.Rules, Rule{Name: "jwt", Action: RuleAction{Type: "jwt", JWT: &JWTAction{Alg: "HS256", Secret: hs, Source: "header"}}})
+		// 自定义 Lua 脚本（docs/lua.md 第 5 节）：生成响应、访问控制、改响应头、受限环境、运行时错误
+		hello := `ngx.header.content_type = "text/html"
+ngx.say("<h1>Hello from Lua</h1><p>这条响应由 Lua 脚本生成。</p>")`
+		if os.Getenv("ACCEPT_BAD_LUA") == "1" {
+			hello = "ngx.say(\"unterminated)\nlocal = 1\n"
+		}
+		static := &StaticSpec{IndexHTML: "static"}
+		api.Routes = append(append([]Route(nil), api.Routes...),
+			Route{Path: "/lua", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{
+				"access":  `if ngx.var.arg_deny then return ngx.exit(403) end`,
+				"content": hello,
+			}},
+			Route{Path: "/lua-sb", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `local r = {}
+local function add(v) r[#r + 1] = type(v) end
+add(io) add(os.execute) add(load) add(loadstring) add(ngx.socket) add(getmetatable)
+add(string.dump) add(debug) add(package) add(jit) add(rawset) add(setfenv)
+r[#r + 1] = tostring(pcall(require, "ffi"))
+r[#r + 1] = tostring(pcall(require, "string.buffer"))
+r[#r + 1] = tostring(pcall(function() leak = 1 end))
+r[#r + 1] = tostring(pcall(function() string.rep = nil end))
+r[#r + 1] = tostring(pcall(function() ngx.say = nil end))
+r[#r + 1] = tostring(pcall(function() ngx.req.get_headers = nil end))
+r[#r + 1] = tostring(require("etos.json").decode('{"a":7}').a)
+ngx.say(table.concat(r, " "))`}},
+			Route{Path: "/lua-err", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `error("lua-script-boom")`}},
+			Route{Path: "/lua-moved", Match: "exact", Mode: "redirect", Redirect: &RedirectSpec{To: "https://new.test/", Code: 302},
+				LuaScripts: map[string]string{"header_filter": `ngx.header["X-Lua"] = "1"`}},
+		)
 	}
 	if gm := os.Getenv("ACCEPT_GM"); gm != "" {
 		rd := func(n string) string {
@@ -79,7 +107,9 @@ func TestAcceptanceConfig(t *testing.T) {
 	if bin == "" {
 		bin = "/opt/syedge/sbin/syedge"
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+	// ACCEPT_BAD_LUA=1：脚本有语法错误。syedge -t 不执行 init 阶段，照常通过；错误在 reload 时出现（lua-acceptance.sh 验证）
+	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
+	if err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 }

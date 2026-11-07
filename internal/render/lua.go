@@ -123,7 +123,7 @@ func jwtRules(s Site, rev string) []jwtRule {
 	return out
 }
 
-// HasLua 报告版本是否需要 Lua 附加包。
+// HasLua 报告版本是否需要 Lua 附加包：有 JWT 规则或自定义 Lua 脚本时才加载模块（按需加载，没有用到 Lua 的版本不加载）。
 func (in Input) HasLua() bool {
 	for _, s := range in.Sites {
 		for _, r := range s.Rules {
@@ -132,10 +132,10 @@ func (in Input) HasLua() bool {
 			}
 		}
 	}
-	return false
+	return len(allScripts(in)) > 0
 }
 
-// luaFiles 返回 Lua 规则需要写入版本目录的密钥文件。
+// luaFiles 返回 Lua 规则需要写入版本目录的密钥文件与自定义脚本。
 func luaFiles(in Input) map[string][]byte {
 	out := map[string][]byte{}
 	for _, s := range in.Sites {
@@ -144,6 +144,11 @@ func luaFiles(in Input) map[string][]byte {
 				out[j.File] = []byte(j.Rule.Secret)
 			} else {
 				out[j.File] = []byte(strings.TrimSpace(j.Rule.PublicKey) + "\n")
+			}
+		}
+		for _, r := range s.Routes {
+			for _, sc := range routeScripts(s, r) {
+				out[sc.File] = []byte(r.LuaScripts[sc.Phase])
 			}
 		}
 	}
@@ -164,7 +169,7 @@ func renderLuaHTTP(in Input) string {
     lua_package_cpath  "` + in.P().LuaDir + `/lualib/?.disabled";
     lua_code_cache     on;
     init_by_lua_block {
-        require("etos.init").setup({
+` + renderLuaScriptsInit(in) + `        require("etos.init").setup({
 `)
 	for _, j := range rules {
 		r := j.Rule

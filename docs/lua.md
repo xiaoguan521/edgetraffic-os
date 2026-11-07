@@ -6,11 +6,15 @@
 | --- | --- | --- |
 | 原生规则积木：IP / IP 集（地域）/ 请求头 / User-Agent / 路径 / 方法 → 拒绝 / 跳转 / 限速 / 外部鉴权 | 只用官方模块，标准版与国密版基础包都能用 | `core`（所有版本） |
 | Lua 规则：JWT 校验（HS256 / RS256） | 节点安装 `syedge-lua` 附加包 | `lua`（专业版、企业版） |
+| 自定义 Lua 脚本：路由级，rewrite / access / content / header_filter / body_filter 阶段（第 5 节） | 节点安装 `syedge-lua` 附加包 | `lua`（专业版、企业版） |
 
-不开放客户自定义 Lua 脚本：
-- Lua 代码只由 `internal/render` 的固定模板生成；
+配置中的 Lua 代码只由 `internal/render` 的固定模板生成：
 - 参数写成 `\ddd` 转义的字面量；
-- 密钥只写进版本目录的 `lua/*.key` 文件（0640，预览中不显示）。
+- 密钥只写进版本目录的 `lua/*.key` 文件（0640，预览中不显示）；
+- 自定义脚本的文本不进入配置，只写成版本目录中的 `lua/script-*.lua` 文件，由固定模板加载（第 5 节）。
+
+只有用到 Lua（站点有 JWT 规则或路由有生效的自定义脚本）的版本才加载 `ndk_http_module` 与 `ngx_http_lua_module`（先 ndk 后 lua）
+并生成 `lua_package_path` 与 `init_by_lua_block`；没有用到 Lua 的版本不加载模块，这是按需加载，不是探测失败。
 
 ### 独立模式手工 Lua（仅数据面）
 
@@ -78,7 +82,7 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 
 ### 发布门禁与回退
 
-满足下面两点，控制台才允许发布含 JWT 规则的版本：
+满足下面两点，控制台才允许发布含 JWT 规则或自定义 Lua 脚本的版本：
 1. 授权包含 `lua`；
 2. 节点组内每个节点都上报了与其基础变体匹配的附加包。
 
@@ -121,12 +125,60 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 - **缓存**：校验结果按 worker 缓存，最多 60 秒，且不超过令牌有效期。
 - **沙箱**：初始化读取密钥后，关闭文件、进程、代码加载、C 模块与 FFI 的访问。验收中有专门的用例检查。
 
+## 第 5 节 自定义 Lua 脚本（2026-11-07 决定受控开放）
+
+可视化规则覆盖不到的需求（例如由 Lua 直接生成响应、按复杂条件放行、改写响应头或响应体），可以给某个站点的某条路由加一段 Lua 脚本。
+入口：“自定义片段 → 新建片段 → 插入点：Lua 脚本（路由）”，选择站点、路由与执行阶段。
+
+**权限与审批**
+- 只有**管理员**可以提交、修改、删除、审批 Lua 脚本；必须由**另一位管理员**批准（提交人不能批准自己的变更），批准后随下一次发布生效；
+- 每次提交、批准、驳回、删除都写审计（含前后差异与 sha256）；
+- 需要授权功能 `lua`；组内每个节点都必须装有与基础变体匹配的附加包，否则预览与发布报 `LUA_ADDON_REQUIRED`；
+- 授权不含 `lua` 时仍可以申请删除已有脚本。
+
+**执行阶段**：每条路由每个阶段一段脚本，最大 16 KiB，只接受 UTF-8 文本（不接受字节码）。
+
+| 阶段 | 用途 | 说明 |
+| --- | --- | --- |
+| `rewrite` | 改写请求（`ngx.req.set_uri` 等） | |
+| `access` | 访问控制（`ngx.exit(403)`） | |
+| `content` | 生成响应（`ngx.say`） | 接管该路由的响应，路由原来的静态 / 代理不再生效 |
+| `header_filter` | 修改响应头 | 跳转 / 拒绝路由只能用这两个阶段（它们在 rewrite 阶段就已返回） |
+| `body_filter` | 修改响应体（`ngx.arg[1]`） | |
+
+**渲染方式**：脚本写成版本目录中的 `lua/script-<站点>-<路由目录>-<阶段>.lua`，location 中只有渲染器生成的固定调用
+`<阶段>_by_lua_block { return require("etos.script").run("<编号>") }`；脚本文本无法注入配置。
+
+**运行环境**（`init_by_lua_block` 中的固定代码，在 `etos.init` 收紧环境之前编译脚本）：
+- 可用：`ngx`（`ngx.socket`、`ngx.run_worker_thread` 除外：脚本不能自行建立网络连接，绕过节点组的回源网段限制）、`string`（无 `dump`）、
+  `table`、`math`、`bit`、`coroutine`、`os.time` / `os.date` / `os.clock` / `os.difftime`、`require("etos.json")`，以及
+  `pairs`、`pcall`、`tostring` 等基础函数；
+- 不可用：文件（`io`）、命令（`os.execute`）、加载代码（`load` / `loadstring` / `dofile`）、其他模块（`require` 只允许 `etos.json`）、
+  FFI、`debug`、`package`、`jit`、`getmetatable` / `rawset` / `setfenv`；
+- 不能写全局变量（请用 `local`），请求之间不共享状态；标准库、`ngx` 的顶层字段与子表（`ngx.req`、`ngx.re` …）只读（`ngx.status`、`ngx.ctx` 可写；`ngx.var`、`ngx.header`、`ngx.arg` 按请求读写）。
+
+**出错时**
+- 语法错误：`syedge -t` 不执行 init 阶段，错误在 reload 时出现。master 不加载新配置、继续以当前配置服务；agent 从 error.log
+  识别 `init_by_lua error: ... lua script syntax error: <编号>:<行>: ...` 后立即回滚，发布记录显示为“已回滚”并带这行错误；
+- 运行时错误：记入该实例的 error.log（含脚本编号与行号），请求返回 500；其他路由不受影响。
+
+**安全边界**：受限环境挡住了文件、进程、代码加载与网络访问，但管理员仍可能写出死循环、大量占用内存或泄露请求数据的脚本。
+因此脚本只允许可信的管理员编写，并由另一位管理员审阅后批准。
+
+**示例**（路由 `/lua`，阶段 content）：
+
+```lua
+ngx.header.content_type = "text/html"
+ngx.say("<h1>Hello from Lua</h1><p>这条响应由 Lua 脚本生成。</p>")
+```
+
 ## 验收（CI：`.github/workflows/lua.yml`）
 
 amd64 / arm64 × 标准版 / 国密版共 4 组，在干净的机器上以生产路径运行 `scripts/ci/lua-acceptance.sh`，覆盖：
 - 模块加载与真实 `syedge -t`（含渲染器黄金用例）；
 - 原生规则、外部鉴权、限速；
 - JWT HS256 / RS256，以及各种非法令牌；
+- 自定义 Lua 脚本：content / access / header_filter 阶段、受限环境、运行时错误返回 500 并记录、语法错误在 reload 时被拒绝且当前配置继续服务；
 - 沙箱；
 - reload、带附加包的热升级与中止；
 - 标准 HTTPS 与国密 NTLS；

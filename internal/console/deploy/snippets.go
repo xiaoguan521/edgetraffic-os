@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,7 +36,9 @@ type SnippetInput struct {
 
 var (
 	ErrNoPendingChange = errors.New("snippet has no pending change")
-	httpSnippetNameRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	// ErrLuaScriptNotLicensed 表示授权不包含 lua，不能提交或批准 Lua 脚本。
+	ErrLuaScriptNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含 Lua（lua），不能使用自定义 Lua 脚本")
+	httpSnippetNameRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 )
 
 // snippetContext 组装校验上下文：站点名、组内已登记上游、允许回源网段。
@@ -89,6 +92,13 @@ func (in *SnippetInput) slot() error {
 		if in.SiteID == 0 || in.RoutePath == "" {
 			return errors.New("location 片段需要选择站点和路由")
 		}
+	case render.ScopeLua:
+		if in.SiteID == 0 || in.RoutePath == "" {
+			return errors.New("自定义 Lua 脚本需要选择站点和路由")
+		}
+		if !slices.Contains(render.LuaPhases, in.Name) {
+			return fmt.Errorf("自定义 Lua 脚本的执行阶段只能是 %s", strings.Join(render.LuaPhases, "、"))
+		}
 	default:
 		return fmt.Errorf("未知插入点 %q", in.Scope)
 	}
@@ -101,18 +111,29 @@ func (d *Service) validateSnippet(in SnippetInput) (string, []render.SnippetIssu
 	if err != nil {
 		return "", nil, err
 	}
-	if render.SnippetScope(in.Scope) == render.ScopeLocation {
-		found := false
-		for _, r := range site.Routes {
+	sc := render.SnippetScope(in.Scope)
+	if sc == render.ScopeLocation || sc == render.ScopeLua {
+		var route *render.Route
+		for i, r := range site.Routes {
 			if r.Path == in.RoutePath {
-				found = true
+				route = &site.Routes[i]
 			}
 		}
-		if !found {
+		if route == nil {
 			return "", nil, fmt.Errorf("站点 %s 没有路由 %s", site.Name, in.RoutePath)
 		}
+		if sc == render.ScopeLua {
+			if d.Feature != nil && !d.Feature("lua") {
+				return "", nil, ErrLuaScriptNotLicensed
+			}
+			norm, err := render.ValidateLuaScript(in.Name, in.Content)
+			if err == nil {
+				err = render.CheckLuaRoute(*route, in.Name)
+			}
+			return norm, nil, err
+		}
 	}
-	return render.ValidateSnippet(render.SnippetScope(in.Scope), in.Content, ctx)
+	return render.ValidateSnippet(sc, in.Content, ctx)
 }
 
 func sha(s string) string {
@@ -297,6 +318,9 @@ func (d *Service) SnippetStats() (map[string]int, error) {
 		}
 	}
 	for _, r := range rows {
+		if r.Scope == string(render.ScopeLua) {
+			continue // Lua 脚本不是配置指令
+		}
 		if ds, err := conf.Parse("snippet", []byte(r.Content)); err == nil {
 			walk(ds)
 		}
@@ -339,6 +363,27 @@ func (d *Service) applySnippets(groupID uint, in *render.Input, siteIDs map[stri
 			}
 			if !found {
 				return fmt.Errorf("站点 %s 的路由 %s 已删除，但仍有生效的 location 片段 #%d：请先删除该片段", in.Sites[i].Name, r.RoutePath, r.ID)
+			}
+		case render.ScopeLua:
+			i, ok := byID[r.SiteID]
+			if !ok {
+				continue
+			}
+			found := false
+			for j := range in.Sites[i].Routes {
+				rt := &in.Sites[i].Routes[j]
+				if rt.Path == r.RoutePath {
+					m := map[string]string{}
+					for k, v := range rt.LuaScripts {
+						m[k] = v
+					}
+					m[r.Name] = r.Content
+					rt.LuaScripts = m
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("站点 %s 的路由 %s 已删除，但仍有生效的 Lua 脚本 #%d：请先删除该脚本", in.Sites[i].Name, r.RoutePath, r.ID)
 			}
 		}
 	}

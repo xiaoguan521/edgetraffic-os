@@ -17,7 +17,10 @@
 - 国密发行变体（P8）：`build-syedge.sh -t tongsuo` 只把 OpenSSL 换成铜锁（开启 NTLS），不改 syedge 源码与改名 patch；
   国密双证书只通过 syedge 已有的 `ssl_conf_command`（Enable_ntls / SignCertificate / EncCertificate …）由 internal/render 生成，
   路径写本版本目录的绝对路径（见 docs/gm.md）。
-- 不开放客户自定义 Lua 脚本：Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。
+- 配置中的 Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。客户自定义 Lua 只以“Lua 脚本”片段受控开放
+  （2026-11-07 决定，docs/lua.md 第 5 节）：仅管理员提交、另一位管理员批准，需要 lua 授权与附加包；脚本文本只写入版本目录的
+  lua/script-*.lua，配置中只有固定调用；在 etos.init 收紧环境前按文本编译（syedge -t 不执行 init，语法错误在 reload 时由 agent 识别并回滚），运行在受限环境（无 io / os.execute / load / 模块 /
+  FFI / debug / ngx.socket，不能写全局变量）。任何放宽受限环境的改动都必须在 lua-acceptance.sh 中有对应用例。
 - 永远不得 restart syedge；任何代码路径（含授权失效）不得停止 syedge。
 - 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行，只带 CAP_NET_BIND_SERVICE
   （单元的 AmbientCapabilities；wrapper 为文件能力，只允许 syedge 组执行）；防火墙的开机加载与刷新以 syedge-firewall 运行，

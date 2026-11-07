@@ -24,6 +24,7 @@ const (
 	ScopeHTTP     SnippetScope = "http"     // 节点组级，渲染为 conf.d/snippet-<name>.conf
 	ScopeServer   SnippetScope = "server"   // 站点 server 块末尾
 	ScopeLocation SnippetScope = "location" // 站点某条路由的 location 块末尾
+	ScopeLua      SnippetScope = "lua"      // 站点某条路由的自定义 Lua 脚本，片段名为执行阶段（luascript.go）
 )
 
 // NamedSnippet 是一个 http 层片段。

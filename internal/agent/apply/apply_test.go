@@ -254,6 +254,22 @@ func TestUnpackRejectsUnsafe(t *testing.T) {
 	}
 }
 
+// syedge -t 不执行 init 阶段：自定义 Lua 脚本的语法错误在 reload 时以 [error] 级的 init_by_lua error 出现，也要识别为失败。
+func TestBadLogMatchesInitByLuaError(t *testing.T) {
+	for _, l := range []string{
+		`2026/11/07 07:10:01 [emerg] 12#12: bind() to 0.0.0.0:80 failed`,
+		`2026/11/07 07:10:01 [error] 12#12: init_by_lua error: init_by_lua(syedge.conf:40):12: lua script syntax error: api:p1:content:1: unfinished string`,
+		`2026/11/07 07:10:01 [error] 12#12: init_by_lua_block error: x`,
+	} {
+		if !badLog.MatchString(l) {
+			t.Errorf("not detected: %s", l)
+		}
+	}
+	if badLog.MatchString(`2026/11/07 07:10:01 [error] 13#13: *5 lua entry thread aborted: runtime error: api:p1:content:1: boom`) {
+		t.Error("a runtime error of one request must not fail the release")
+	}
+}
+
 // 锁被占用是并发冲突（CONFLICT）；锁目录缺失或不可写（如 systemd 211 以下没有 RuntimeDirectory=）不是冲突，报告为 REJECTED。
 func TestLockFailureIsNotConflict(t *testing.T) {
 	dir := t.TempDir()

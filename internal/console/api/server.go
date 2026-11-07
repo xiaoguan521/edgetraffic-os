@@ -336,6 +336,8 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "UPGRADE_RUNNING", "该节点组正在升级")
 	case errors.Is(err, deploy.ErrNoDriftReport):
 		fail(c, http.StatusNotFound, "NO_DRIFT_REPORT", err.Error())
+	case errors.Is(err, deploy.ErrLuaScriptNotLicensed):
+		fail(c, http.StatusPaymentRequired, "LICENSE_FEATURE_DENIED", err.Error())
 	case errors.Is(err, deploy.ErrNoPendingChange):
 		fail(c, http.StatusConflict, "NO_PENDING_CHANGE", "该片段没有待审批的变更")
 	case errors.Is(err, deploy.ErrForbidden):

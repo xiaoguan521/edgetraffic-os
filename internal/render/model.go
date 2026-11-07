@@ -102,6 +102,8 @@ type Route struct {
 	Redirect *RedirectSpec `json:"redirect,omitempty"`
 
 	Snippet string `json:"-"` // 已审批的 location 层自定义片段
+	// LuaScripts 是已审批的自定义 Lua 脚本（执行阶段 → 脚本），由控制台按审批状态填入（luascript.go）
+	LuaScripts map[string]string `json:"-"`
 }
 
 // StaticSpec：MVP 中静态内容随配置版本一起发布（单个首页，最大 256 KiB）。

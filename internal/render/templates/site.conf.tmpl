@@ -87,6 +87,10 @@ server {
         # 自定义片段（经审批）
 {{ indent $r.Snippet 2 }}
 {{- end }}
+{{- if $r.LuaScripts }}
+        # 自定义 Lua 脚本（经审批，脚本在版本目录 lua/ 中）
+{{ luaRoute $s $r }}
+{{- end }}
     }
 {{- end }}
 {{- if $s.ServerSnippet }}
