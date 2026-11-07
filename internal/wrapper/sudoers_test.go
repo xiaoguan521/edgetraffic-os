@@ -16,9 +16,15 @@ func TestSudoersContract(t *testing.T) {
 	const prefix = "syedge-agent ALL=(syedge) NOPASSWD: /usr/libexec/syedge/syedge-wrapper "
 	want := []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"}
 	var got []string
+	notty := 0
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// agent 是没有终端的后台服务：CentOS 7 的 sudo 默认 requiretty，只对 agent 用户取消（不授予任何命令）
+		if line == "Defaults:syedge-agent !requiretty" {
+			notty++
 			continue
 		}
 		if !strings.HasPrefix(line, prefix) {
@@ -28,5 +34,8 @@ func TestSudoersContract(t *testing.T) {
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("sudoers rules = %q, want exactly %q", got, want)
+	}
+	if notty != 1 {
+		t.Fatalf("want exactly one `Defaults:syedge-agent !requiretty` line, got %d", notty)
 	}
 }

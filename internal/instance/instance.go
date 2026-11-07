@@ -477,8 +477,25 @@ func Sudoers(l layout.Layout) string { return SudoersAs(l, layout.WorkerUser()) 
 func SudoersAs(l layout.Layout, runas string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s —— 实例 %s 的 agent 只能操作本实例（%s instance add 生成，请勿手改）\n", l.SudoersFile(), l.Instance(), brand.ID())
+	// agent 是没有终端的后台服务：部分系统（CentOS 7）的 sudo 默认 requiretty，只对该 agent 用户取消，不授予任何命令
+	fmt.Fprintf(&b, "Defaults:%s !requiretty\n", l.AgentUser())
 	for _, sub := range []string{"test *", "reload", "reopen", "quit", "upgrade-start *", "upgrade-commit", "upgrade-abort"} {
 		fmt.Fprintf(&b, "%s ALL=(%s) NOPASSWD: %s --instance %s %s\n", l.AgentUser(), runas, l.WrapperBin(), l.Instance(), sub)
+	}
+	return b.String()
+}
+
+// withoutRequireTTY removes the CentOS 7-only sudo default override. Newer sudo
+// versions reject the option instead of ignoring it, and do not need the
+// override because requiretty is not enabled there.
+func withoutRequireTTY(s string) string {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Defaults:") && strings.HasSuffix(trimmed, " !requiretty") {
+			continue
+		}
+		b.WriteString(line)
 	}
 	return b.String()
 }

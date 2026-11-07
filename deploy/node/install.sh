@@ -67,8 +67,14 @@ put "$HERE/rootfs/usr/sbin/syedge-instance" /usr/sbin/syedge-instance
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service "$HERE"/rootfs/etc/systemd/system/*.path /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syedge" /etc/logrotate.d/syedge
 install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syedge.conf" /etc/tmpfiles.d/syedge.conf
-install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syedge-agent" /etc/sudoers.d/syedge-agent.new
-visudo -cf /etc/sudoers.d/syedge-agent.new >/dev/null || { rm -f /etc/sudoers.d/syedge-agent.new; die "sudoers 校验失败"; }
+sudoers_new=/etc/sudoers.d/syedge-agent.new
+install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syedge-agent" "$sudoers_new"
+if ! visudo -cf "$sudoers_new" >/dev/null 2>&1; then
+  # CentOS 7 supports requiretty; newer sudo releases reject the obsolete
+  # option, where the override is unnecessary.
+  sed -i '/^Defaults:[^[:space:]]* !requiretty$/d' "$sudoers_new"
+  visudo -cf "$sudoers_new" >/dev/null || { rm -f "$sudoers_new"; die "sudoers 校验失败"; }
+fi
 mv /etc/sudoers.d/syedge-agent.new /etc/sudoers.d/syedge-agent
 ln -sfn /opt/syedge/sbin/syedge /usr/sbin/syedge
 chown -R root:root /opt/syedge/sbin /opt/syedge/share /opt/syedge/html

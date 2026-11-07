@@ -98,7 +98,8 @@ func TestAddCreatesInstance(t *testing.T) {
 	}
 	var rules []string
 	for _, line := range strings.Split(string(sb), "\n") {
-		if line != "" && !strings.HasPrefix(line, "#") {
+		// Defaults:<agent> !requiretty 只取消终端要求，不是命令授权
+		if line != "" && !strings.HasPrefix(line, "#") && line != "Defaults:syedge-agent-blue !requiretty" {
 			rules = append(rules, line)
 		}
 	}
@@ -329,11 +330,25 @@ func TestSudoersPassesVisudo(t *testing.T) {
 		t.Skip("visudo not installed")
 	}
 	f := filepath.Join(t.TempDir(), "sudoers")
-	if err := os.WriteFile(f, []byte(Sudoers(layout.System("blue"))), 0o440); err != nil {
+	body := Sudoers(layout.System("blue"))
+	if err := os.WriteFile(f, []byte(body), 0o440); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(visudo, "-cf", f).CombinedOutput(); err != nil {
-		t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
+		// CentOS 7 accepts requiretty and needs the per-agent override. Newer
+		// sudo releases reject the obsolete option, so validate the portable
+		// form as the runtime writer does.
+		fallback := withoutRequireTTY(body)
+		if fallback == body {
+			t.Fatalf("visudo rejected generated sudoers: %v\n%s", err, out)
+		}
+		portable := f + ".portable"
+		if writeErr := os.WriteFile(portable, []byte(fallback), 0o440); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if retryOut, retryErr := exec.Command(visudo, "-cf", portable).CombinedOutput(); retryErr != nil {
+			t.Fatalf("visudo rejected generated sudoers and portable fallback: %v\n%s\nportable: %v\n%s", err, out, retryErr, retryOut)
+		}
 	}
 }
 
@@ -497,5 +512,16 @@ func TestNonroot(t *testing.T) {
 	u, _ := newUserFake(t, false)
 	if err := u.Nonroot(); err == nil {
 		t.Fatal("nonroot accepted in user mode")
+	}
+}
+
+// 具名实例的 agent 同样是没有终端的后台服务：CentOS 7 的 sudo 默认 requiretty，sudoers 只对该 agent 用户取消，命令仍是 7 行。
+func TestSudoersNoTTY(t *testing.T) {
+	s := Sudoers(layout.System("blue"))
+	if !strings.Contains(s, "Defaults:syedge-agent-blue !requiretty\n") {
+		t.Fatalf("missing !requiretty for the instance agent:\n%s", s)
+	}
+	if n := strings.Count(s, "NOPASSWD:"); n != 7 {
+		t.Fatalf("%d command lines, want 7", n)
 	}
 }
