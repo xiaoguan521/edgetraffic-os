@@ -19,7 +19,7 @@
   路径写本版本目录的绝对路径（见 docs/gm.md）。
 - 配置中的 Lua 代码只能由 internal/render 中审核过的模板生成，参数经校验与转义。客户自定义 Lua 只以“Lua 脚本”片段受控开放
   （2026-11-07 决定，docs/lua.md 第 5 节）：仅管理员提交、另一位管理员批准，需要 lua 授权与附加包；脚本文本只写入版本目录的
-  lua/script-*.lua，配置中只有固定调用；在 etos.init 收紧环境前按文本编译，运行在受限环境（无 io / os.execute / load / 模块 /
+  lua/script-*.lua，配置中只有固定调用；在 etos.init 收紧环境前按文本编译（syedge -t 不执行 init，语法错误在 reload 时由 agent 识别并回滚），运行在受限环境（无 io / os.execute / load / 模块 /
   FFI / debug / ngx.socket，不能写全局变量）。任何放宽受限环境的改动都必须在 lua-acceptance.sh 中有对应用例。
 - 永远不得 restart syedge；任何代码路径（含授权失效）不得停止 syedge。
 - 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行，只带 CAP_NET_BIND_SERVICE

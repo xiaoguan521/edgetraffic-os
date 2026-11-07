@@ -194,7 +194,7 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
         </a-form-item>
         <a-alert v-if="form.scope === 'lua'" type="warning" show-icon style="margin-bottom: 16px"
           message="Lua 脚本在边缘节点上处理每个命中的请求，只允许可信的管理员编写"
-          description="提交后需另一位管理员批准，批准后随下一次发布生效。脚本运行在受限环境中：可以使用 ngx（不含 ngx.socket）、string、table、math、os.time / os.date 与 require('etos.json')；不能读写文件、执行命令、加载代码或模块，不能写全局变量（请用 local）。语法错误会让节点上的配置检查失败、发布自动回滚；运行错误记入 error.log 并返回 500。组内节点须装有 Lua 附加包。" />
+          description="提交后需另一位管理员批准，批准后随下一次发布生效。脚本运行在受限环境中：可以使用 ngx（不含 ngx.socket）、string、table、math、os.time / os.date 与 require('etos.json')；不能读写文件、执行命令、加载代码或模块，不能写全局变量（请用 local）。语法错误会让节点拒绝加载新配置（继续以当前配置服务）并自动回滚，错误显示在发布记录中；运行错误记入 error.log 并返回 500。组内节点须装有 Lua 附加包。" />
         <a-form-item v-if="form.scope === 'http'" label="片段名（小写字母、数字、-）"><a-input v-model:value="form.name" placeholder="例如 gzip-tuning" /></a-form-item>
         <a-space v-else>
           <a-form-item label="站点">
@@ -214,7 +214,7 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
         <a-alert v-if="checkErr" type="error" :message="checkErr" show-icon style="margin-bottom: 8px" />
         <a-alert v-for="(i, k) in issues" :key="k" type="error" show-icon style="margin-bottom: 6px" :message="`第 ${i.line} 行 ${i.directive}：${i.message}`" />
         <template v-if="normalized">
-          <div class="sub">{{ form.scope === 'lua' ? '格式检查通过（语法在节点上的配置检查中验证），将写入版本目录：' : '校验通过，渲染器将输出：' }}</div>
+          <div class="sub">{{ form.scope === 'lua' ? '格式检查通过（语法在节点加载时验证，出错自动回滚），将写入版本目录：' : '校验通过，渲染器将输出：' }}</div>
           <pre class="snip">{{ normalized }}</pre>
         </template>
         <a-form-item label="说明（写入审计）"><a-input v-model:value="form.note" :maxlength="200" /></a-form-item>

@@ -158,7 +158,8 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 - 不能写全局变量（请用 `local`），请求之间不共享状态；标准库、`ngx` 的顶层字段与子表（`ngx.req`、`ngx.re` …）只读（`ngx.status`、`ngx.ctx` 可写；`ngx.var`、`ngx.header`、`ngx.arg` 按请求读写）。
 
 **出错时**
-- 语法错误：节点上的 `syedge -t` 失败（`lua script syntax error: <编号>:<行>: ...`），发布在该节点被拒绝，当前版本保持不变，错误显示在发布记录中；
+- 语法错误：`syedge -t` 不执行 init 阶段，错误在 reload 时出现。master 不加载新配置、继续以当前配置服务；agent 从 error.log
+  识别 `init_by_lua error: ... lua script syntax error: <编号>:<行>: ...` 后立即回滚，发布记录显示为“已回滚”并带这行错误；
 - 运行时错误：记入该实例的 error.log（含脚本编号与行号），请求返回 500；其他路由不受影响。
 
 **安全边界**：受限环境挡住了文件、进程、代码加载与网络访问，但管理员仍可能写出死循环、大量占用内存或泄露请求数据的脚本。
@@ -177,7 +178,7 @@ amd64 / arm64 × 标准版 / 国密版共 4 组，在干净的机器上以生产
 - 模块加载与真实 `syedge -t`（含渲染器黄金用例）；
 - 原生规则、外部鉴权、限速；
 - JWT HS256 / RS256，以及各种非法令牌；
-- 自定义 Lua 脚本：content / access / header_filter 阶段、受限环境、运行时错误返回 500 并记录、语法错误被 `syedge -t` 拒绝且当前版本不变；
+- 自定义 Lua 脚本：content / access / header_filter 阶段、受限环境、运行时错误返回 500 并记录、语法错误在 reload 时被拒绝且当前配置继续服务；
 - 沙箱；
 - reload、带附加包的热升级与中止；
 - 标准 HTTPS 与国密 NTLS；

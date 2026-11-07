@@ -5,7 +5,7 @@
 #         WRAPPER 为注入了对应公钥（pkgsig.ciKey）的 syedge-wrapper，LIC 为 syedge-license-server。
 #         PERF_GATE=0 时 QPS 门槛只报告不拦截（默认 1，拦截）。
 # 覆盖：模块加载与真实 syedge -t；原生规则（IP / UA / 路径 / 跳转 / 限速 / 外部鉴权）；JWT HS256 / RS256；
-#      自定义 Lua 脚本（各阶段、受限环境、运行时错误、语法错误被 syedge -t 拒绝）；
+#      自定义 Lua 脚本（各阶段、受限环境、运行时错误、语法错误在 reload 时被拒绝且当前配置继续服务）；
 #      Lua 沙箱；reload；带附加包的热升级与中止；标准 HTTPS 与国密 NTLS；附加包安装与卸载；品牌检查；
 #      三条常用规则下 QPS 下降不超过 15%。
 set -uo pipefail
@@ -172,13 +172,23 @@ check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500
 sleep 0.3
 check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 /var/log/syedge/error.log)" "lua-script-boom"
 check "脚本之外的路由不受影响" "$(req -H "$H" http://127.0.0.1/)$(body)" "200backend"
-if sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV=r900199 ACCEPT_LUA=1 ACCEPT_BAD_LUA=1 \
-    ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-bad.log" 2>&1; then
-  ok "脚本语法错误让 syedge -t 失败（发布被拒绝，当前版本不变）"
-else
-  bad "语法错误的脚本：$(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-bad.log" | head -6 | tr '\n' ' ')"
-fi
-[[ "$(readlink /opt/syedge/conf/current)" == releases/r900100 ]] && ok "当前版本仍为 r900100" || bad "当前版本被改动"
+# 语法错误：syedge -t 不执行 init 阶段，错误在 reload 时出现。master 不加载新配置、继续以当前配置服务，
+# error.log 中的 init_by_lua error 指出脚本与行号（agent 据此立即回滚，见 internal/agent/apply 的 badLog）
+sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV=r900199 ACCEPT_LUA=1 ACCEPT_BAD_LUA=1 \
+  ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-bad.log" 2>&1 \
+  || bad "渲染语法错误的版本：$(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-bad.log" | head -4 | tr '\n' ' ')"
+sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf
+off=$(sudo stat -c %s /var/log/syedge/error.log)
+w0=$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')
+sudo ln -sfn releases/r900199 /opt/syedge/conf/current
+sudo -u syedge $SY -s reload; sleep 1.5
+errlog=$(sudo tail -c +"$((off + 1))" /var/log/syedge/error.log)
+check "语法错误的脚本在 reload 时被拒绝，error.log 指出脚本与行号" "$errlog" "lua script syntax error: api:"
+[[ "$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')" == "$w0" ]] && ok "reload 失败时 worker 未更换（继续以当前配置服务）" || bad "语法错误的版本替换了 worker"
+check "语法错误的版本没有生效，原脚本继续响应" "$(req -H "$H" http://127.0.0.1/lua)$(body)" "200<h1>Hello from Lua</h1>"
+sudo ln -sfn releases/r900100 /opt/syedge/conf/current
+sudo -u syedge $SY -s reload; sleep 1
+check "切回原版本后 reload 正常" "$(req -H "$H" http://127.0.0.1/lua)$(body)" "200<h1>Hello from Lua</h1>"
 
 echo "== Lua 沙箱（初始化后不能读写文件、执行命令、加载代码或拿到 FFI）"
 mkdir -p "$W/sb"

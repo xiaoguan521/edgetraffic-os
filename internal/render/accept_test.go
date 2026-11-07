@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -108,15 +107,8 @@ ngx.say(table.concat(r, " "))`}},
 	if bin == "" {
 		bin = "/opt/syedge/sbin/syedge"
 	}
+	// ACCEPT_BAD_LUA=1：脚本有语法错误。syedge -t 不执行 init 阶段，照常通过；错误在 reload 时出现（lua-acceptance.sh 验证）
 	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
-	if os.Getenv("ACCEPT_BAD_LUA") == "1" {
-		// 脚本语法错误必须让配置检查失败（agent 据此拒绝发布、保留当前版本），并指出是哪段脚本
-		if err == nil || !strings.Contains(string(out), "lua script syntax error") {
-			t.Fatalf("syedge -t accepted a script with a syntax error: %v\n%s", err, out)
-		}
-		_ = os.RemoveAll(dir)
-		return
-	}
 	if err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}

@@ -592,7 +592,9 @@ func childPIDs(parent int) map[int]bool {
 	return res
 }
 
-var badLog = regexp.MustCompile(`\[(emerg|crit)\]`)
+// badLog：reload 失败的迹象。init_by_lua 出错（例如自定义 Lua 脚本的语法错误，syedge -t 不执行 init 阶段）只记为 [error]，
+// master 不加载新配置、继续以当前配置服务；按此识别可以立即回滚，并把脚本与行号带进发布记录。
+var badLog = regexp.MustCompile(`\[(emerg|crit)\]|init_by_lua(_block)? error`)
 
 // confirm 等待新一代 worker 全部起来，并检查 reload 期间的 error.log。
 func (a *Applier) confirm(ctx context.Context, before procSnapshot) error {

@@ -15,8 +15,9 @@ import (
 // `<阶段>_by_lua_block { return require("etos.script").run("<编号>") }`（编号写成 \ddd 转义的字面量）。
 //
 // 加载与运行环境由 init_by_lua_block 中的固定代码（luaScriptRuntime）完成：
-//   - 在 etos.init 收紧环境之前，从版本目录读入脚本，只按文本编译（不接受字节码）；语法错误让 syedge -t 失败，
-//     发布在节点上被拒绝并自动回滚，错误信息出现在发布记录中；
+//   - 在 etos.init 收紧环境之前，从版本目录读入脚本，只按文本编译（不接受字节码）。syedge -t 不执行 init 阶段，
+//     语法错误在 reload 时出现：master 不加载新配置、继续以当前配置服务，agent 从 error.log 识别
+//     “init_by_lua error”后立即回滚，错误（含脚本编号与行号）出现在发布记录中；
 //   - 脚本运行在专用环境中：只有 ngx（去掉 ngx.socket 等，不能绕过回源网段限制）、string（无 dump）、table、math、
 //     os 的时间函数与 etos.json；不能读写文件、执行命令、加载代码或模块、使用 FFI / debug / getmetatable / rawset，
 //     不能写全局变量（请求之间不共享状态），标准库与 ngx 的顶层字段只读；
