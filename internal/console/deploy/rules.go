@@ -14,7 +14,7 @@ import (
 // 规则积木（P10）在控制台侧的处理：JWT 密钥加密保存、IP 集加载与 Lua 附加包门禁。
 
 // ErrLuaNotLicensed 表示站点有 JWT 规则，但授权不包含 lua。
-var ErrLuaNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含 Lua 规则（lua），请去掉站点的 JWT 规则")
+var ErrLuaNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含 Lua（lua），请去掉站点的 JWT 规则与自定义 Lua 脚本")
 
 // SealRules 在保存站点前加密 JWT 密钥：新填的密钥加密进 SecretEnc 后清空明文；没填时沿用旧站点同名规则的密钥。
 // 调用后 nw 可以直接落库（不含任何明文密钥）。
@@ -113,7 +113,7 @@ func (d *Service) IPSets(groupID uint) ([]render.IPSet, error) {
 	return out, nil
 }
 
-// CheckLua：含 JWT 规则的版本只能下发到装有 syedge-lua 附加包、且附加包与基础变体匹配的节点。
+// CheckLua：含 JWT 规则或自定义 Lua 脚本的版本只能下发到装有 syedge-lua 附加包、且附加包与基础变体匹配的节点。
 func (d *Service) CheckLua(groupID uint) error {
 	if d.Feature != nil && !d.Feature("lua") {
 		return ErrLuaNotLicensed
@@ -134,7 +134,7 @@ func (d *Service) CheckLua(groupID uint) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("LUA_ADDON_REQUIRED: 站点有 JWT 规则，但节点 %s 没有安装与当前 %s 匹配的 %s 附加包；请先在节点上安装附加包（见 docs/lua.md）", strings.Join(missing, "、"), brand.ID(), brand.Lua())
+		return fmt.Errorf("LUA_ADDON_REQUIRED: 站点有 JWT 规则或自定义 Lua 脚本，但节点 %s 没有安装与当前 %s 匹配的 %s 附加包；请先在节点上安装附加包（见 docs/lua.md）", strings.Join(missing, "、"), brand.ID(), brand.Lua())
 	}
 	return nil
 }

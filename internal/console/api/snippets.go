@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,35 @@ func (s *Server) snippetStats(c *gin.Context) {
 	c.JSON(http.StatusOK, st)
 }
 
+// luaAdmin：自定义 Lua 脚本（插入点 lua）的提交、校验、审批、驳回、删除与撤回都只允许管理员（另一位管理员批准）。
+// 已写入 403 响应时返回 false。
+func luaAdmin(c *gin.Context, scope string) bool {
+	if scope == string(render.ScopeLua) && rank[c.GetString("role")] < rank[store.RoleAdmin] {
+		fail(c, http.StatusForbidden, "FORBIDDEN", "自定义 Lua 脚本只有管理员可以提交与审批")
+		return false
+	}
+	return true
+}
+
+// luaAdminByID 按片段编号检查（审批、驳回、删除、撤回）。
+func (s *Server) luaAdminByID(c *gin.Context, id uint) bool {
+	row, err := s.Deploy.GetSnippet(id)
+	if err != nil {
+		failErr(c, err)
+		return false
+	}
+	return luaAdmin(c, row.Scope)
+}
+
+// snippetFail 把提交 / 校验的错误写成响应：授权不含 lua 时为 402。
+func snippetFail(c *gin.Context, err error) {
+	if errors.Is(err, deploy.ErrLuaScriptNotLicensed) {
+		fail(c, http.StatusPaymentRequired, "LICENSE_FEATURE_DENIED", err.Error())
+		return
+	}
+	fail(c, http.StatusBadRequest, "SNIPPET_INVALID", err.Error())
+}
+
 func snippetIssues(c *gin.Context, issues []render.SnippetIssue) {
 	c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{"code": "SNIPPET_REJECTED", "message": "片段包含不允许的指令", "issues": issues})
 }
@@ -44,9 +74,12 @@ func (s *Server) validateSnippet(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	if !luaAdmin(c, in.Scope) {
+		return
+	}
 	norm, issues, err := s.Deploy.CheckSnippet(in)
 	if err != nil {
-		fail(c, http.StatusBadRequest, "SNIPPET_INVALID", err.Error())
+		snippetFail(c, err)
 		return
 	}
 	if issues == nil {
@@ -61,9 +94,12 @@ func (s *Server) submitSnippet(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	if !luaAdmin(c, in.Scope) {
+		return
+	}
 	row, issues, err := s.Deploy.SubmitSnippet(in, c.GetString("user"), c.ClientIP())
 	if err != nil {
-		fail(c, http.StatusBadRequest, "SNIPPET_INVALID", err.Error())
+		snippetFail(c, err)
 		return
 	}
 	if len(issues) > 0 {
@@ -76,6 +112,9 @@ func (s *Server) submitSnippet(c *gin.Context) {
 func (s *Server) deleteSnippet(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
+		return
+	}
+	if !s.luaAdminByID(c, id) {
 		return
 	}
 	var req struct {
@@ -94,6 +133,9 @@ func (s *Server) approveSnippet(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !s.luaAdminByID(c, id) {
+		return
+	}
 	if err := s.Deploy.ApproveSnippet(id, c.GetString("user"), c.ClientIP()); err != nil {
 		failErr(c, err)
 		return
@@ -104,6 +146,9 @@ func (s *Server) approveSnippet(c *gin.Context) {
 func (s *Server) rejectSnippet(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
+		return
+	}
+	if !s.luaAdminByID(c, id) {
 		return
 	}
 	var req reviewReq
@@ -118,6 +163,9 @@ func (s *Server) rejectSnippet(c *gin.Context) {
 func (s *Server) withdrawSnippet(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
+		return
+	}
+	if !s.luaAdminByID(c, id) {
 		return
 	}
 	if err := s.Deploy.WithdrawSnippet(id, c.GetString("user"), c.ClientIP()); err != nil {

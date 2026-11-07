@@ -5,6 +5,7 @@
 #         WRAPPER 为注入了对应公钥（pkgsig.ciKey）的 syedge-wrapper，LIC 为 syedge-license-server。
 #         PERF_GATE=0 时 QPS 门槛只报告不拦截（默认 1，拦截）。
 # 覆盖：模块加载与真实 syedge -t；原生规则（IP / UA / 路径 / 跳转 / 限速 / 外部鉴权）；JWT HS256 / RS256；
+#      自定义 Lua 脚本（各阶段、受限环境、运行时错误、语法错误被 syedge -t 拒绝）；
 #      Lua 沙箱；reload；带附加包的热升级与中止；标准 HTTPS 与国密 NTLS；附加包安装与卸载；品牌检查；
 #      三条常用规则下 QPS 下降不超过 15%。
 set -uo pipefail
@@ -157,6 +158,27 @@ check "RS256：有效令牌放行" "$(req -H "$H" -H "Authorization: Bearer $r" 
 check "RS256：签名被篡改 401" "$(req -H "$H" -H "Authorization: Bearer $(TOK rs "$W/rs.key" --tamper)" http://127.0.0.1/rs/a)" "401"
 check "RS256：算法混淆（用公钥做 HS256 密钥）401" "$(req -H "$H" -H "Authorization: Bearer $(TOK hs "@$W/rs.pub" --alg HS256)" http://127.0.0.1/rs/a)" "401"
 check "RS256：过期令牌 401" "$(req -H "$H" -H "Authorization: Bearer $(TOK rs "$W/rs.key" --exp-in -60)" http://127.0.0.1/rs/a)" "401"
+
+echo "== 自定义 Lua 脚本（经审批的路由脚本，docs/lua.md 第 5 节）"
+hdr=$(curl -s -D - -o "$W/body" -H "$H" -H 'X-Forwarded-For: 10.250.0.1' http://127.0.0.1/lua)
+check "content 脚本生成响应" "$(body)" "<h1>Hello from Lua</h1>"
+check "content 脚本设置 Content-Type" "$hdr" "Content-Type: text/html"
+check "Lua 响应的 Server 头仍是品牌名" "$hdr" "Server: SyEdge"
+check "access 脚本拒绝请求" "$(req -H "$H" 'http://127.0.0.1/lua?deny=1')" "403"
+check "header_filter 脚本作用于跳转路由" "$(curl -s -D - -o /dev/null -H "$H" -H 'X-Forwarded-For: 10.250.0.2' http://127.0.0.1/lua-moved)" "X-Lua: 1"
+check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / string.dump / debug / package / jit / rawset / setfenv 不可用，ffi 与 string.buffer 被拒绝，不能写全局变量、标准库与 ngx 子表，可用 etos.json" \
+  "$(req -H "$H" http://127.0.0.1/lua-sb)$(body)" "200nil nil nil nil nil nil nil nil nil nil nil nil false false false false false false 7"
+check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500"
+sleep 0.3
+check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 /var/log/syedge/error.log)" "lua-script-boom"
+check "脚本之外的路由不受影响" "$(req -H "$H" http://127.0.0.1/)$(body)" "200backend"
+if sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV=r900199 ACCEPT_LUA=1 ACCEPT_BAD_LUA=1 \
+    ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-bad.log" 2>&1; then
+  ok "脚本语法错误让 syedge -t 失败（发布被拒绝，当前版本不变）"
+else
+  bad "语法错误的脚本：$(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-bad.log" | head -6 | tr '\n' ' ')"
+fi
+[[ "$(readlink /opt/syedge/conf/current)" == releases/r900100 ]] && ok "当前版本仍为 r900100" || bad "当前版本被改动"
 
 echo "== Lua 沙箱（初始化后不能读写文件、执行命令、加载代码或拿到 FFI）"
 mkdir -p "$W/sb"

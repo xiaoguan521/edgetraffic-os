@@ -32,6 +32,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"ident":    func(s string) string { return strings.ReplaceAll(s, "-", "_") }, // 变量名不能含 -
 	"luaHTTP":  renderLuaHTTP,
 	"luaLoad":  luaLoad,
+	"luaRoute": renderLuaRoute,
 	"brandLua": brand.Lua,
 }).ParseFS(tmplFS, "templates/*.tmpl"))
 
@@ -70,6 +71,9 @@ func Render(in Input) (*Bundle, error) {
 	}
 	in.HTTPSnippets = append([]NamedSnippet(nil), in.HTTPSnippets...)
 	if err := in.validateInputSnippets(); err != nil {
+		return nil, err
+	}
+	if err := in.validateLuaScripts(); err != nil {
 		return nil, err
 	}
 	in.Streams = append([]StreamProxy(nil), in.Streams...)

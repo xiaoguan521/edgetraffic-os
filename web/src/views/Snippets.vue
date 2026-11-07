@@ -12,7 +12,17 @@ const sites = ref<any[]>([])
 const rows = ref<any[]>([])
 const loading = ref(false)
 
-const scopeName: Record<string, string> = { http: 'http 层（节点组）', server: 'server 层（站点）', location: 'location 层（路由）' }
+const scopeName: Record<string, string> = { http: 'http 层（节点组）', server: 'server 层（站点）', location: 'location 层（路由）', lua: 'Lua 脚本（路由）' }
+// 自定义 Lua 脚本（docs/lua.md 第 5 节）：只有管理员可以提交与审批，需要 lua 授权，组内节点须装有 Lua 附加包
+const luaPhases = [
+  { value: 'rewrite', label: 'rewrite（改写请求）' },
+  { value: 'access', label: 'access（访问控制）' },
+  { value: 'content', label: 'content（生成响应）' },
+  { value: 'header_filter', label: 'header_filter（改响应头）' },
+  { value: 'body_filter', label: 'body_filter（改响应体）' },
+]
+const luaLicensed = computed(() => !!session.license?.features?.includes('lua'))
+const canLua = computed(() => session.can('admin') && luaLicensed.value)
 
 async function load() {
   loading.value = true
@@ -35,8 +45,11 @@ function siteName(id: number) {
 function where(r: any) {
   if (r.scope === 'http') return `http · ${r.name}`
   if (r.scope === 'server') return `${siteName(r.site_id)} · server`
+  if (r.scope === 'lua') return `${siteName(r.site_id)} · ${r.route_path} · ${r.name}`
   return `${siteName(r.site_id)} · location ${r.route_path}`
 }
+// Lua 脚本的审批、修改与删除只对管理员显示
+const mayAct = (r: any) => r.scope !== 'lua' || session.can('admin')
 
 // ---------- 编辑器 ----------
 const open = ref(false)
@@ -46,6 +59,18 @@ const checkErr = ref('')
 const normalized = ref('')
 const saving = ref(false)
 const routes = computed(() => sites.value.find((s) => s.id === form.site_id)?.spec?.routes || [])
+const routeMode = computed(() => routes.value.find((r: any) => r.path === form.route_path)?.mode || '')
+// 跳转 / 拒绝路由在 rewrite 阶段就已返回：只能使用 header_filter / body_filter
+const phaseOptions = computed(() =>
+  luaPhases.map((p) => ({ ...p, disabled: (routeMode.value === 'redirect' || routeMode.value === 'deny') && ['rewrite', 'access', 'content'].includes(p.value) })),
+)
+watch(
+  () => form.scope,
+  (sc, old) => {
+    if (sc === 'lua' && old !== 'lua' && !luaPhases.some((p) => p.value === form.name)) form.name = 'content'
+    if (sc !== 'lua' && old === 'lua') form.name = ''
+  },
+)
 
 function edit(r?: any) {
   Object.assign(form, { scope: 'server', site_id: undefined, route_path: '', name: '', content: '', note: '' })
@@ -138,7 +163,7 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
             <div v-else-if="record.pending_by" class="sub">{{ record.pending_by }} 申请删除</div>
             <div v-if="record.approved_by && record.content" class="sub">批准：{{ record.approved_by }} · sha256 {{ record.content_sha256.slice(0, 12) }}</div>
           </template>
-          <template v-else-if="column.key === 'ops' && session.can('operator')">
+          <template v-else-if="column.key === 'ops' && session.can('operator') && mayAct(record)">
             <a-space wrap :size="4">
               <template v-if="record.pending_by && record.pending_by !== session.username">
                 <a-button size="small" type="primary" :disabled="!session.writable" @click="act(record, 'approve', '已批准，下一次发布生效')">批准</a-button>
@@ -164,24 +189,32 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
             <a-radio-button value="http">http（节点组）</a-radio-button>
             <a-radio-button value="server">server（站点）</a-radio-button>
             <a-radio-button value="location">location（路由）</a-radio-button>
+            <a-radio-button v-if="canLua || form.scope === 'lua'" value="lua">Lua 脚本（路由）</a-radio-button>
           </a-radio-group>
         </a-form-item>
+        <a-alert v-if="form.scope === 'lua'" type="warning" show-icon style="margin-bottom: 16px"
+          message="Lua 脚本在边缘节点上处理每个命中的请求，只允许可信的管理员编写"
+          description="提交后需另一位管理员批准，批准后随下一次发布生效。脚本运行在受限环境中：可以使用 ngx（不含 ngx.socket）、string、table、math、os.time / os.date 与 require('etos.json')；不能读写文件、执行命令、加载代码或模块，不能写全局变量（请用 local）。语法错误会让节点上的配置检查失败、发布自动回滚；运行错误记入 error.log 并返回 500。组内节点须装有 Lua 附加包。" />
         <a-form-item v-if="form.scope === 'http'" label="片段名（小写字母、数字、-）"><a-input v-model:value="form.name" placeholder="例如 gzip-tuning" /></a-form-item>
         <a-space v-else>
           <a-form-item label="站点">
             <a-select v-model:value="form.site_id" style="width: 220px" :options="sites.map((s) => ({ value: s.id, label: s.name }))" @change="form.route_path = ''" />
           </a-form-item>
-          <a-form-item v-if="form.scope === 'location'" label="路由">
+          <a-form-item v-if="form.scope === 'location' || form.scope === 'lua'" label="路由">
             <a-select v-model:value="form.route_path" style="width: 220px" :options="routes.map((r: any) => ({ value: r.path, label: `${r.path}（${r.mode}）` }))" />
           </a-form-item>
+          <a-form-item v-if="form.scope === 'lua'" label="执行阶段">
+            <a-select v-model:value="form.name" style="width: 220px" :options="phaseOptions" />
+          </a-form-item>
         </a-space>
-        <a-form-item label="内容">
-          <a-textarea v-model:value="form.content" :rows="10" class="code" spellcheck="false" placeholder="proxy_read_timeout 300s;" />
+        <a-form-item :label="form.scope === 'lua' ? 'Lua 代码' : '内容'">
+          <a-textarea v-model:value="form.content" :rows="form.scope === 'lua' ? 14 : 10" class="code" spellcheck="false"
+            :placeholder="form.scope === 'lua' ? 'ngx.header.content_type = \'text/html\'\nngx.say(\'<h1>Hello from Lua</h1>\')' : 'proxy_read_timeout 300s;'" />
         </a-form-item>
         <a-alert v-if="checkErr" type="error" :message="checkErr" show-icon style="margin-bottom: 8px" />
         <a-alert v-for="(i, k) in issues" :key="k" type="error" show-icon style="margin-bottom: 6px" :message="`第 ${i.line} 行 ${i.directive}：${i.message}`" />
         <template v-if="normalized">
-          <div class="sub">校验通过，渲染器将输出：</div>
+          <div class="sub">{{ form.scope === 'lua' ? '格式检查通过（语法在节点上的配置检查中验证），将写入版本目录：' : '校验通过，渲染器将输出：' }}</div>
           <pre class="snip">{{ normalized }}</pre>
         </template>
         <a-form-item label="说明（写入审计）"><a-input v-model:value="form.note" :maxlength="200" /></a-form-item>
@@ -189,7 +222,7 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
       <details class="sub">
         <summary>允许与禁止的指令</summary>
         <p>允许：proxy_* 调优（超时、缓冲、头等）、rewrite、return、try_files、gzip*、expires、sub_filter*、limit_req / limit_conn、allow / deny、error_page、client_max_body_size；server 层另可用 add_header（不能覆盖安全头）、location（proxy_pass 只能指向已登记上游）、if（块内只允许 return / rewrite）；http 层另可用 limit_req_zone、limit_conn_zone、map。</p>
-        <p>禁止：include、load_module、Lua / Perl / njs 脚本、ssi、autoindex、指向站点目录外的 root / alias、未登记的回源地址、覆盖 Server 与安全头、Transfer-Encoding、listen / server_name / 证书 / 日志。</p>
+        <p>禁止：include、load_module、配置片段中的 Lua / Perl / njs 指令（Lua 请使用“Lua 脚本”插入点，仅管理员）、ssi、autoindex、指向站点目录外的 root / alias、未登记的回源地址、覆盖 Server 与安全头、Transfer-Encoding、listen / server_name / 证书 / 日志。</p>
       </details>
     </a-modal>
   </div>
