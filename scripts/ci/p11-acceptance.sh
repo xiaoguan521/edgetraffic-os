@@ -276,7 +276,7 @@ s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bi
 # 兼容模式（root master，与 nginx 相同）：内核或 systemd 不支持 ambient 能力的系统（CentOS 7）自动使用，
 # 任何系统都可以用 --root-master 选择。CI 的内核支持 ambient，这里用 --root-master 进入同一套配置
 root_master_phase() {
-  echo "== 兼容模式：master 以 root 运行（与 nginx 相同），worker 以 syedge 运行"
+  echo "== 兼容模式：master 以 root 运行（与传统 Web 服务器相同），worker 以 syedge 运行"
   local D=/run/syedge/syedge.pid G=/run/syedge-green/syedge.pid dp; dp=$(id -u syedge)
   out=$(syedge-instance nonroot --root-master 2>&1) || bad "nonroot --root-master：$out"
   [[ -f /etc/syedge/root-master && "$(stat -c %u /etc/syedge/root-master)" == 0 ]] && ok "写入兼容模式标记（root 所有）" || bad "没有兼容模式标记"

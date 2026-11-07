@@ -12,6 +12,9 @@ import (
 // 兼容模式（与传统 Web 服务器相同：master 以 root 运行，worker 降为数据面用户）：系统不支持 ambient 能力时 nonroot 自动进入，
 // 写标记与单元附加配置，wrapper 以 root 运行（sudoers 为 (root)），不做无中断切换。
 func TestNonrootRootMasterWhenNoAmbient(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("the marker is trusted only when owned by root (CI runs this as root in the dataplane acceptance)")
+	}
 	f := newFake(t)
 	_ = os.MkdirAll(f.path(layout.System("").ConfRoot()), 0o755)
 	if err := f.Add(AddOptions{Profile: blue}); err != nil {
@@ -77,6 +80,9 @@ func TestNonrootRootMasterWhenNoAmbient(t *testing.T) {
 
 // 支持 ambient 的系统也可以显式选择兼容模式（--root-master）。
 func TestNonrootRootMasterForced(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("the marker is trusted only when owned by root (CI runs this as root in the dataplane acceptance)")
+	}
 	f := newFake(t)
 	_ = os.MkdirAll(f.path(layout.System("").ConfRoot()), 0o755)
 	f.RootMaster = true
