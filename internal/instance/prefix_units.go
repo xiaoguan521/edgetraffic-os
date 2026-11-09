@@ -13,7 +13,7 @@ func prefixUnitHeader() string { return "# " + brand.ID() + "-instance prefix �
 
 // prefixUnit 把软件包提供的 systemd 单元改写为自定义安装根目录。它只改写
 // 路径与数据面启动参数，并且对已生成的内容再次执行仍得到相同结果。
-func prefixUnit(src, root string) string {
+func prefixUnit(src, root string, homeSandbox bool) string {
 	if root == "" || root == layout.DefaultSystemRoot() {
 		return src
 	}
@@ -28,8 +28,20 @@ func prefixUnit(src, root string) string {
 		if strings.HasPrefix(t, "StateDirectory=") {
 			continue
 		}
-		if strings.HasPrefix(t, "ProtectHome=") && strings.HasPrefix(root, "/home/") {
-			continue
+		if strings.HasPrefix(root, "/home/") {
+			// 过滤本函数上次生成的行，便于 tar 包重复安装及版本升级。
+			if t == "BindPaths="+root || t == "InaccessibleDirectories=-/root -/run/user" {
+				continue
+			}
+			if strings.HasPrefix(t, "ProtectHome=") {
+				if homeSandbox {
+					b.WriteString("ProtectHome=tmpfs\nBindPaths=" + root + "\n")
+				} else {
+					// 老版 systemd 没有 BindPaths；仍隐藏 root 和运行时用户目录。
+					b.WriteString("ProtectHome=false\nInaccessibleDirectories=-/root -/run/user\n")
+				}
+				continue
+			}
 		}
 		line := raw
 		for _, r := range []struct{ from, to string }{
@@ -90,13 +102,15 @@ func (e Env) writePrefixUnits() error {
 			continue
 		}
 		dst := e.path("/etc/systemd/system/" + unit)
-		if err := writeFile(dst, []byte(prefixUnit(string(data), root)), 0o644); err != nil {
+		if err := writeFile(dst, []byte(prefixUnit(string(data), root, e.homeSandbox())), 0o644); err != nil {
 			return err
 		}
 		e.say("   %s：已按 %s 生成自定义根目录单元 /etc/systemd/system/%s", unit, src, unit)
 	}
 	return e.writeLogrotate(root)
 }
+
+func (e Env) homeSandbox() bool { return e.HomeSandbox != nil && e.HomeSandbox() }
 
 func (e Env) writeLogrotate(root string) error {
 	logrotate := e.path("/etc/logrotate.d/" + brand.ID())

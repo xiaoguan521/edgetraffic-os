@@ -28,16 +28,18 @@ dockerrun() { # 场景编号 docker run 参数……
   return $rc
 }
 run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
-  local name=$1 image=$2 install=$3 prefix=${4:-} out root=/opt/syedge dp_opts='' prefix_setup=:
+  local name=$1 image=$2 install=$3 prefix=${4:-} out root=/opt/syedge dp_opts='' prefix_setup=: prefix_mode_check=:
   if [[ -n "$prefix" ]]; then
     root=$prefix
     dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
-    prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
+    prefix_setup="mkdir -p /etc/syedge; install -d -m 0751 '$prefix'; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
+    prefix_mode_check="test \"\$(stat -c %a '$prefix')\" = 751"
   fi
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
     $prefix_setup
     $install
+    $prefix_mode_check
     syedge -v 2>&1
     test -x /usr/libexec/syedge/syedge-wrapper
     test -x /usr/libexec/syedge/syedge-instance
@@ -200,11 +202,12 @@ scenarios=(
   "full|run|Ubuntu 22.04|ubuntu:22.04|$deb"
   "pr|run|Ubuntu 24.04|ubuntu:24.04|$deb"
   "pr|run|Rocky Linux 9 custom prefix|rockylinux:9|$dnf||/srv/syedge-smoke"
-  "pr|run|openEuler 22.03 custom prefix|openeuler/openeuler:22.03-lts|$dnf_oe||/srv/syedge-smoke"
+  "pr|run|openEuler 22.03 custom prefix|openeuler/openeuler:22.03-lts|$dnf_oe||/home/atwasoft/node"
   "pr|standalone|Rocky Linux 9|rockylinux:9|$sa_dnf|$sa_dnf_agent"
   "pr|standalone|Debian 12|debian:12|$sa_deb|$sa_deb_agent"
   "pr|standalone|Rocky Linux 9 custom prefix|rockylinux:9|$sa_dnf|$sa_dnf_agent|/srv/syedge-smoke"
   "pr|standalone|Debian 12 custom prefix|debian:12|$sa_deb|$sa_deb_agent|/srv/syedge-smoke"
+  "pr|standalone|Debian 12 home prefix|debian:12|$sa_deb|$sa_deb_agent|/home/atwasoft/node"
 )
 if [[ -n "${SMOKE_PREVIOUS_DIR:-}" ]]; then
   SMOKE_PREVIOUS_DIR=$(realpath "$SMOKE_PREVIOUS_DIR")

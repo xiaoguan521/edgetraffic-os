@@ -93,9 +93,15 @@ func env(out io.Writer, userRoot string) instance.Env {
 			c.Stdout, c.Stderr = out, os.Stderr
 			return c.Run()
 		},
-		Listening: func() (map[string]bool, error) { return instance.ListeningFromProc("/") },
-		Ambient:   ambientSupported,
+		Listening:   func() (map[string]bool, error) { return instance.ListeningFromProc("/") },
+		Ambient:     ambientSupported,
+		HomeSandbox: homeSandboxSupported,
 	}
+}
+
+func homeSandboxSupported() bool {
+	out, err := exec.Command("systemctl", "--version").Output()
+	return err == nil && instance.SystemdAtLeast(string(out), 238)
 }
 
 // ambientSupported：内核支持 ambient 能力（4.3 起，/proc/self/status 有 CapAmb 行）且 systemd 支持

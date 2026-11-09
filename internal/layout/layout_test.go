@@ -93,20 +93,45 @@ func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
 	}
 }
 
-func TestCheckSystemRootAllowsWorldWritableParents(t *testing.T) {
+func TestCheckSystemRootRejectsUntrustedParents(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("ownership checks require root")
+	}
 	fsroot := t.TempDir()
 	home := filepath.Join(fsroot, "home")
-	if err := os.MkdirAll(home, 0o777); err != nil {
+	parent := filepath.Join(home, "atwasoft")
+	target := filepath.Join(parent, "node")
+	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("trusted /home root rejected: %v", err)
 	}
 	if err := os.Chmod(home, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
-		t.Fatalf("CheckSystemRootAt rejected 0777 parent /home: %v", err)
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted world-writable parent")
 	}
-	target := filepath.Join(fsroot, "home/atwasoft/node")
-	if err := os.MkdirAll(filepath.Dir(target), 0o777); err != nil {
+	if err := os.Chmod(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(parent, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a parent owned by an untrusted user")
+	}
+	if err := os.Chown(parent, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a group-writable install root")
+	}
+	if err := os.Rename(target, target+".original"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("/tmp", target); err != nil {

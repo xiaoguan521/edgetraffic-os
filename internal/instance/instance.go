@@ -42,6 +42,8 @@ type Env struct {
 
 	// Ambient 报告本机内核与 systemd 是否支持 ambient 能力（nil = 支持）；不支持时 nonroot 进入兼容模式（rootmaster.go）
 	Ambient func() bool
+	// HomeSandbox 报告 systemd 是否支持 ProtectHome=tmpfs 与 BindPaths。
+	HomeSandbox func() bool
 	// RootMaster：nonroot 显式选择兼容模式（--root-master），与传统 Web 服务器相同由 root 运行 master
 	RootMaster bool
 }

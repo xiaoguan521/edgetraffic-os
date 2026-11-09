@@ -94,7 +94,7 @@ func ValidateInstallRoot(root string) error {
 }
 
 // ValidateSystemRoot 要求 system 模式使用专用目录，避免安装和卸载时触及系统
-// 文件；ProtectHome 会使 /root 下的服务目录不可见（/home/<子目录> 由 prefixUnit 自动关闭 ProtectHome）。
+// 文件；/home/<子目录> 可用于 system 模式，服务单元会适配该路径。
 func ValidateSystemRoot(root string) error {
 	if err := ValidateInstallRoot(root); err != nil {
 		return err
@@ -367,8 +367,8 @@ func LoadSystemRootAt(fsroot string) (string, error) {
 }
 
 // CheckSystemRoot 校验一个 system 模式安装根目录在本机上的安全属性。
-// 根目录本身可以尚不存在（安装脚本会先写标记再以 root:root 0755 创建目录），
-// 已存在的根目录及父目录都必须是真实目录（非符号链接）。
+// 根目录本身可以尚不存在（安装脚本会先写标记再创建目录）；已存在的根目录
+// 及父目录必须是 root 所有、不可被组或其他用户写入的真实目录。
 func CheckSystemRoot(root string) error { return CheckSystemRootAt("/", root) }
 
 // CheckSystemRootAt 是 CheckSystemRoot 的可注入版本。
@@ -393,6 +393,9 @@ func CheckSystemRootAt(fsroot, root string) error {
 		}
 		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("install root %s or its parents must be non-symlink directories", root)
+		}
+		if fi.Mode().Perm()&0o022 != 0 || !ownedByRoot(fi) {
+			return fmt.Errorf("install root %s: %s must be root-owned and not writable by group or others", root, p)
 		}
 		if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
 			break

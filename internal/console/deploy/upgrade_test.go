@@ -72,12 +72,38 @@ func waitUpgrade(t *testing.T, d *Service, id uint) *UpgradeView {
 			t.Fatal(err)
 		}
 		if v.Status != "running" {
+			waitUpgradeLocks(t, v)
 			return v
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("upgrade did not finish")
 	return nil
+}
+
+// 状态写入结束后后台仍需记录审计并释放锁；测试不能在此之前关闭数据库或开始下一次升级。
+func waitUpgradeLocks(t *testing.T, v *UpgradeView) {
+	t.Helper()
+	groups := map[uint]bool{v.GroupID: true}
+	for _, n := range v.Nodes {
+		if n.GroupID != 0 {
+			groups[n.GroupID] = true
+		}
+	}
+	for id := range groups {
+		mu, ok := upgradeLocks.Load(id)
+		if !ok {
+			t.Fatalf("missing upgrade lock for group %d", id)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for !mu.(*sync.Mutex).TryLock() {
+			if time.Now().After(deadline) {
+				t.Fatalf("upgrade lock for group %d was not released", id)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		mu.(*sync.Mutex).Unlock()
+	}
 }
 
 func TestPlanBatches(t *testing.T) {
@@ -182,6 +208,7 @@ func TestAgentUpgrade(t *testing.T) {
 	if v.Status != "done" {
 		t.Fatalf("agent upgrade %+v", v.Nodes)
 	}
+	waitUpgradeLocks(t, v)
 }
 
 // 慢速 agent：记录同时进行中的升级数与各节点开始时间，用于检查批内并行、批间串行。
