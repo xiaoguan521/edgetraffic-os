@@ -456,18 +456,17 @@ ETOS_DB=postgres://edgetraffic:<密码>@127.0.0.1:5432/edgetraffic?sslmode=disab
 
 ### 6.1 安装国密数据面
 
-国密节点使用带 `gmssl` 的数据面包或完整国密节点发布包：
+先安装标准节点并接入控制台。国密版是数据面变体，需要厂商签名的国密升级包；不是对标准节点包再执行一次安装脚本。厂商对 Release 的 `syedge-<数据面版本>-1-gmssl-<架构>.tar.gz` 签名，客户把包与签名导入控制台“数据面版本库”，在节点组选择 `gmssl` 并发起升级，详见 `docs/gm.md`。已安装 Lua 时，还需导入相同发行版本的 Lua 附加包。
+
+升级器自动使用节点安装时确定的根目录，无需重复输入 `--prefix`。同机实例共享二进制：选择一个节点组升级时，控制台会把同一主机的其他实例一并纳入升级，不能只替换其中一个实例的共享二进制。确认国密变体：
 
 ```bash
-tar -xzf syedge-node-<版本>-linux-<架构>.tar.gz
-cd syedge-node-<版本>-linux-<架构>
-sudo ./install.sh
-
-syedge -v
-syedge -V | grep enable-ntls
+R="$(sudo /usr/sbin/syedge-instance prefix)"
+"$R/sbin/syedge" -v
+"$R/sbin/syedge" -V 2>&1 | grep enable-ntls
 ```
 
-确认 `syedge -v` 包含 `(gmssl)` 且 `syedge -V` 包含 `enable-ntls`。节点接入控制台后，控制台会根据 `syedge -V` 自动识别“国密”标签。
+确认输出包含 `(gmssl)` 和 `enable-ntls`。控制台根据节点上报自动识别“国密”标签。
 
 ### 6.2 国密双证书配置
 
@@ -504,6 +503,7 @@ server {
 ### 7.1 安装
 
 Lua 附加包必须与当前运行中的 `syedge` 版本一致。一个附加包同时包含标准版和国密版模块，安装脚本会根据 `syedge -V` 自动选择正确模块。
+system 模式自动读取节点安装根目录（包括 `/home/atwasoft/node`），不需要再次输入安装位置；该目录下所有具名实例共用模块，实例各自决定是否在配置中使用 Lua。
 
 ```bash
 mkdir -p /tmp/syedge-lua
@@ -515,16 +515,17 @@ sudo bash install.sh
 安装脚本会：
 
 - 校验附加包版本与运行中的 `syedge` 版本一致；
-- 把模块安装到 `/opt/syedge/modules/lua-<版本>/`；
-- 原子切换 `/opt/syedge/modules/lua` 软链接；
+- 把模块安装到 `R/modules/lua-<版本>/`（`R` 是自动识别的安装根目录）；
+- 原子切换 `R/modules/lua` 软链接；
 - 执行真实的 `syedge -t -q` 自检；
 - 失败时恢复原来的模块软链接。
 
 安装和卸载都不会重启或停止正在运行的 `syedge`。检查结果：
 
 ```bash
-readlink -f /opt/syedge/modules/lua
-sudo syedge -t -q
+R="$(sudo /usr/sbin/syedge-instance prefix)"
+readlink -f "$R/modules/lua"
+sudo "$R/sbin/syedge" -t -q -c "$R/conf/current/syedge.conf"
 sudo systemctl status syedge --no-pager
 ```
 

@@ -136,7 +136,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TLS_LIB=tongsuo scripts/release/build-syedge-static.sh dist/syedge-gm
-          mkdir -p "$OUT" && cp dist/syedge-gm/syedge-*-gmssl-*.tar.gz "$OUT"/
       # syedge-lua 附加包（P10）：同一个包适配标准版与国密版，只在正式标签构建；离线 sign-package -name syedge-lua -variant lua 签名
       - name: build syedge-lua add-on (static, glibc 2.17)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -164,6 +163,14 @@ jobs:
           # 统一升级用的升级包（未签名，厂商离线 sign-package 后导入控制台版本库）：标准版数据面（版本号即数据面版本）与 agent
           dp=$(basename dist/syedge/syedge-*.tar.gz); dp=${dp#syedge-}; dp=${dp%-*.tar.gz}
           SYEDGE_UPGRADE_VERSION=$dp scripts/release/package.sh syedge-upgrade ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            # 变体需要不同发行序号，才能安全保存并回退原标准版。Lua 需使用相同升级版本。
+            gm_ver="$dp-1"
+            SYEDGE_UPGRADE_VERSION="$gm_ver" scripts/release/package.sh syedge-upgrade ${{ matrix.arch }} dist/syedge-gm/syedge-*-gmssl-*.tar.gz gmssl
+            scripts/release/package.sh lua-upgrade dist/syedge-lua/syedge-lua-*.tar.gz "$gm_ver" "$(uname -m)"
+            SYEDGE_GM_UPGRADE_PACKAGE="$OUT/syedge-$gm_ver-gmssl-${{ matrix.arch }}.tar.gz" \
+              go test -mod=vendor -count=1 -run TestReleaseGMUpgradePackage ./internal/wrapper/
+          fi
           scripts/release/package.sh agent-upgrade ${{ matrix.arch }}
           scripts/release/package.sh console linux ${{ matrix.arch }}
           for t in ${{ matrix.cross }}; do scripts/release/package.sh console ${t%/*} ${t#*/}; done

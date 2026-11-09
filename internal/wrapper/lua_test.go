@@ -62,6 +62,36 @@ func dropLua(t *testing.T, p Paths, priv ed25519.PrivateKey, ver, variant string
 }
 
 // 节点装有 syedge-lua 时的热升级：缺附加包时在任何改动前拒绝；附加包坏 / 签名不符被拒绝；
+// 同一发行版本的模块已处于使用中时，不能静默把标准版模块当作国密模块复用。
+func TestPrepareLuaRejectsVariantCollision(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules")}
+	ver := "1.30.6-1"
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "BASE"} {
+		path := filepath.Join(p.luaDir(ver), f)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := []byte("standard\n")
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("lua-"+ver, p.luaLink()); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "syedge")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho enable-ntls >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.prepareLua(ver, bin); !errors.Is(err, ErrUpgrade) {
+		t.Fatalf("variant collision: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(p.luaDir(ver), "BASE")); string(b) != "standard\n" {
+		t.Fatalf("modules changed: %q", b)
+	}
+}
+
 // 正常升级把模块软链切到目标版本（只取对应基础变体的模块）；中止时先切回再让旧 master 重载。
 func TestHotUpgradeWithLuaAddon(t *testing.T) {
 	src := os.Getenv("SYEDGE_BIN")

@@ -45,15 +45,16 @@
 
 ## 发布与升级包
 
-- `v*` 标签的 Release 会构建 `syedge-<版本>-gmssl-<架构>.tar.gz`（amd64 / arm64，glibc 2.17 起）。
+- `v*` 标签的 Release 会构建 `syedge-<数据面版本>-1-gmssl-<架构>.tar.gz`（amd64 / arm64，glibc 2.17 起），这是可验签导入的升级包。发行序号 `-1` 与首次安装的标准版区分，保证升级失败时可以回退。升级版本号必须在目标主机上未被其他二进制使用；如已有冲突，应由厂商使用新的发行序号重新打包并签名。
 - 厂商在离线签名机上签名升级包：
 
   ```
-  syedge-license-signer sign-package -key etos-pkg-*.key.json -in syedge-<版本>-gmssl-amd64.tar.gz \
-    -name syedge -version <版本> -arch amd64 -variant gmssl
+  syedge-license-signer sign-package -key etos-pkg-*.key.json -in syedge-<数据面版本>-1-gmssl-amd64.tar.gz \
+    -name syedge -version <数据面版本>-1 -arch amd64 -variant gmssl
   ```
 
-- 客户把升级包导入“数据面版本库”，然后把节点组分批升级到国密版（热升级，不停服务）。
+- 客户先安装并接入标准节点，把国密升级包及签名导入“数据面版本库”，在控制台选择节点组并升级到 `gmssl`（热升级，不停服务）。agent 与 wrapper 自动使用该节点的安装根目录，包含 `/home/atwasoft/node`，无需另传路径。同一主机的具名实例共用二进制，控制台会把它们一并纳入升级。
+- 已安装 Lua 时，还需将 Release 中相同发行版本的 `syedge-lua-<数据面版本>-1-<架构>.tar.gz` 离线签名并导入；升级器会选择国密模块并与二进制一起切换。若发行序号变更，也需用相同序号生成 Lua 包。
 
 ## 验收
 

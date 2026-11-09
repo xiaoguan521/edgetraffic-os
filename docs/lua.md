@@ -76,7 +76,9 @@ bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制�
 ```
 
 安装的具体行为：
-- 模块装到 `/opt/syedge/modules/lua-<版本>/`，配置通过软链 `/opt/syedge/modules/lua` 加载；
+- system 模式自动识别节点安装根目录 `R`（默认为 `/opt/syedge`，也可以是 `/home/atwasoft/node`），无需再次传入路径；模块装到 `R/modules/lua-<版本>/`，通过软链 `R/modules/lua` 加载；
+- 同一 `R` 下的默认实例和所有具名实例共用模块，安装一次即可；是否使用 Lua 由各实例的配置决定，不能只向其中一个实例安装共享模块。卸载前须确保所有实例的当前配置均不再使用它；
+- 免 root 的 user 模式需显式指定根目录，例如 `SYEDGE_ROOT=/home/alice/node bash install.sh`（卸载时同样设置 `SYEDGE_ROOT`）；
 - 安装、卸载都不重启、不停止 syedge；
 - agent 在心跳中上报附加包，节点列表显示“Lua”标签。
 

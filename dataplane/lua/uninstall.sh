@@ -20,6 +20,7 @@ M="$ROOT/modules"
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
 [[ -e "$M/lua" ]] || { echo "syedge-lua 未安装"; exit 0; }
+echo "安装根目录：$ROOT；卸载会影响同一目录下的所有实例。"
 for conf in "$ROOT/conf/current/syedge.conf" "$ROOT"/instances/*/conf/current/syedge.conf; do
   if grep -qs "modules/lua/" "$conf"; then
     die "当前配置正在使用 Lua 规则（${conf}）：先在控制台去掉 JWT 规则并发布到本节点，再卸载"

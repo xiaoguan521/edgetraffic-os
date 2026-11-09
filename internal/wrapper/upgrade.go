@@ -145,25 +145,34 @@ func (p Paths) installed(ver string) bool {
 	return err == nil && strings.TrimSpace(string(want)) == fileSHA(filepath.Join(dir, binEntry))
 }
 
-// install 校验签名并解压升级包到 versions/<ver>。
-func (p Paths) install(ver string) error {
+// readPackage 从投放目录读取并校验当前请求的签名包。
+func (p Paths) readPackage(ver string) ([]byte, error) {
 	base := filepath.Join(p.Incoming, brand.ID()+"-"+ver+".tar.gz")
 	data, err := readNoFollow(base, maxPackage)
 	if err != nil {
-		return fail("read package: %v", err)
+		return nil, fail("read package: %v", err)
 	}
 	sb, err := readNoFollow(base+".sig", 64<<10)
 	if err != nil {
-		return fail("read signature: %v", err)
+		return nil, fail("read signature: %v", err)
 	}
 	sig, err := pkgsig.Parse(sb)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sig.Name != brand.ID() || sig.Version != ver || sig.Arch != p.Arch {
-		return fail("signature is for %s %s %s, want %s %s %s", sig.Name, sig.Version, sig.Arch, brand.ID(), ver, p.Arch)
+		return nil, fail("signature is for %s %s %s, want %s %s %s", sig.Name, sig.Version, sig.Arch, brand.ID(), ver, p.Arch)
 	}
 	if err := pkgsig.Verify(sig, data, p.Keys); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// install 校验签名并解压升级包到 versions/<ver>。
+func (p Paths) install(ver string) error {
+	data, err := p.readPackage(ver)
+	if err != nil {
 		return err
 	}
 	if err := checkUpgradeDiskSpace(p.Versions); err != nil {
@@ -180,10 +189,28 @@ func (p Paths) install(ver string) error {
 			_ = os.RemoveAll(tmp)
 		}
 	}()
+	if err := unpackPackage(data, tmp); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, shaFile), []byte(fileSHA(filepath.Join(tmp, binEntry))+"\n"), 0o644); err != nil {
+		return err
+	}
+	dir := filepath.Join(p.Versions, ver)
+	_ = os.RemoveAll(dir)
+	if err := os.Rename(tmp, dir); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+// unpackPackage 对首次安装与已安装版本的比较使用完全相同的条目校验。
+func unpackPackage(data []byte, tmp string) error {
 	zr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return fail("bad package: %v", err)
 	}
+	defer func() { _ = zr.Close() }()
 	tr := tar.NewReader(zr)
 	got := false
 	for {
@@ -224,15 +251,55 @@ func (p Paths) install(ver string) error {
 	if !got {
 		return fail("package has no %s", binEntry)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, shaFile), []byte(fileSHA(filepath.Join(tmp, binEntry))+"\n"), 0o644); err != nil {
+	return nil
+}
+
+// 已安装的版本可供本机回退；如果 agent 下发了包，必须验证它确实对应已安装的二进制。
+func (p Paths) checkInstalledPackage(ver string) error {
+	base := filepath.Join(p.Incoming, brand.ID()+"-"+ver+".tar.gz")
+	_, pkgErr := os.Lstat(base)
+	_, sigErr := os.Lstat(base + ".sig")
+	if errors.Is(pkgErr, os.ErrNotExist) && errors.Is(sigErr, os.ErrNotExist) {
+		return nil
+	}
+	data, err := p.readPackage(ver)
+	if err != nil {
 		return err
 	}
-	dir := filepath.Join(p.Versions, ver)
-	_ = os.RemoveAll(dir)
-	if err := os.Rename(tmp, dir); err != nil {
+	if err := checkUpgradeDiskSpace(p.Versions); err != nil {
 		return err
 	}
-	ok = true
+	tmp, err := os.MkdirTemp(p.Versions, "."+ver+".check-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	if err := unpackPackage(data, tmp); err != nil {
+		return err
+	}
+	if fileSHA(filepath.Join(tmp, binEntry)) != fileSHA(filepath.Join(p.Versions, ver, binEntry)) {
+		return fail("version %s is already installed with a different binary; use a new version number", ver)
+	}
+	return nil
+}
+
+// 首次升级前正在运行的普通文件没有独立的版本目录：不允许目标占用其版本号。
+func (p Paths) checkOriginalVersion(ver string) error {
+	st, err := os.Lstat(p.Bin)
+	if err != nil {
+		return err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	out, err := exec.Command(p.Bin, "-v").CombinedOutput()
+	m := verOutRe.FindSubmatch(out)
+	if err != nil || m == nil {
+		return fail("cannot read the current version: %v", err)
+	}
+	if ver == string(m[1]) {
+		return fail("version %s is the current unarchived binary; use a new version number", ver)
+	}
 	return nil
 }
 
@@ -344,6 +411,9 @@ func (p Paths) current() (string, error) {
 	}
 	ver := string(m[1])
 	dir := filepath.Join(p.Versions, ver)
+	if p.installed(ver) && fileSHA(p.Bin) != fileSHA(filepath.Join(dir, binEntry)) {
+		return "", fail("version %s is already installed with a different binary; cannot preserve the current binary", ver)
+	}
 	if !p.installed(ver) {
 		_ = os.RemoveAll(dir)
 		if err := os.MkdirAll(filepath.Join(dir, "sbin"), 0o755); err != nil {
@@ -434,10 +504,15 @@ func UpgradeStart(p Paths, ver string) error {
 	if err != nil || !isMaster(oldPid) {
 		return fail("%s master is not running", brand.ID())
 	}
+	if err := p.checkOriginalVersion(ver); err != nil {
+		return err
+	}
 	if !p.installed(ver) {
 		if err := p.install(ver); err != nil {
 			return err
 		}
+	} else if err := p.checkInstalledPackage(ver); err != nil {
+		return err
 	}
 	newBin := filepath.Join(p.Versions, ver, binEntry)
 	if masterExe(oldPid) == newBin {

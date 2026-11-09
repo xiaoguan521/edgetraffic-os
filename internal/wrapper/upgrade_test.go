@@ -64,6 +64,118 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// 已安装的版本号可能来自不同变体：不得忽略本次下发的签名包而静默复用旧二进制。
+func TestInstalledVersionRejectsDifferentPackage(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Versions: filepath.Join(dir, "versions"), Incoming: filepath.Join(dir, "incoming"), Arch: "amd64"}
+	for _, d := range []string{p.Versions, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	ver := "1.30.6-1"
+	drop(t, p, priv, ver, makePackage(t, []byte("standard"), nil))
+	if err := p.install(ver); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.checkInstalledPackage(ver); err != nil {
+		t.Fatalf("same package: %v", err)
+	}
+	// 同一二进制允许重新打包；不同二进制（包括另一个变体）不得复用。
+	drop(t, p, priv, ver, makePackage(t, []byte("standard"), map[string]string{"VERSION": ver}))
+	if err := p.checkInstalledPackage(ver); err != nil {
+		t.Fatalf("same binary: %v", err)
+	}
+	drop(t, p, priv, ver, makePackage(t, []byte("gmssl"), nil))
+	if err := p.checkInstalledPackage(ver); !errors.Is(err, ErrUpgrade) {
+		t.Fatalf("different binary: %v", err)
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	drop(t, p, other, ver, makePackage(t, []byte("standard"), nil))
+	if err := p.checkInstalledPackage(ver); !errors.Is(err, pkgsig.ErrSignature) {
+		t.Fatalf("bad signature: %v", err)
+	}
+	base := filepath.Join(p.Incoming, "syedge-"+ver+".tar.gz")
+	_ = os.Remove(base)
+	_ = os.Remove(base + ".sig")
+	if err := p.checkInstalledPackage(ver); err != nil {
+		t.Fatalf("local rollback: %v", err)
+	}
+}
+
+// 首次热升级之前二进制尚未归档，目标版本不能占用它的版本号，否则无法回滚。
+func TestOriginalVersionCollisionIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Bin: filepath.Join(dir, "syedge"), Versions: filepath.Join(dir, "versions")}
+	if err := os.WriteFile(p.Bin, []byte("#!/bin/sh\necho 'SyEdge version: SyEdge/1.30.6' >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.checkOriginalVersion("1.30.6"); !errors.Is(err, ErrUpgrade) {
+		t.Fatalf("same version: %v", err)
+	}
+	if err := p.checkOriginalVersion("1.30.6-1"); err != nil {
+		t.Fatalf("distinct version: %v", err)
+	}
+}
+
+// 正式发布时将真实国密产物签名并交给 wrapper 解包，避免把构建用目录树当成升级包发布。
+func TestReleaseGMUpgradePackage(t *testing.T) {
+	path := os.Getenv("SYEDGE_GM_UPGRADE_PACKAGE")
+	if path == "" {
+		t.Skip("release GM upgrade package not provided")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	p := Paths{Versions: filepath.Join(dir, "versions"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Versions, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	// 发布包的 VERSION 是升级版本，运行二进制仍报告上游版本。
+	tmp := filepath.Join(dir, "unpacked")
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := unpackPackage(data, tmp); err != nil {
+		t.Fatalf("invalid release package: %v", err)
+	}
+	vb, err := os.ReadFile(filepath.Join(tmp, "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver := strings.TrimSpace(string(vb))
+	if !pkgsig.VersionRe.MatchString(ver) || !strings.HasSuffix(ver, "-1") {
+		t.Fatalf("invalid GM version %q", ver)
+	}
+	sig, err := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge", ver, p.Arch, "gmssl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, _ := json.Marshal(sig)
+	base := filepath.Join(p.Incoming, "syedge-"+ver+".tar.gz")
+	if err := os.WriteFile(base, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".sig", sb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.install(ver); err != nil {
+		t.Fatalf("wrapper rejected signed release package: %v", err)
+	}
+	bin := filepath.Join(p.Versions, ver, binEntry)
+	if out, err := exec.Command(bin, "-V").CombinedOutput(); err != nil || !bytes.Contains(out, []byte("enable-ntls")) {
+		t.Fatalf("release binary is not GM: %v %s", err, out)
+	}
+}
+
 // 用真实 syedge 演练热升级：升级、提交、回退、中止，以及坏包被拒绝。需要 root 与已安装的 syedge。
 func TestHotUpgradeWithRealSyedge(t *testing.T) {
 	src := os.Getenv("SYEDGE_BIN")
