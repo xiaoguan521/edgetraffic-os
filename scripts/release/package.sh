@@ -24,9 +24,12 @@
 #       厂商授权后台（不交付客户，部署在厂商内网）：syedge-license-server（内嵌 Web）+ systemd 单元 + 运维手册
 #       只持有签名公钥；产物 syedge-license-portal-<ver>-linux-<goarch>.tar.gz
 #
-#   scripts/release/package.sh syedge-upgrade <goarch> <syedge tarball>
+#   scripts/release/package.sh syedge-upgrade <goarch> <syedge tarball> [standard|gmssl]
 #       数据面升级包（规格书 12.6）：sbin/syedge + VERSION，产物 syedge-<ver>-<goarch>.tar.gz（未签名；
 #       正式发布前在离线签名机上 syedge-license-signer sign-package 生成 .sig，与包一起导入控制台版本库）
+#
+#   scripts/release/package.sh lua-upgrade <lua tarball> <包版本> <x86_64|aarch64>
+#       为数据面发行版本生成内容相同、版本匹配的 Lua 附加包。
 #
 #   scripts/release/package.sh agent-upgrade <goarch>
 #       agent 自升级包：bin/syedge-agent，产物 syedge-agent-<ver>-<goarch>.tar.gz（未签名）
@@ -139,7 +142,9 @@ case "${1:-}" in
     fi
     ;;
   syedge-upgrade)
-    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}
+    arch=${2:?goarch}; syedge_tgz=${3:?syedge tarball}; variant=${4:-standard}
+    [[ "$arch" == amd64 || "$arch" == arm64 ]] || { echo "bad architecture $arch" >&2; exit 2; }
+    [[ "$variant" == standard || "$variant" == gmssl ]] || { echo "bad variant $variant" >&2; exit 2; }
     x="$WORK/x"; mkdir -p "$x" "$WORK/up/sbin"
     tar -C "$x" -xzf "$syedge_tgz"
     bin=$(find "$x" -type f -path "*/sbin/$B" | head -1)
@@ -150,8 +155,24 @@ case "${1:-}" in
     echo "$up_ver" > "$WORK/up/VERSION"
     cp docs/NOTICE "$WORK/up/NOTICE"
     rebrand "$WORK/up"; brand_scan "$WORK/up"
-    tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/$B-$up_ver-$arch.tar.gz" "sbin/$B" VERSION NOTICE
-    echo "$OUT/$B-$up_ver-$arch.tar.gz"
+    suffix=""; [[ "$variant" == gmssl ]] && suffix=-gmssl
+    tar -C "$WORK/up" --owner=0 --group=0 -czf "$OUT/$B-$up_ver$suffix-$arch.tar.gz" "sbin/$B" VERSION NOTICE
+    echo "$OUT/$B-$up_ver$suffix-$arch.tar.gz"
+    ;;
+  lua-upgrade)
+    lua_tgz=${2:?lua tarball}; up_ver=${3:?package version}; arch=${4:?architecture}
+    [[ "$up_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "bad package version $up_ver" >&2; exit 2; }
+    [[ "$arch" == x86_64 || "$arch" == aarch64 ]] || { echo "bad architecture $arch" >&2; exit 2; }
+    mkdir -p "$WORK/lua"
+    tar -C "$WORK/lua" -xzf "$lua_tgz"
+    [[ -f "$WORK/lua/addon/VERSION" && -f "$WORK/lua/install.sh" && -f "$WORK/lua/uninstall.sh" ]] || { echo "invalid Lua package" >&2; exit 2; }
+    base_ver=$(sed -n 's/.*"syedge":"\([^"]*\)".*/\1/p' "$WORK/lua/addon/VERSION")
+    [[ "$base_ver" == "${up_ver%-*}" ]] || { echo "Lua base version $base_ver does not match $up_ver" >&2; exit 2; }
+    sed -i -E "s/\"version\":\"[^\"]+\"/\"version\":\"$up_ver\"/" "$WORK/lua/addon/VERSION"
+    [[ ! -f "$WORK/lua/addon/NOTICE" ]] || sed -i "1s/.*/$B-lua $up_ver/" "$WORK/lua/addon/NOTICE"
+    rebrand "$WORK/lua"; brand_scan "$WORK/lua"
+    tar -C "$WORK/lua" --owner=0 --group=0 -czf "$OUT/$B-lua-$up_ver-$arch.tar.gz" install.sh uninstall.sh addon
+    echo "$OUT/$B-lua-$up_ver-$arch.tar.gz"
     ;;
   agent-upgrade)
     # agent 自升级包：bin/syedge-agent（未签名，离线签名后导入控制台版本库）

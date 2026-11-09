@@ -186,10 +186,13 @@ func (p Paths) prepareLua(ver, newBin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	base := binBase(newBin)
 	if prev == "lua-"+ver {
+		if !p.luaReady(ver, base) {
+			return "", fail("add-on version %s is already in use with a different or incomplete %s base; use a new version number", ver, base)
+		}
 		return "", nil // 同机其他实例已切到目标版本：本实例无需切换，也不切回
 	}
-	base := binBase(newBin)
 	if !p.luaReady(ver, base) {
 		if err := p.installLua(ver, base); err != nil {
 			return "", err

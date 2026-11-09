@@ -2,7 +2,7 @@
 # syedge-lua 附加包安装（P10）：在节点上以 root 执行  bash install.sh
 # - 附加包必须与运行中的 syedge 版本一致（动态模块与二进制版本强绑定）；
 # - 自动选择标准版或国密版对应的模块；
-# - 安装到 /opt/syedge/modules/lua-<包版本>/，再原子切换软链 /opt/syedge/modules/lua；
+# - 安装到安装根目录下的 modules/lua-<包版本>/，再原子切换软链 modules/lua；
 # - 用真实 syedge -t 自检，失败则恢复原状。不重启、不停止 syedge，也不改动任何已发布的配置。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -23,6 +23,7 @@ SY="$ROOT/sbin/syedge"
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
 [[ -x "$SY" ]] || die "没有找到 $SY：请先安装 syedge 基础包"
+echo "安装根目录：$ROOT；同一目录下所有实例共用 Lua 模块。"
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$HERE/addon/VERSION"; }
 pkg=$(field version); want=$(field syedge)
 [[ "$pkg" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || die "附加包版本无效"

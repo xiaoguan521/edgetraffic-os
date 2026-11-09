@@ -29,12 +29,12 @@
 | 文件 | 内容 | 签名参数（`syedge-license-signer sign-package`） |
 |---|---|---|
 | `syedge-<数据面版本>-amd64.tar.gz` / `-arm64.tar.gz` | 标准版数据面升级包 | `-name syedge -variant standard` |
-| `syedge-<数据面版本>-gmssl-x86_64.tar.gz` / `-aarch64.tar.gz` | 国密版数据面（铜锁，国密 TLCP，见 `docs/gm.md`） | `-name syedge -variant gmssl` |
+| `syedge-<数据面版本>-1-gmssl-amd64.tar.gz` / `-arm64.tar.gz` | 国密版数据面升级包（铜锁，国密 TLCP，见 `docs/gm.md`） | `-name syedge -variant gmssl` |
 | `syedge-lua-<数据面版本>-x86_64.tar.gz` / `-aarch64.tar.gz` | Lua 附加包，标准版与国密版通用（见 `docs/lua.md`） | `-name syedge-lua -variant lua` |
 | `syedge-agent-<版本>-amd64.tar.gz` / `-arm64.tar.gz` | agent 升级包 | `-name syedge-agent` |
 
 签名时另加 `-version <包的版本>` 与 `-arch amd64|arm64`（文件名为 `x86_64` / `aarch64` 的也写 `amd64` / `arm64`）。
-数据面版本跟随上游源码（如 `1.30.6`），与产品版本 `<版本>` 无关。
+数据面版本跟随上游源码（如 `1.30.6`），与产品版本 `<版本>` 无关。国密包的发行版本如 `1.30.6-1`，签名参数 `-version` 必须完整包含 `-1`；已装 Lua 的节点还需导入相同发行版本的 Lua 附加包。
 
 ### 只给厂商内部，不要发给客户
 

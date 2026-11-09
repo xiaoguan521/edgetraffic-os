@@ -85,6 +85,27 @@ jobs:
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
           pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
           CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syedge-wrapper
+      - name: Lua custom system root and named instances (${{ matrix.base }})
+        run: bash scripts/ci/lua-custom-prefix.sh dist-lua ${{ matrix.base }}
+      - name: GM and Lua multi-instance upgrade and rollback
+        if: matrix.base == 'standard'
+        run: |
+          source dataplane/UPSTREAM
+          ver="$UPSTREAM_VERSION-1"
+          work=$(mktemp -d); chmod 0755 "$work"
+          std=$(ls dist-lua/base/syedge-*-${{ matrix.arch }}.tar.gz | grep -v gmssl | head -1)
+          gm=$(ls dist-lua/base/syedge-*-gmssl-${{ matrix.arch }}.tar.gz | head -1)
+          lua=$(ls dist-lua/syedge-lua-*-${{ matrix.arch }}.tar.gz | head -1)
+          if [[ '${{ matrix.arch }}' == x86_64 ]]; then arch=amd64; else arch=arm64; fi
+          tar -C "$work" -xzf "$std"
+          OUT="$work" SYEDGE_UPGRADE_VERSION="$ver" scripts/release/package.sh syedge-upgrade "$arch" "$gm" gmssl
+          OUT="$work" scripts/release/package.sh lua-upgrade "$lua" "$ver" '${{ matrix.arch }}'
+          sudo env "PATH=$PATH" \
+            SYEDGE_TEST_STANDARD_BIN="$work/opt/syedge/sbin/syedge" \
+            SYEDGE_GM_UPGRADE_PACKAGE="$work/syedge-$ver-gmssl-$arch.tar.gz" \
+            SYEDGE_TEST_LUA_PACKAGE="$GITHUB_WORKSPACE/$lua" \
+            SYEDGE_TEST_LUA_UPGRADE_PACKAGE="$work/syedge-lua-$ver-${{ matrix.arch }}.tar.gz" \
+            go test -mod=vendor -count=1 -v -run TestGMWithLuaMultiInstanceRollback ./internal/wrapper/
       - name: P10 acceptance (${{ matrix.base }} / ${{ matrix.arch }})
         env:
           PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
