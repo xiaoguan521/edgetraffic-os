@@ -59,7 +59,7 @@ run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
     echo "ok   $name: $(echo "$out" | grep -m1 'SyEdge version')"
   else
     echo "FAIL $name"
-    echo "$out" | tail -15 | sed 's/^/     /'
+    echo "$out" | tail -50 | sed 's/^/     /'
     [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-packages $name::$(echo "$out" | tail -6 | tr '\n' ' ')"
     return 1
   fi
@@ -68,7 +68,7 @@ deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt
 dnf='dnf install -y -q /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm >/dev/null'
 # openEuler 默认启用 everything / EPOL / update 等大仓库，从 CI 所在地区拉取元数据常常超过场景超时：
 # 只启用 OS 基础仓库（依赖都在其中），并对慢速镜像设置超时与最低速率，失败重试而不是卡住
-dnf_oe='dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=20k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm >/dev/null'
+dnf_oe='dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=20k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm'
 # CentOS 7 的官方软件源已下线：只安装本产品的软件包（sudo 依赖跳过），重点验证 glibc 2.17 兼容
 el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm'
 
@@ -193,13 +193,14 @@ scenarios=(
   "pr|run|CentOS 7|centos:7|$el7"
   "full|run|Rocky Linux 8|rockylinux:8|$dnf"
   "pr|run|Rocky Linux 9|rockylinux:9|$dnf"
-  "full|run|openEuler 22.03|openeuler/openeuler:22.03-lts|$dnf_oe"
+  "pr|run|openEuler 22.03|openeuler/openeuler:22.03-lts|$dnf_oe"
   "full|run|Debian 13|debian:13|$deb"
   "full|run|Debian 12|debian:12|$deb"
   "full|run|Ubuntu 20.04|ubuntu:20.04|$deb"
   "full|run|Ubuntu 22.04|ubuntu:22.04|$deb"
   "pr|run|Ubuntu 24.04|ubuntu:24.04|$deb"
   "pr|run|Rocky Linux 9 custom prefix|rockylinux:9|$dnf||/srv/syedge-smoke"
+  "pr|run|openEuler 22.03 custom prefix|openeuler/openeuler:22.03-lts|$dnf_oe||/srv/syedge-smoke"
   "pr|standalone|Rocky Linux 9|rockylinux:9|$sa_dnf|$sa_dnf_agent"
   "pr|standalone|Debian 12|debian:12|$sa_deb|$sa_deb_agent"
   "pr|standalone|Rocky Linux 9 custom prefix|rockylinux:9|$sa_dnf|$sa_dnf_agent|/srv/syedge-smoke"

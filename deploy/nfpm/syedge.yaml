@@ -12,6 +12,8 @@ license: BSD-2-Clause
 description: |
   syedge: SyEdge edge data plane (static and dynamic web traffic proxy).
   Based on NGINX Open Source (BSD-2-Clause). Statically linked with OpenSSL, PCRE2 and zlib.
+depends:
+  - util-linux  # runuser：安装时检查运行用户权限，轮转日志时向 master 发信号
 contents:
   - src: ${STAGE}/syedge/opt/syedge
     dst: /opt/syedge
