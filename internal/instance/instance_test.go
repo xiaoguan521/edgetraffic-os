@@ -395,6 +395,50 @@ func TestReopenAll(t *testing.T) {
 	}
 }
 
+func TestReopenAllCustomPrefix(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("prefix marker ownership test needs root")
+	}
+	for _, rootMaster := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rootMaster=%t", rootMaster), func(t *testing.T) {
+			f := newFake(t)
+			if err := f.Prefix("/srv/syedge"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(f.path(f.lay("").ConfRoot()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			profile := f.path(f.lay("blue").InstanceFile())
+			if err := os.MkdirAll(filepath.Dir(profile), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(profile, []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if rootMaster {
+				if err := os.WriteFile(f.path(layout.RootMasterMarker()), []byte("1\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.ReopenAll(); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{
+				"/srv/syedge/sbin/syedge -e /srv/syedge/logs/error.log -c /srv/syedge/conf/current/syedge.conf -s reopen",
+				"/srv/syedge/sbin/syedge -e /srv/syedge/instances/blue/logs/error.log -c /srv/syedge/instances/blue/conf/current/syedge.conf -s reopen",
+			}
+			if !rootMaster {
+				for i := range want {
+					want[i] = "runuser -u syedge -- " + want[i]
+				}
+			}
+			if strings.Join(f.cmds, "|") != strings.Join(want, "|") {
+				t.Fatalf("commands = %q, want %q", f.cmds, want)
+			}
+		})
+	}
+}
+
 // 实例增删后：防火墙 path 单元监视各具名实例的配置目录，并刷新规则（防火墙已安装时）。
 func TestAddRemoveSyncsFirewall(t *testing.T) {
 	f := newFake(t)

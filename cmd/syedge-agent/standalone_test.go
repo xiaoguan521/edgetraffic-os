@@ -113,6 +113,10 @@ func TestRepairPackageBaselinePreservesStandaloneConfiguration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// 软件包升级可能在 defaults 中留下旧文件；它们不属于当前软件包清单。
+			if err := os.WriteFile(filepath.Join(defaults, "obsolete.conf"), []byte("# old package\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Symlink(filepath.Join("releases", render.BaselineRevision), filepath.Join(conf, "current")); err != nil {
 				t.Fatal(err)
 			}

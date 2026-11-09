@@ -42,8 +42,19 @@ func (e Env) Prefix(root string) error {
 	if err := layout.CheckSystemRootAt(e.Root, root); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(e.path(filepath.Dir(layout.PrefixMarker())), 0o755); err != nil {
+	markerDir := e.path(filepath.Dir(layout.PrefixMarker()))
+	_, statErr := os.Stat(markerDir)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
 		return err
+	}
+	if errors.Is(statErr, os.ErrNotExist) {
+		// 新建目录不受调用者的 umask 影响；agent 与 wrapper 需要读取标记。
+		if err := os.Chmod(markerDir, 0o755); err != nil {
+			return err
+		}
 	}
 	if err := writeFile(marker, []byte(root+"\n"), 0o644); err != nil {
 		return err

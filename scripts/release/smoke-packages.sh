@@ -79,12 +79,13 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
   if [[ -n "$prefix" ]]; then
     root=$prefix
     dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
-    prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
+    prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix; umask 077"
   fi
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -ex
     $prefix_setup
     $install
+    umask 022
     test \"\$(readlink '$root/conf/current')\" = releases/r000000
     test -f '$root/share/doc/STANDALONE.txt'
     '$root/sbin/syedge' $dp_opts -t -q
@@ -105,11 +106,13 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
         sleep 0.1
       done ) &
     probe=\$!
+    if [ '$root' != /opt/syedge ]; then umask 077; fi
     if command -v rpm >/dev/null 2>&1; then
       rpm -U --replacepkgs --oldpackage /pkgs/syedge-[0-9]*.rpm
     else
       dpkg -i --force-downgrade /pkgs/syedge_*.deb
     fi
+    umask 022
     wait \"\$probe\"
     kill -0 \"\$(cat /run/syedge/syedge.pid)\"
     grep -q smoke-logrotate-policy /etc/logrotate.d/syedge
@@ -118,7 +121,9 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
       test \"\$(cat '$root/html/index.html')\" = standalone-content-preserved
       curl -s -m 5 -H 'Host: shop.example.com' http://127.0.0.1/ | grep -q standalone-content-preserved
     fi
+    if [ '$root' != /opt/syedge ]; then umask 077; fi
     $agent
+    umask 022
     test \"\$(readlink '$root/conf/current')\" = releases/r000000
     test -f '$root/conf/current/conf.d/www.conf'
     grep -q 'shop.example.com' '$root/conf/current/conf.d/www.conf'

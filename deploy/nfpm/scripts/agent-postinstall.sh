@@ -1,5 +1,15 @@
 set -e
+# bootstrap 的配置需要供 syedge 组读取；敏感文件使用显式权限。
+umask 022
 r=$(syedge_root)
+if ! runuser -u syedge-agent -- test -x "$r"; then
+  echo "syedge-agent: 无法访问安装根目录 $r，请检查父目录权限" >&2
+  exit 1
+fi
+if [ -e /etc/syedge/prefix ] && ! runuser -u syedge-agent -- test -r /etc/syedge/prefix; then
+  echo "syedge-agent: 无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
+  exit 1
+fi
 if [ "$r" = /opt/syedge ]; then
   state=/var/lib/syedge-agent
 else

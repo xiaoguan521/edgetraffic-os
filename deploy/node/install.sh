@@ -13,6 +13,8 @@
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
+# 配置需要供 syedge 组读取；密钥等敏感文件仍按各自显式权限创建。
+umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 while [[ $# -gt 0 ]]; do
@@ -61,6 +63,16 @@ id syedge-agent >/dev/null 2>&1 || useradd -r -g syedge -d /nonexistent -s /usr/
 getent group syedge-firewall >/dev/null || groupadd -r syedge-firewall
 id syedge-firewall >/dev/null 2>&1 || useradd -r -g syedge-firewall -d /nonexistent -s /usr/sbin/nologin syedge-firewall
 
+if [[ ! -d "$R" ]]; then
+  install -d -o root -g root -m 0755 "$R"
+fi
+for runtime_user in syedge syedge-agent; do
+  runuser -u "$runtime_user" -- test -x "$R" || die "$runtime_user 无法访问安装根目录 $R，请检查父目录权限"
+  if [[ -e /etc/syedge/prefix ]]; then
+    runuser -u "$runtime_user" -- test -r /etc/syedge/prefix || die "$runtime_user 无法读取 /etc/syedge/prefix，请检查父目录权限"
+  fi
+done
+
 echo "== 安装文件"
 # 可执行文件先写临时文件再 rename：正在运行的程序不能原地覆盖（Text file busy），
 # 运行中的 syedge 不受影响，新二进制在下次二进制热升级（USR2）时才生效。
@@ -80,7 +92,6 @@ else
   STATE_DIR="$R/agent"
 fi
 
-mkdir -p "$R"
 # 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
 (cd "$HERE/rootfs/opt/syedge" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
   if [[ "$f" == ./html/* && ( -e "$R/$f" || -L "$R/$f" ) ]]; then

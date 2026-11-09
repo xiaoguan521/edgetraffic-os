@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -61,32 +62,29 @@ func repairPackageBaseline(confRoot, defaults string) error {
 	if !bytes.Equal(old, packaged) {
 		return nil // 不是原始软件包清单，保留用户或其他版本的清单
 	}
-	files := map[string][]byte{}
-	if err := filepath.WalkDir(defaults, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("invalid package baseline file %s", p)
-		}
-		rel, err := filepath.Rel(defaults, p)
-		if err != nil {
-			return err
-		}
-		if rel == render.ManifestName {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(rel)] = b
-		return nil
-	}); err != nil {
+	var packageManifest render.Manifest
+	if err := json.Unmarshal(packaged, &packageManifest); err != nil || packageManifest.Revision != render.BaselineRevision || len(packageManifest.Files) == 0 {
+		return fmt.Errorf("invalid package baseline manifest")
+	}
+	source, err := os.OpenRoot(defaults)
+	if err != nil {
 		return err
+	}
+	defer func() { _ = source.Close() }()
+	files := map[string][]byte{}
+	for name := range packageManifest.Files {
+		if !fs.ValidPath(name) || name == "." || name == render.ManifestName {
+			return fmt.Errorf("invalid package baseline file %s", name)
+		}
+		fi, err := source.Lstat(name)
+		if err != nil || !fi.Mode().IsRegular() {
+			return fmt.Errorf("invalid package baseline file %s", name)
+		}
+		b, err := source.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		files[name] = b
 	}
 	data := render.Repack(render.BaselineRevision, files).Files[render.ManifestName]
 	var nonce [16]byte

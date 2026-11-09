@@ -7,7 +7,7 @@
 #
 # 用法（普通用户 + 免密 sudo，CI 中运行）：
 #   LIC_TOOL=... LIC_KEY=... LIC_KID=... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
-#   SMOKE_PREFIX=/srv/syedge-smoke ... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
+#   SMOKE_PREFIX=/srv/syedge-smoke SMOKE_UMASK=077 ... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
 # 控制台须是注入了临时授权公钥的测试构建；它只用于本测试，不进入发布包。
 set -uo pipefail
 PKG=$(realpath "${1:?node package}"); CONSOLE=$(realpath "${2:?console binary}")
@@ -30,6 +30,13 @@ ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-node::${1//$'\n'/%0A}"; fail=$((fail+1)); }
 j()   { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 expect() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1（期望包含 '$3'，实际 '${2:0:300}'）"; fi; }
+install_node() {
+  if [[ -n "${SMOKE_UMASK:-}" ]]; then
+    sudo bash -c 'umask "$1"; shift; exec "$@"' -- "$SMOKE_UMASK" "$D/install.sh" "$@"
+  else
+    sudo "$D/install.sh" "$@"
+  fi
+}
 cleanup() { [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null; }
 trap cleanup EXIT
 diag() {
@@ -43,7 +50,7 @@ diag() {
 echo "== 安装节点包"
 tar -C "$W" -xzf "$PKG"
 D=$(echo "$W"/syedge-node-*)
-if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
+if out=$(install_node "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
 expect "安装根目录" "$(sudo syedge-instance prefix 2>&1)" "$ROOT"
 if [[ -x "$ROOT/sbin/syedge" && -e "$ROOT/conf/current" ]]; then ok "自定义根目录文件与配置存在"; else bad "自定义根目录文件或配置缺失：$ROOT"; fi
 if [[ -f /etc/logrotate.d/syedge ]]; then ok "日志轮转配置存在"; else bad "日志轮转配置缺失"; fi
@@ -55,11 +62,26 @@ if ps -eo args | grep -v grep | grep -qi 'ngi''nx'; then bad "进程列表出现
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || true)
 expect "基线配置：未知域名直接断开" "$code" "000"
 MASTER=$(cat /run/syedge/syedge.pid)
+# 模拟 logrotate 重命名，验证正在服务的 master 真正重新打开自定义目录中的日志。
+if sudo mv "$LOG_DIR/error.log" "$LOG_DIR/error.log.smoke-rotated"; then
+  if out=$(sudo syedge-instance reopen-all 2>&1); then
+    reopened=0
+    for _ in $(seq 1 50); do
+      if sudo find "/proc/$MASTER/fd" -maxdepth 1 -type l -lname "$LOG_DIR/error.log" -print -quit | grep -q .; then reopened=1; break; fi
+      sleep 0.1
+    done
+    if [[ "$reopened" == 1 ]]; then ok "日志轮转后 master 重新打开日志"; else bad "日志轮转后 master 未重新打开日志"; fi
+  else
+    bad "日志轮转后重新打开日志失败：$out"
+  fi
+else
+  bad "日志轮转测试无法重命名错误日志"
+fi
 expect "节点防火墙默认不启用" "$(sudo syedge-firewall status)" "未启用"
 printf 'standalone-static-preserved\n' | sudo tee "$ROOT/html/index.html" >/dev/null
 printf '# smoke-logrotate-policy\n' | sudo tee -a /etc/logrotate.d/syedge >/dev/null
 before=$(sha256sum /usr/bin/syedge-agent)
-if sudo "$D/install.sh" --prefix "${ROOT}-conflict" >/dev/null 2>&1; then
+if install_node --prefix "${ROOT}-conflict" >/dev/null 2>&1; then
   bad "冲突根目录被接受"
 else
   ok "冲突根目录被拒绝"
@@ -87,7 +109,7 @@ fi
 echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
-if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
+if out=$(install_node "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
 expect "重复安装保留静态文件" "$(cat "$ROOT/html/index.html")" "standalone-static-preserved"
 expect "重复安装保留轮转策略" "$(cat /etc/logrotate.d/syedge)" "smoke-logrotate-policy"
 online=0

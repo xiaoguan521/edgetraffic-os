@@ -1,9 +1,20 @@
 set -e
+# 基线配置需要供运行用户读取，不继承调用包管理器时的严格 umask。
+umask 022
 R=$(syedge_root) || exit 1
 [ -n "$R" ] && [ "$R" != / ] || { echo "syedge: 安装根目录无效" >&2; exit 1; }
 for d in "$R" "$R/sbin" "$R/share" "$R/html" "$R/modules" "$R/versions"; do
   [ ! -L "$d" ] || { echo "syedge: 安装目录不能是符号链接：$d" >&2; exit 1; }
 done
+if [ ! -d "$R" ]; then install -d -o root -g root -m 0755 "$R"; fi
+if ! runuser -u syedge -- test -x "$R"; then
+  echo "syedge: 数据面用户无法访问安装根目录 $R，请检查父目录权限" >&2
+  exit 1
+fi
+if [ -e /etc/syedge/prefix ] && ! runuser -u syedge -- test -r /etc/syedge/prefix; then
+  echo "syedge: 数据面用户无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
+  exit 1
+fi
 if [ "$R" != /opt/syedge ]; then
   mkdir -p "$R/sbin" "$R/share" "$R/html" "$R/modules"
   # 运行中的二进制不能原地覆盖。临时文件放在仅 root 可写的 R，再原子替换。

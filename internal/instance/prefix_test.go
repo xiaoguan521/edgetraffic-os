@@ -3,6 +3,7 @@ package instance
 import (
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
@@ -38,5 +39,21 @@ func TestPrefixRejectsExistingDefaultInstall(t *testing.T) {
 	}
 	if err := f.Prefix("/data/syedge"); err == nil || !strings.Contains(err.Error(), "已有默认安装") {
 		t.Fatalf("existing default install accepted: %v", err)
+	}
+}
+
+func TestPrefixMarkerDirectoryWithRestrictiveUmask(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("prefix marker ownership test needs root")
+	}
+	f := newFake(t)
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	if err := f.Prefix("/srv/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(f.path("/etc/syedge"))
+	if err != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("marker directory is not traversable: %v %v", fi, err)
 	}
 }

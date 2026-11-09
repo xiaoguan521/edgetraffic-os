@@ -630,7 +630,7 @@ func (e Env) ReopenAll() error {
 	for _, in := range list {
 		l := e.lay(in.Name)
 		args := []string{"-s", "reopen"}
-		if e.user() {
+		if e.user() || l.Root() != layout.DefaultSystemRoot() {
 			args = []string{"-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}
 		} else if in.Name != "" {
 			args = []string{"-c", l.CurrentConf(), "-s", "reopen"}

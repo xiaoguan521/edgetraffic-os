@@ -215,7 +215,7 @@ sudo ./install.sh --prefix /data/syedge
 
 安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；`/run/syedge*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
 
-建议选择 `/data/syedge` 或 `/srv/syedge` 这样的专用目录；不能把 `/usr`、`/opt`、`/var` 等系统共享目录本身作为安装根目录，也不能放在 `/home` 或 `/root` 下（systemd 单元的 `ProtectHome` 会屏蔽这些目录）。安装根目录及已存在的父目录必须属于 root，且不能被组或其他用户写入。
+建议选择 `/data/syedge` 或 `/srv/syedge` 这样的专用目录；不能把 `/usr`、`/opt`、`/var` 等系统共享目录本身作为安装根目录，也不能放在 `/home` 或 `/root` 下（systemd 单元的 `ProtectHome` 会屏蔽这些目录）。安装根目录及已存在的父目录必须属于 root、不能被组或其他用户写入，并允许 `syedge` 与 `syedge-agent` 用户逐级访问；这两个用户还需要能够读取 `/etc/syedge/prefix`。
 
 自定义目录下，手工校验要显式指定配置和错误日志；常规重载通过 systemd 保持服务单元中的路径设置：
 
