@@ -188,35 +188,12 @@ func TestHostUpgradeLocksSiblingGroups(t *testing.T) {
 	if v := waitUpgrade(t, d, up.ID); v.Status != "done" {
 		t.Fatalf("status %s", v.Status)
 	}
-	// 状态写入完成后，后台还会记录审计，随后才释放跨组锁。允许这一小段
-	// 收尾时间，再验证同机的组可以发起升级。
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		next, err := d.StartUpgrade(blueG.ID, "1.30.7-1", "standard", "admin", "")
-		if err == nil {
-			if v := waitUpgrade(t, d, next.ID); v.Status != "done" {
-				t.Fatalf("sibling upgrade status %s", v.Status)
-			}
-			break
-		}
-		if !errors.Is(err, ErrUpgradeRunning) || time.Now().After(deadline) {
-			t.Fatalf("sibling group after host upgrade: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	next, err := d.StartUpgrade(blueG.ID, "1.30.7-1", "standard", "admin", "")
+	if err != nil {
+		t.Fatalf("sibling group after host upgrade: %v", err)
 	}
-	for _, id := range []uint{def.ID, blueG.ID} {
-		mu, ok := upgradeLocks.Load(id)
-		if !ok {
-			t.Fatalf("missing upgrade lock for group %d", id)
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for !mu.(*sync.Mutex).TryLock() {
-			if time.Now().After(deadline) {
-				t.Fatalf("upgrade lock for group %d was not released", id)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		mu.(*sync.Mutex).Unlock()
+	if v := waitUpgrade(t, d, next.ID); v.Status != "done" {
+		t.Fatalf("sibling upgrade status %s", v.Status)
 	}
 }
 

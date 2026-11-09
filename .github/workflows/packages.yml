@@ -95,8 +95,10 @@ jobs:
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
       - name: node install, enroll and publish with custom prefix and systemd
         env:
-          SMOKE_PREFIX: /srv/syedge-smoke
+          SMOKE_PREFIX: /home/atwasoft/node
           SMOKE_UMASK: '077'
+          SMOKE_ROOT_MODE: '0751'
+          SMOKE_HOME_SANDBOX: '1'
           SMOKE_ROOT_MASTER: ${{ matrix.arch == 'arm64' && '1' || '' }}
         run: |
           scripts/release/package.sh node ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz

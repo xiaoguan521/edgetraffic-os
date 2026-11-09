@@ -78,18 +78,107 @@ func TestSystemCustomRootPaths(t *testing.T) {
 }
 
 func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
-	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home/ops/edge", "/root/edge", "/opt/syedge/share/nested"} {
+	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home", "/root/edge", "/opt/syedge/share/nested"} {
 		if err := ValidateSystemRoot(root); err == nil {
 			t.Errorf("unsafe system root %q accepted", root)
 		}
 	}
-	for _, root := range []string{"/opt/syedge", "/opt/syedge-custom", "/srv/syedge", "/data/edge", "/usr/local/syedge"} {
+	for _, root := range []string{"/opt/syedge", "/opt/syedge-custom", "/srv/syedge", "/data/edge", "/usr/local/syedge", "/home/atwasoft/node", "/home/ops/edge"} {
 		if err := ValidateSystemRoot(root); err != nil {
 			t.Errorf("dedicated system root %q rejected: %v", root, err)
 		}
 	}
 	if _, err := User("/home/ops/edge", ""); err != nil {
 		t.Fatalf("user-mode home directory rejected: %v", err)
+	}
+}
+
+func TestCheckSystemRootRejectsUntrustedParents(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("ownership checks require root")
+	}
+	fsroot := t.TempDir()
+	home := filepath.Join(fsroot, "home")
+	parent := filepath.Join(home, "atwasoft")
+	target := filepath.Join(parent, "node")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("trusted /home root rejected: %v", err)
+	}
+	if err := os.Chmod(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted world-writable parent")
+	}
+	if err := os.Chmod(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(parent, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a parent owned by an untrusted user")
+	}
+	if err := os.Chown(parent, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a group-writable install root")
+	}
+	if err := os.Rename(target, target+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp", target); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Fatal("CheckSystemRootAt accepted symlink install root")
+	}
+}
+
+func TestCheckSystemRootAllowsTrustedChildOfStickyHome(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("ownership checks require root")
+	}
+	fsroot := t.TempDir()
+	home := filepath.Join(fsroot, "home")
+	parent := filepath.Join(home, "atwasoft")
+	target := filepath.Join(parent, "node")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, os.ModeSticky|0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("trusted child under sticky /home rejected: %v", err)
+	}
+	if err := os.Rename(target, target+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("missing root under trusted child of sticky /home rejected: %v", err)
+	}
+	if err := os.Chown(parent, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted an untrusted child of sticky /home")
+	}
+	if err := os.Chown(parent, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(parent, parent+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a missing child of sticky /home")
 	}
 }
 

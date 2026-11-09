@@ -17,7 +17,7 @@ ExecStart=/usr/bin/syedge-agent run -instance %i
 ExecStartPre=/opt/syedge/sbin/syedge -t -q -c /opt/syedge/instances/%i/conf/current/syedge.conf
 ExecReload=/opt/syedge/sbin/syedge -s reload
 `
-	got := prefixUnit(src, "/data/syedge")
+	got := prefixUnit(src, "/data/syedge", true)
 	if !strings.Contains(got, "ConditionPathExists=/data/syedge/instances/%i/instance.json") {
 		t.Error("condition path was not rebased")
 	}
@@ -33,8 +33,30 @@ ExecReload=/opt/syedge/sbin/syedge -s reload
 	if !strings.Contains(got, "ExecReload=/data/syedge/sbin/syedge -s reload -c /data/syedge/conf/current/syedge.conf -e /data/syedge/logs/error.log") {
 		t.Error("custom ExecReload was not completed")
 	}
-	if again := prefixUnit(got, "/data/syedge"); again != got {
+	if again := prefixUnit(got, "/data/syedge", true); again != got {
 		t.Error("prefixUnit is not idempotent")
+	}
+
+	homeSrc := src + "ProtectHome=true\n"
+	if dataGot := prefixUnit(homeSrc, "/data/syedge", true); !strings.Contains(dataGot, "ProtectHome=true") {
+		t.Error("ProtectHome must be kept for non-/home custom root")
+	}
+	homeGot := prefixUnit(homeSrc, "/home/atwasoft/node", true)
+	if !strings.Contains(homeGot, "ProtectHome=tmpfs\nBindPaths=/home/atwasoft/node\n") {
+		t.Errorf("home custom root must be exposed without exposing other homes:\n%s", homeGot)
+	}
+	if again := prefixUnit(homeGot, "/home/atwasoft/node", true); again != homeGot {
+		t.Error("prefixUnit for /home custom root is not idempotent")
+	}
+	legacy := prefixUnit(homeSrc, "/home/atwasoft/node", false)
+	if !strings.Contains(legacy, "ProtectHome=false\nInaccessibleDirectories=-/root -/run/user\n") {
+		t.Errorf("legacy systemd must still hide /root and /run/user:\n%s", legacy)
+	}
+	if again := prefixUnit(legacy, "/home/atwasoft/node", false); again != legacy {
+		t.Error("legacy prefixUnit for /home custom root is not idempotent")
+	}
+	if upgraded := prefixUnit(legacy, "/home/atwasoft/node", true); upgraded != homeGot {
+		t.Error("systemd upgrade must replace the legacy home sandbox")
 	}
 }
 

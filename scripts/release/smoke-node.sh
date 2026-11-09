@@ -37,8 +37,20 @@ install_node() {
     sudo "$D/install.sh" "$@"
   fi
 }
-cleanup() { [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null; }
+cleanup() {
+  [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null
+  [[ -z "${HOME_PROBE:-}" ]] || sudo rm -rf "$HOME_PROBE"
+  [[ -z "${ROOT_PROBE:-}" ]] || sudo rm -rf "$ROOT_PROBE"
+}
 trap cleanup EXIT
+check_home_sandbox() {
+  local pid=$1 name=$2
+  if sudo nsenter --target "$pid" --mount -- sh -c 'test ! -e "$1/probe" && test ! -e "$2/probe"' -- "$HOME_PROBE" "$ROOT_PROBE"; then
+    ok "$name 隐藏其他家目录"
+  else
+    bad "$name 家目录隔离无效"
+  fi
+}
 diag() {
   [[ -n "${GITHUB_ACTIONS:-}" ]] || return 0
   for u in syedge syedge-agent; do
@@ -50,7 +62,18 @@ diag() {
 echo "== 安装节点包"
 tar -C "$W" -xzf "$PKG"
 D=$(echo "$W"/syedge-node-*)
+if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
+  sudo install -d -o root -g root -m "$SMOKE_ROOT_MODE" "$ROOT"
+fi
+if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
+  HOME_PROBE=$(sudo mktemp -d /home/syedge-smoke-private.XXXXXX)
+  ROOT_PROBE=$(sudo mktemp -d /root/syedge-smoke-private.XXXXXX)
+  sudo touch "$HOME_PROBE/probe" "$ROOT_PROBE/probe"
+fi
 if out=$(install_node "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
+if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
+  expect "安装保留已有根目录权限" "$(stat -c %a "$ROOT")" "${SMOKE_ROOT_MODE#0}"
+fi
 expect "安装根目录" "$(sudo syedge-instance prefix 2>&1)" "$ROOT"
 if [[ -x "$ROOT/sbin/syedge" && -e "$ROOT/conf/current" ]]; then ok "自定义根目录文件与配置存在"; else bad "自定义根目录文件或配置缺失：$ROOT"; fi
 if [[ -f /etc/logrotate.d/syedge ]]; then ok "日志轮转配置存在"; else bad "日志轮转配置缺失"; fi
@@ -62,6 +85,10 @@ if ps -eo args | grep -v grep | grep -qi 'ngi''nx'; then bad "进程列表出现
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || true)
 expect "基线配置：未知域名直接断开" "$code" "000"
 MASTER=$(cat /run/syedge/syedge.pid)
+if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
+  expect "数据面 home 沙箱" "$(systemctl show syedge.service -p ProtectHome --value)" "tmpfs"
+  check_home_sandbox "$MASTER" "数据面"
+fi
 # 模拟 logrotate 重命名，验证正在服务的 master 真正重新打开自定义目录中的日志。
 if sudo mv "$LOG_DIR/error.log" "$LOG_DIR/error.log.smoke-rotated"; then
   if out=$(sudo syedge-instance reopen-all 2>&1); then
@@ -110,6 +137,9 @@ echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
 if out=$(install_node "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
+if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
+  expect "重复安装保留根目录权限" "$(stat -c %a "$ROOT")" "${SMOKE_ROOT_MODE#0}"
+fi
 expect "重复安装保留静态文件" "$(cat "$ROOT/html/index.html")" "standalone-static-preserved"
 expect "重复安装保留轮转策略" "$(cat /etc/logrotate.d/syedge)" "smoke-logrotate-policy"
 online=0
@@ -121,6 +151,10 @@ done
 expect "节点上线" "$online" "1"
 expect "systemd 单元 syedge-agent.service 运行中" "$(systemctl is-active syedge-agent.service)" "active"
 expect "agent 以 syedge-agent 用户运行" "$(ps -o user= -C syedge-agent)" "syedge-agent"
+if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
+  expect "agent home 沙箱" "$(systemctl show syedge-agent.service -p ProtectHome --value)" "tmpfs"
+  check_home_sandbox "$(systemctl show syedge-agent.service -p MainPID --value)" "agent"
+fi
 
 echo "== 发布站点（sudo + wrapper 在 systemd 加固下校验与 reload）"
 "${C[@]}" -X POST "$B/sites" -d '{"group_id":1,"spec":{"name":"smoke","domains":["smoke.local"],"routes":[{"path":"/","match":"prefix","mode":"static","static":{"index_html":"<h1>smoke ok</h1>"}}]}}' >/dev/null

@@ -103,7 +103,7 @@ func (e Env) writeCompatUnits() error {
 		}
 		source := string(b)
 		if root, custom := e.customSystemRoot(); custom {
-			source = prefixUnit(source, root)
+			source = prefixUnit(source, root, e.homeSandbox())
 		}
 		dst := e.path("/etc/systemd/system/" + unit)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
