@@ -26,7 +26,7 @@ dockerrun() { # 场景编号 docker run 参数……
   return $rc
 }
 run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
-  local name=$1 image=$2 install=$3 prefix=${4:-} out root=/opt/syedge dp_opts prefix_setup=:
+  local name=$1 image=$2 install=$3 prefix=${4:-} out root=/opt/syedge dp_opts='' prefix_setup=:
   if [[ -n "$prefix" ]]; then
     root=$prefix
     dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
