@@ -88,6 +88,9 @@ MASTER=$(cat /run/syedge/syedge.pid)
 if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
   expect "数据面 home 沙箱" "$(systemctl show syedge.service -p ProtectHome --value)" "tmpfs"
   check_home_sandbox "$MASTER" "数据面"
+  sudo nsenter --target "$MASTER" --mount -- stat -c 'sandbox uid=%u mode=%a path=%n' /home /home/atwasoft "$ROOT"
+  sudo systemd-run --quiet --wait --pipe -p User=syedge-agent -p ProtectSystem=strict -p ProtectHome=tmpfs \
+    -p "BindPaths=$ROOT" -p "ReadWritePaths=$ROOT" /usr/bin/stat -c 'agent sandbox uid=%u mode=%a path=%n' /home /home/atwasoft "$ROOT"
 fi
 # 模拟 logrotate 重命名，验证正在服务的 master 真正重新打开自定义目录中的日志。
 if sudo mv "$LOG_DIR/error.log" "$LOG_DIR/error.log.smoke-rotated"; then

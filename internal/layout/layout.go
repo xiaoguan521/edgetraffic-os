@@ -395,7 +395,7 @@ func CheckSystemRootAt(fsroot, root string) error {
 			return fmt.Errorf("install root %s or its parents must be non-symlink directories", root)
 		}
 		if fi.Mode().Perm()&0o022 != 0 || !ownedByRoot(fi) {
-			return fmt.Errorf("install root %s: %s must be root-owned and not writable by group or others", root, p)
+			return fmt.Errorf("install root %s: %s must be root-owned and not writable by group or others (mode %04o, root-owned %t)", root, p, fi.Mode().Perm(), ownedByRoot(fi))
 		}
 		if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
 			break
