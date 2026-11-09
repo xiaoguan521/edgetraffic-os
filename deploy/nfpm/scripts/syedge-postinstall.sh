@@ -1,9 +1,21 @@
-R=$(syedge_root)
+set -e
+R=$(syedge_root) || exit 1
+[ -n "$R" ] && [ "$R" != / ] || { echo "syedge: 安装根目录无效" >&2; exit 1; }
+for d in "$R" "$R/sbin" "$R/share" "$R/html" "$R/modules" "$R/versions"; do
+  [ ! -L "$d" ] || { echo "syedge: 安装目录不能是符号链接：$d" >&2; exit 1; }
+done
 if [ "$R" != /opt/syedge ]; then
   mkdir -p "$R/sbin" "$R/share" "$R/html" "$R/modules"
-  cp -a /opt/syedge/sbin/. "$R/sbin/"
+  # 运行中的二进制不能原地覆盖。临时文件放在仅 root 可写的 R，再原子替换。
+  tmp=$(mktemp "$R/.syedge-bin.XXXXXX") || exit 1
+  if ! install -o root -g root -m 0755 /opt/syedge/sbin/syedge "$tmp" || ! mv -f "$tmp" "$R/sbin/syedge"; then
+    rm -f "$tmp"
+    echo "syedge: 安装数据面二进制失败" >&2
+    exit 1
+  fi
   cp -a /opt/syedge/share/. "$R/share/"
-  cp -a /opt/syedge/html/. "$R/html/"
+  # 独立站点可能直接维护 html 下的内容；升级时只补齐缺失文件。
+  cp -an /opt/syedge/html/. "$R/html/"
   if [ -d /opt/syedge/modules ]; then cp -a /opt/syedge/modules/. "$R/modules/"; fi
 fi
 if [ "$R" = /opt/syedge ]; then
@@ -15,7 +27,8 @@ else
 fi
 mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" /run/syedge /run/syedge-agent "$R/versions" "$R/modules"
 ln -sfn "$R/sbin/syedge" /usr/sbin/syedge
-chown -R root:root "$R/sbin" "$R/share" "$R/html"
+chown -R root:root "$R/sbin" "$R/share"
+chown root:root "$R/html"
 
 # 包管理器在 syedge-agent 包之前执行本脚本，custom root 的首次基线不能直接
 # 复用按 /opt 编译的静态配置：日志和临时目录必须先改到 R 下。后续升级不改
@@ -24,13 +37,26 @@ if [ "$R" != /opt/syedge ] && [ -f "$R/share/defaults/baseline/syedge.conf" ]; t
   sed -i "s|/var/log/syedge|$R/logs|g" "$R/share/defaults/baseline/syedge.conf"
   sed -i "/^[[:space:]]*client_header_timeout/i\\    client_body_temp_path  $R/cache/client_temp;\n    proxy_temp_path        $R/cache/proxy_temp;\n    fastcgi_temp_path      $R/cache/fastcgi_temp;\n    uwsgi_temp_path        $R/cache/uwsgi_temp;\n    scgi_temp_path         $R/cache/scgi_temp;" "$R/share/defaults/baseline/syedge.conf"
 fi
+if [ "$R" != /opt/syedge ] && [ -f "$R/share/defaults/standalone-example.conf" ]; then
+  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+fi
 # 运行时不使用 root（设计 0001 D5）：master 与 worker 以 syedge 运行，运行时目录、日志与缓存归 syedge；
 # 二进制所在目录、版本库与模块目录由 wrapper（同样以 syedge 运行）在热升级时写入
 chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge "$R/versions"
 chown syedge:syedge "$R/sbin" "$R/modules"
-if [ -x /usr/sbin/syedge-instance ]; then
+instance_tool=""
+if [ "$R" != /opt/syedge ] || [ -x /usr/sbin/syedge-instance ]; then
+  instance_tool=/usr/libexec/syedge/syedge-instance
+  [ -x "$instance_tool" ] || instance_tool=/usr/sbin/syedge-instance
+fi
+if [ -n "$instance_tool" ] && [ -x "$instance_tool" ]; then
   # 与 syedge-agent 同时升级：升级前以 root 启动的 master 无中断切换为 syedge 运行（旧版 agent 包没有该命令时忽略）
-  /usr/sbin/syedge-instance nonroot >/dev/null 2>&1 || true
+  if ! "$instance_tool" nonroot >/dev/null 2>&1; then
+    if [ "$R" != /opt/syedge ] && has_systemd; then
+      echo "syedge: 无法生成自定义根目录的服务单元" >&2
+      exit 1
+    fi
+  fi
 elif [ -f /run/syedge/syedge.pid ] && [ "$(awk '/^Uid:/{print $2}' /proc/"$(cat /run/syedge/syedge.pid)"/status 2>/dev/null)" = "0" ]; then
   echo "提示：运行中的 syedge master 仍以 root 运行（升级前启动）。安装 syedge-agent 后会自动无中断切换；" >&2
   echo "      独立使用时请在维护窗口执行 systemctl restart syedge，之后以 syedge 用户运行。" >&2

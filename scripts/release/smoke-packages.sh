@@ -3,7 +3,9 @@
 # 安装脚本写入初始配置且 syedge 能以基线配置启动。容器内没有 systemd，安装脚本会跳过 systemctl。
 #
 # 用法：scripts/release/smoke-packages.sh <软件包目录> <goarch>
-# 环境变量：SMOKE_SET=full（默认，main 与正式发布）| pr（拉取请求：代表性子集）；SMOKE_JOBS 并行数（默认 6）
+# 环境变量：SMOKE_SET=full（默认）| pr；SMOKE_JOBS 并行数（默认 6）；
+# SMOKE_PREVIOUS_DIR 为 v0.4.2 软件包目录，设置时还测试从旧版依次升级数据面与 agent。
+# SMOKE_FILTER 可按场景函数和名称筛选，CI 默认不筛选。
 # 发行版覆盖（full）：CentOS 7（glibc 2.17）、Rocky 8（2.28，与麒麟 V10、统信 UOS 20 相同）、Rocky 9、openEuler 22.03、
 #                     Debian 12 / 13、Ubuntu 20.04 / 22.04 / 24.04，以及 Rocky 9 / Debian 12 的独立模式。
 #              （pr）：CentOS 7（最老 glibc）、Rocky 9、Ubuntu 24.04，以及两个独立模式场景。
@@ -38,11 +40,13 @@ run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
     $install
     syedge -v 2>&1
     test -x /usr/libexec/syedge/syedge-wrapper
+    test -x /usr/libexec/syedge/syedge-instance
     test -x /usr/sbin/syedge-firewall && test -f /usr/lib/systemd/system/syedge-firewall.service
     test ! -e /var/lib/syedge-firewall/firewall.nft   # 防火墙默认不启用
     id syedge-agent >/dev/null && id syedge-console >/dev/null
     test \"\$(syedge-instance prefix)\" = '$root'
     test -L '$root/conf/current'
+    test -f /etc/logrotate.d/syedge
     '$root/sbin/syedge' $dp_opts -t -q
     '$root/sbin/syedge' $dp_opts
     sleep 1
@@ -70,37 +74,107 @@ el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm 
 
 # 独立模式：只装 syedge 软件包，按说明加一个站点后能直接服务；之后装 syedge-agent，
 # 注册时因为有本机自定义配置而被拒绝（不会被控制台静默替换）。
-standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命令
-  local name=$1 image=$2 install=$3 agent=$4 out
+standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命令 [自定义根目录]
+  local name=$1 image=$2 install=$3 agent=$4 prefix=${5:-} out root=/opt/syedge dp_opts='' prefix_setup=:
+  if [[ -n "$prefix" ]]; then
+    root=$prefix
+    dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
+    prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
+  fi
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
-    set -e
+    set -ex
+    $prefix_setup
     $install
-    test \"\$(readlink /opt/syedge/conf/current)\" = releases/r000000
-    test -f /opt/syedge/share/doc/STANDALONE.txt
-    /opt/syedge/sbin/syedge -t -q
-    cp /opt/syedge/share/defaults/standalone-example.conf /opt/syedge/conf/current/conf.d/www.conf
-    /opt/syedge/sbin/syedge -t -q
-    /opt/syedge/sbin/syedge
+    test \"\$(readlink '$root/conf/current')\" = releases/r000000
+    test -f '$root/share/doc/STANDALONE.txt'
+    '$root/sbin/syedge' $dp_opts -t -q
+    cp '$root/share/defaults/standalone-example.conf' '$root/conf/current/conf.d/www.conf'
+    if [ '$root' != /opt/syedge ]; then printf 'standalone-content-preserved\n' > '$root/html/index.html'; fi
+    '$root/sbin/syedge' $dp_opts -t -q
+    '$root/sbin/syedge' $dp_opts
     sleep 1
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: www.example.com' http://127.0.0.1/)\" = 200
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: other.example.com' http://127.0.0.1/ || true)\" = 000
-    sed -i 's/www.example.com;/www.example.com shop.example.com;/' /opt/syedge/conf/current/conf.d/www.conf
-    /opt/syedge/sbin/syedge -t -q && /opt/syedge/sbin/syedge -s reload
+    sed -i 's/www.example.com;/www.example.com shop.example.com;/' '$root/conf/current/conf.d/www.conf'
+    '$root/sbin/syedge' $dp_opts -t -q && '$root/sbin/syedge' $dp_opts -s reload
     sleep 1
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: shop.example.com' http://127.0.0.1/)\" = 200
+    printf '# smoke-logrotate-policy\n' >> /etc/logrotate.d/syedge
+    ( for n in \$(seq 1 50); do
+        curl -fsS -m 3 -H 'Host: shop.example.com' http://127.0.0.1/ >/dev/null || exit 1
+        sleep 0.1
+      done ) &
+    probe=\$!
+    if command -v rpm >/dev/null 2>&1; then
+      rpm -U --replacepkgs --oldpackage /pkgs/syedge-[0-9]*.rpm
+    else
+      dpkg -i --force-downgrade /pkgs/syedge_*.deb
+    fi
+    wait \"\$probe\"
+    kill -0 \"\$(cat /run/syedge/syedge.pid)\"
+    grep -q smoke-logrotate-policy /etc/logrotate.d/syedge
+    test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: shop.example.com' http://127.0.0.1/)\" = 200
+    if [ '$root' != /opt/syedge ]; then
+      test \"\$(cat '$root/html/index.html')\" = standalone-content-preserved
+      curl -s -m 5 -H 'Host: shop.example.com' http://127.0.0.1/ | grep -q standalone-content-preserved
+    fi
     $agent
-    test \"\$(readlink /opt/syedge/conf/current)\" = releases/r000000
-    test -f /opt/syedge/conf/current/conf.d/www.conf
+    test \"\$(readlink '$root/conf/current')\" = releases/r000000
+    test -f '$root/conf/current/conf.d/www.conf'
+    grep -q 'shop.example.com' '$root/conf/current/conf.d/www.conf'
     if timeout 60 syedge-agent enroll -server 127.0.0.1:1 -token t -ca-fingerprint f 2>/tmp/e; then echo enroll-accepted; exit 1; fi
     grep -q replace-local-config /tmp/e
+    if command -v rpm >/dev/null 2>&1; then rpm -e syedge-agent; else dpkg -r syedge-agent; fi
+    test -f '$root/conf/current/conf.d/www.conf'
+    if command -v rpm >/dev/null 2>&1; then rpm -e syedge; else dpkg -r syedge; fi
+    for n in \$(seq 1 30); do
+      code=\$(curl -s -m 1 -o /dev/null -w '%{http_code}' -H 'Host: shop.example.com' http://127.0.0.1/ || true)
+      [ \"\$code\" = 000 ] && break
+      sleep 0.1
+    done
+    test \"\$code\" = 000
     echo standalone-ok
   " 2>&1)
   if [[ $? -eq 0 && "$out" == *standalone-ok* ]]; then
     echo "ok   $name 独立模式：独立服务、reload、接入控制台前的保护"
   else
     echo "FAIL $name 独立模式"
-    echo "$out" | tail -15 | sed 's/^/     /'
+    echo "$out" | tail -25 | sed 's/^/     /'
     [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-packages standalone $name::$(echo "$out" | tail -6 | tr '\n' ' ')"
+    return 1
+  fi
+}
+
+upgrade() { # 发行版名 镜像 安装旧版命令 升级数据面命令 升级 agent 命令
+  local name=$1 image=$2 old=$3 dp=$4 agent=$5 out
+  out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" -v "$SMOKE_PREVIOUS_DIR:/previous:ro" "$image" sh -c "
+    set -e
+    $old
+    test -x /usr/sbin/syedge-instance
+    if /usr/sbin/syedge-instance prefix >/dev/null 2>&1; then echo '旧版工具意外支持 prefix'; exit 1; fi
+    owner=\$(stat -Lc '%u:%g' /usr/sbin)
+    $dp
+    test \"\$(stat -Lc '%u:%g' /usr/sbin)\" = \"\$owner\"
+    test -x /usr/libexec/syedge/syedge-instance
+    test \"\$(/usr/libexec/syedge/syedge-instance prefix)\" = /opt/syedge
+    test -f /etc/logrotate.d/syedge
+    test -L /opt/syedge/conf/current
+    $agent
+    test -x /usr/sbin/syedge-instance
+    test -f /etc/logrotate.d/syedge
+    if [ -f /etc/syedge/root-master ]; then
+      /usr/libexec/syedge/syedge-wrapper test r000000
+    else
+      runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test r000000
+    fi
+    echo upgrade-ok
+  " 2>&1)
+  if [[ $? -eq 0 && "$out" == *upgrade-ok* ]]; then
+    echo "ok   $name v0.4.2 顺序升级：配置、系统目录属主与日志轮转保留"
+  else
+    echo "FAIL $name v0.4.2 顺序升级"
+    echo "$out" | tail -20 | sed 's/^/     /'
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-packages upgrade $name::$(echo "$out" | tail -6 | tr '\n' ' ')"
     return 1
   fi
 }
@@ -123,18 +197,28 @@ scenarios=(
   "pr|run|Rocky Linux 9 custom prefix|rockylinux:9|$dnf||/srv/syedge-smoke"
   "pr|standalone|Rocky Linux 9|rockylinux:9|$sa_dnf|$sa_dnf_agent"
   "pr|standalone|Debian 12|debian:12|$sa_deb|$sa_deb_agent"
+  "pr|standalone|Rocky Linux 9 custom prefix|rockylinux:9|$sa_dnf|$sa_dnf_agent|/srv/syedge-smoke"
+  "pr|standalone|Debian 12 custom prefix|debian:12|$sa_deb|$sa_deb_agent|/srv/syedge-smoke"
 )
+if [[ -n "${SMOKE_PREVIOUS_DIR:-}" ]]; then
+  SMOKE_PREVIOUS_DIR=$(realpath "$SMOKE_PREVIOUS_DIR")
+  scenarios+=(
+    "pr|upgrade|Rocky Linux 9|rockylinux:9|dnf install -y -q /previous/syedge-0.4.2-1.*.rpm /previous/syedge-agent-0.4.2-1.*.rpm >/dev/null|rpm -U --oldpackage /pkgs/syedge-[0-9]*.rpm|rpm -U --oldpackage /pkgs/syedge-agent-*.rpm"
+    "pr|upgrade|Debian 12|debian:12|export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq /previous/syedge_0.4.2_*.deb /previous/syedge-agent_0.4.2_*.deb >/dev/null|dpkg -i --force-downgrade /pkgs/syedge_*.deb|dpkg -i --force-downgrade /pkgs/syedge-agent_*.deb"
+  )
+fi
 
-echo "== 软件包冒烟（$ARCH，集合 $SET，并行 $JOBS，每个场景限时 ${LIMIT}s）"
+echo "== 软件包冒烟（${ARCH}，集合 ${SET}，并行 ${JOBS}，每个场景限时 ${LIMIT}s）"
 start=$SECONDS
 i=0; selected=()
 for sc in "${scenarios[@]}"; do
   IFS='|' read -r set fn a1 a2 a3 a4 a5 <<<"$sc"
   [[ "$SET" == pr && "$set" != pr ]] && continue
+  [[ -z "${SMOKE_FILTER:-}" || "$fn $a1" == *"$SMOKE_FILTER"* ]] || continue
   i=$((i+1)); selected+=("$i")
   while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n; done
   ( t0=$SECONDS; SCENARIO=$i
-    if [[ $fn == run ]]; then run "$a1" "$a2" "$a3" "$a5"; else standalone "$a1" "$a2" "$a3" "$a4"; fi > "$W/$i.out" 2>&1
+    if [[ $fn == run ]]; then run "$a1" "$a2" "$a3" "$a5"; else "$fn" "$a1" "$a2" "$a3" "$a4" "$a5"; fi > "$W/$i.out" 2>&1
     echo $? > "$W/$i.rc"; echo $((SECONDS-t0)) > "$W/$i.sec" ) &
 done
 wait

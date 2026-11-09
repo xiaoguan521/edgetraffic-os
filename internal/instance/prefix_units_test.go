@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,27 @@ ExecReload=/opt/syedge/sbin/syedge -s reload
 	}
 	if again := prefixUnit(got, "/data/syedge"); again != got {
 		t.Error("prefixUnit is not idempotent")
+	}
+}
+
+func TestCustomLogrotatePreservesLocalChanges(t *testing.T) {
+	f := newFake(t)
+	if err := f.writeLogrotate("/srv/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	p := f.path("/etc/logrotate.d/syedge")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte(strings.ReplaceAll(string(b), "/srv/syedge/logs/", "/var/log/local/")), []byte("# locally adjusted policy\n")...)
+	if err := os.WriteFile(p, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.writeLogrotate("/srv/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != string(want) {
+		t.Fatalf("local logrotate policy changed: %q, %v", got, err)
 	}
 }

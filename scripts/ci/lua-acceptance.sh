@@ -344,6 +344,11 @@ sudo ln -sfn releases/r900101 /opt/syedge/conf/current
 out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
 sleep 1
 check "切换到不含 Lua 的配置后原生规则仍生效" "$(req -H "$H" -A BadBot http://127.0.0.1/)" "403"
+# 模块由所有实例共用：默认实例不使用时，也不能卸载仍被具名实例使用的附加包。
+mkdir -p "$W/lua-guard/modules" "$W/lua-guard/instances/blue/conf/current"
+: > "$W/lua-guard/modules/lua"
+printf 'load_module modules/lua/ndk_http_module.so;\n' > "$W/lua-guard/instances/blue/conf/current/syedge.conf"
+out=$(SYEDGE_ROOT="$W/lua-guard" bash "$W/lua/uninstall.sh" 2>&1) && bad "具名实例仍使用 Lua 时卸载被允许" || check "具名实例使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) || bad "uninstall failed: $out"
 [[ ! -e /opt/syedge/modules/lua ]] && ! ls -d /opt/syedge/modules/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
 out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"

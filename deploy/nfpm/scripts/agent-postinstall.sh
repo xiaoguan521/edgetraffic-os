@@ -16,9 +16,8 @@ if command -v visudo >/dev/null 2>&1; then
   fi
 fi
 if [ -f "$r/conf/.syedge-custom-baseline" ]; then
-  rm -f "$r/conf/current"
-  rm -rf "$r/conf/releases/r000000"
-  /usr/bin/syedge-agent bootstrap
+  # 只修复软件包基线清单；独立模式的站点与管理员修改必须保留并继续被检测。
+  /usr/bin/syedge-agent repair-package-baseline
   rm -f "$r/conf/.syedge-custom-baseline"
 elif [ ! -e "$r/conf/current" ]; then
   /usr/bin/syedge-agent bootstrap

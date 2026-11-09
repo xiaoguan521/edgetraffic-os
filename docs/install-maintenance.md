@@ -215,6 +215,18 @@ sudo ./install.sh --prefix /data/syedge
 
 安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；`/run/syedge*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
 
+建议选择 `/data/syedge` 或 `/srv/syedge` 这样的专用目录；不能把 `/usr`、`/opt`、`/var` 等系统共享目录本身作为安装根目录，也不能放在 `/home` 或 `/root` 下（systemd 单元的 `ProtectHome` 会屏蔽这些目录）。安装根目录及已存在的父目录必须属于 root，且不能被组或其他用户写入。
+
+自定义目录下，手工校验要显式指定配置和错误日志；常规重载通过 systemd 保持服务单元中的路径设置：
+
+```bash
+R=$(sudo syedge-instance prefix)
+sudo "$R/sbin/syedge" -t -c "$R/conf/current/syedge.conf" -e "$R/logs/error.log"
+sudo systemctl reload syedge
+```
+
+数据面二进制的编译期前缀仍是 `/opt/syedge`，独立站点引用静态文件时应使用绝对路径，例如 `root /data/syedge/html;`；安装后的示例会自动使用所选根目录。重复安装会保留自定义目录 `html/` 中已有的静态文件。
+
 安装脚本会：
 
 - 创建 `syedge` 和 `syedge-agent` 系统用户；
@@ -292,7 +304,7 @@ sudo systemctl enable syedge && sudo systemctl start syedge
 
 首次安装后，按照“4.2 安装后注册到控制台”注册 Agent。`syedge-agent` 软件包依赖 `syedge` 和 `sudo`；可选的 `syedge-firewall` 需要额外安装 `nftables`。
 
-不需要自定义目录时不要创建该标记文件，软件包行为与历史版本相同。RPM/DEB 的 payload 仍会保留一份 `/opt/syedge` 静态文件，这是包管理器升级所需；postinstall 会把 `sbin`、`share`、`html` 和 `modules` 同步到标记的根目录，配置、日志、缓存、版本库和 agent 状态不会写入默认目录。标记文件一旦存在，修改为另一个路径不会触发迁移，程序会拒绝运行。
+不需要自定义目录时不要创建该标记文件，软件包行为与历史版本相同。RPM/DEB 的 payload 仍会保留一份 `/opt/syedge` 静态文件，这是包管理器升级所需；postinstall 会把 `sbin`、`share`、`html` 和 `modules` 同步到标记的根目录，配置、日志、缓存、版本库和 agent 状态不会写入默认目录。安装后不要手工修改标记：`syedge-instance prefix` 不支持迁移，直接修改文件也不会迁移已有数据，可能使服务找不到原配置。
 
 ### 4.4 裸数据面二进制安装
 

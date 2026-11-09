@@ -120,6 +120,8 @@ func TestProfileValidation(t *testing.T) {
 		{Instance: "Bad"},
 		{Instance: "default"},
 		{Mode: "weird"},
+		{Mode: "system", Root: "/usr"},
+		{Mode: "system", Root: "/home/ops/edge"},
 		{Mode: "user"},                     // 缺少根目录
 		{Mode: "user", Root: "relative"},   // 根目录必须是绝对路径
 		{Mode: "user", Root: "/data/edge"}, // user 模式不能用 80/443（默认端口）

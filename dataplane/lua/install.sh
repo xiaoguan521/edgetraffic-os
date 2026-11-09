@@ -6,17 +6,20 @@
 # - 用真实 syedge -t 自检，失败则恢复原状。不重启、不停止 syedge，也不改动任何已发布的配置。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+die() { echo "syedge-lua: $*" >&2; exit 1; }
 if [[ -n "${SYEDGE_ROOT:-}" ]]; then
   ROOT="$SYEDGE_ROOT"
-elif [[ -x /usr/sbin/syedge-instance ]]; then
-  ROOT="$(/usr/sbin/syedge-instance prefix)"
-elif [[ -f /etc/syedge/prefix ]]; then
-  ROOT="$(sed -n '1p' /etc/syedge/prefix)"
-else
+elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
+  ROOT="$(/usr/libexec/syedge/syedge-instance prefix)" || die "无法校验安装根目录"
+elif [[ ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix ]]; then
   ROOT=/opt/syedge
+elif [[ -x /usr/sbin/syedge-instance ]]; then
+  ROOT="$(/usr/sbin/syedge-instance prefix)" || die "无法校验安装根目录"
+else
+  die "缺少安装根目录校验工具"
 fi
+[[ "$ROOT" == /* && "$ROOT" != / ]] || die "安装根目录无效"
 SY="$ROOT/sbin/syedge"
-die() { echo "syedge-lua: $*" >&2; exit 1; }
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
 [[ -x "$SY" ]] || die "没有找到 $SY：请先安装 syedge 基础包"

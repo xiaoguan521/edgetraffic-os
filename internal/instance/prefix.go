@@ -12,7 +12,7 @@ import (
 // Prefix 写入 system 模式安装根目录标记。标记只在首次安装时可改变；已有
 // 安装或已有标记都不允许通过该命令迁移到另一个目录。
 func (e Env) Prefix(root string) error {
-	if err := layout.ValidateInstallRoot(root); err != nil {
+	if err := layout.ValidateSystemRoot(root); err != nil {
 		return err
 	}
 	marker := e.path(layout.PrefixMarker())

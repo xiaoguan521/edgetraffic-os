@@ -73,7 +73,7 @@ func SystemAt(root, instance string) Layout {
 	if root == "" {
 		root = DefaultSystemRoot()
 	}
-	if err := ValidateInstallRoot(root); err != nil {
+	if err := ValidateSystemRoot(root); err != nil {
 		panic("layout: invalid install root: " + err.Error())
 	}
 	return Layout{mode: ModeSystem, root: root, instance: instance}
@@ -88,6 +88,33 @@ func ValidateInstallRoot(root string) error {
 	for _, seg := range splitPath(root) {
 		if seg == "." || seg == ".." {
 			return errors.New("install root must be a clean absolute path")
+		}
+	}
+	return nil
+}
+
+// ValidateSystemRoot 要求 system 模式使用专用目录，避免安装和卸载时触及系统
+// 文件；ProtectHome 会使 /home、/root 下的服务目录不可见。
+func ValidateSystemRoot(root string) error {
+	if err := ValidateInstallRoot(root); err != nil {
+		return err
+	}
+	if root == DefaultSystemRoot() {
+		return nil
+	}
+	for _, dir := range []string{"/usr", "/usr/local", "/opt", "/var", "/var/lib", "/var/cache"} {
+		if root == dir {
+			return fmt.Errorf("system install root %s must be a dedicated directory", root)
+		}
+	}
+	for _, dir := range []string{
+		"/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/etc", "/proc", "/run", "/sys",
+		"/home", "/root", "/var/log", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share",
+		"/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/usr/local/lib64", "/usr/local/libexec", "/usr/local/share",
+		DefaultSystemRoot(),
+	} {
+		if root == dir || strings.HasPrefix(root, dir+"/") {
+			return fmt.Errorf("system install root %s is inside a protected directory %s", root, dir)
 		}
 	}
 	return nil
@@ -349,7 +376,7 @@ func CheckSystemRootAt(fsroot, root string) error {
 	if fsroot == "" {
 		fsroot = "/"
 	}
-	if err := ValidateInstallRoot(root); err != nil {
+	if err := ValidateSystemRoot(root); err != nil {
 		return err
 	}
 	clean := filepath.Join(fsroot, filepath.FromSlash(root))

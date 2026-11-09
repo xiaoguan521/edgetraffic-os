@@ -88,3 +88,117 @@ func TestLocalConfigCheck(t *testing.T) {
 		t.Fatal("local config removed")
 	}
 }
+
+func TestRepairPackageBaselinePreservesStandaloneConfiguration(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pristine", true: "customized"}[custom], func(t *testing.T) {
+			root := t.TempDir()
+			defaults := filepath.Join(root, "defaults")
+			conf := filepath.Join(root, "conf")
+			current := filepath.Join(conf, "releases", render.BaselineRevision)
+			b, err := render.Baseline()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, dir := range []string{defaults, current} {
+				if err := b.WriteDir(dir); err != nil {
+					t.Fatal(err)
+				}
+				p := filepath.Join(dir, "syedge.conf")
+				original, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, append(original, []byte("# custom-root package rewrite\n")...), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(filepath.Join("releases", render.BaselineRevision), filepath.Join(conf, "current")); err != nil {
+				t.Fatal(err)
+			}
+			site := filepath.Join(current, "conf.d", "www.conf")
+			if custom {
+				if err := os.MkdirAll(filepath.Dir(site), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(site, []byte("# local site\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := repairPackageBaseline(conf, defaults); err != nil {
+				t.Fatal(err)
+			}
+			ap := &apply.Applier{C: apply.Config{ConfRoot: conf}}
+			_, err = localConfigCheck(ap, false, t.TempDir(), time.Now())
+			if custom {
+				if err == nil || !strings.Contains(err.Error(), "-replace-local-config") {
+					t.Fatalf("modified config must still be detected: %v", err)
+				}
+				if got, err := os.ReadFile(site); err != nil || string(got) != "# local site\n" {
+					t.Fatalf("local site lost: %q %v", got, err)
+				}
+			} else if err != nil {
+				t.Fatalf("pristine package baseline treated as modified: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepairPackageBaselineLeavesNonPackageManifestAlone(t *testing.T) {
+	root := t.TempDir()
+	defaults := filepath.Join(root, "defaults")
+	conf := filepath.Join(root, "conf")
+	current := filepath.Join(conf, "releases", render.BaselineRevision)
+	b, err := render.Baseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{defaults, current} {
+		if err := b.WriteDir(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("releases", render.BaselineRevision), filepath.Join(conf, "current")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(current, render.ManifestName)
+	want := []byte("administrator-managed manifest\n")
+	if err := os.WriteFile(manifest, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repairPackageBaseline(conf, defaults); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(manifest); err != nil || string(got) != string(want) {
+		t.Fatalf("non-package manifest changed: %q %v", got, err)
+	}
+}
+
+func TestRepairPackageBaselineRejectsSymlinkedReleases(t *testing.T) {
+	root := t.TempDir()
+	defaults := filepath.Join(root, "defaults")
+	conf := filepath.Join(root, "conf")
+	outside := filepath.Join(root, "outside")
+	b, err := render.Baseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteDir(defaults); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteDir(filepath.Join(outside, render.BaselineRevision)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(conf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(conf, "releases")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("releases", render.BaselineRevision), filepath.Join(conf, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repairPackageBaseline(conf, defaults); err == nil {
+		t.Fatal("symlinked release directory was accepted")
+	}
+}

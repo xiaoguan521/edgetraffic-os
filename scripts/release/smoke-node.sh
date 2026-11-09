@@ -23,6 +23,7 @@ else
 fi
 PREFIX_ARGS=()
 [[ -z "${SMOKE_PREFIX:-}" ]] || PREFIX_ARGS=(--prefix "$SMOKE_PREFIX")
+[[ "${SMOKE_ROOT_MASTER:-}" != 1 ]] || PREFIX_ARGS+=(--root-master)
 C=(curl -s -b "$JAR" -c "$JAR" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
 fail=0
 ok()  { echo "ok   $1"; }
@@ -45,6 +46,7 @@ D=$(echo "$W"/syedge-node-*)
 if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
 expect "安装根目录" "$(sudo syedge-instance prefix 2>&1)" "$ROOT"
 if [[ -x "$ROOT/sbin/syedge" && -e "$ROOT/conf/current" ]]; then ok "自定义根目录文件与配置存在"; else bad "自定义根目录文件或配置缺失：$ROOT"; fi
+if [[ -f /etc/logrotate.d/syedge ]]; then ok "日志轮转配置存在"; else bad "日志轮转配置缺失"; fi
 expect "systemd 单元 syedge.service 运行中" "$(systemctl is-active syedge.service)" "active"
 expect "syedge -v" "$(syedge -v 2>&1)" "SyEdge version: SyEdge/"
 expect "master 进程标题" "$(ps -eo args)" "SyEdge: master process"
@@ -54,6 +56,15 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || 
 expect "基线配置：未知域名直接断开" "$code" "000"
 MASTER=$(cat /run/syedge/syedge.pid)
 expect "节点防火墙默认不启用" "$(sudo syedge-firewall status)" "未启用"
+printf 'standalone-static-preserved\n' | sudo tee "$ROOT/html/index.html" >/dev/null
+printf '# smoke-logrotate-policy\n' | sudo tee -a /etc/logrotate.d/syedge >/dev/null
+before=$(sha256sum /usr/bin/syedge-agent)
+if sudo "$D/install.sh" --prefix "${ROOT}-conflict" >/dev/null 2>&1; then
+  bad "冲突根目录被接受"
+else
+  ok "冲突根目录被拒绝"
+fi
+expect "拒绝冲突时已安装程序不变" "$(sha256sum /usr/bin/syedge-agent)" "$before"
 
 echo "== 启动控制台并导入授权"
 "$CONSOLE" -listen 127.0.0.1:18443 -grpc-listen 127.0.0.1:9443 -grpc-hosts 127.0.0.1 \
@@ -67,11 +78,18 @@ INST=$(sed -E 's/.*"installation_id":"([^"]+)".*/\1/' "$W/console/installation.j
   -customer smoke -days 365 > "$W/smoke.lic"
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/smoke.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权有效" "$("${C[@]}" "$B/license" | j "d['state']")" "VALID"
+if [[ "$ROOT" != /opt/syedge ]]; then
+  profile=$(python3 -c 'import json,sys; print(json.dumps({"mode":"system","root":sys.argv[1]}))' "$ROOT")
+  result=$("${C[@]}" -X PUT "$B/node-groups/1/profile" -d "$profile")
+  expect "节点组使用自定义根目录" "$result" "$ROOT"
+fi
 
 echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
 if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
+expect "重复安装保留静态文件" "$(cat "$ROOT/html/index.html")" "standalone-static-preserved"
+expect "重复安装保留轮转策略" "$(cat /etc/logrotate.d/syedge)" "smoke-logrotate-policy"
 online=0
 for _ in $(seq 1 30); do
   online=$("${C[@]}" "$B/nodes" | j "sum(1 for n in d if n['status']=='online')")

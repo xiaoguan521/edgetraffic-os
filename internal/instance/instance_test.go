@@ -536,6 +536,24 @@ func TestNonroot(t *testing.T) {
 	}
 }
 
+func TestNonrootPreservesDefaultLogrotate(t *testing.T) {
+	f := newFake(t)
+	p := f.path("/etc/logrotate.d/syedge")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("/var/log/syedge/*.log {\n    daily\n}\n")
+	if err := os.WriteFile(p, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Nonroot(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(p); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("default logrotate config changed: %q, %v", got, err)
+	}
+}
+
 // 具名实例的 agent 同样是没有终端的后台服务：CentOS 7 的 sudo 默认 requiretty，sudoers 只对该 agent 用户取消，命令仍是 7 行。
 func TestSudoersNoTTY(t *testing.T) {
 	s := Sudoers(layout.System("blue"))
