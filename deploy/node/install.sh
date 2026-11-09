@@ -35,6 +35,7 @@ die() { echo "install: $*" >&2; exit 1; }
 [[ -d "$HERE/rootfs/opt/syedge" ]] || die "请在解压后的发布包目录中运行"
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die "需要 systemd"
 command -v sudo >/dev/null || die "缺少 sudo（apt install sudo / dnf install sudo）"
+command -v runuser >/dev/null || die "缺少 runuser（apt install util-linux / dnf install util-linux）"
 
 missing=$(ldd "$HERE/rootfs/opt/syedge/sbin/syedge" 2>&1 | awk '/not found/{print $1}' || true)
 if [[ -n "$missing" ]]; then
