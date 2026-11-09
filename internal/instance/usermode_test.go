@@ -118,6 +118,9 @@ func TestUserAddNamedWithSystemdAndEnroll(t *testing.T) {
 	if !strings.Contains(string(unit), "ExecStart="+uroot+"/sbin/syedge -e "+uroot+"/instances/blue/logs/error.log -c "+uroot+"/instances/blue/conf/current/syedge.conf") {
 		t.Fatalf("unit:\n%s", unit)
 	}
+	if !strings.Contains(string(unit), "KillMode=mixed\nKillSignal=SIGQUIT\n") {
+		t.Fatalf("unit does not stop connections gracefully:\n%s", unit)
+	}
 	ag, _ := os.ReadFile(f.path("/home/ops/.config/systemd/user/syedge-agent-blue.service"))
 	if !strings.Contains(string(ag), "ExecStart="+uroot+"/bin/syedge-agent run -root "+uroot+" -instance blue") || strings.Contains(string(ag), "User=") {
 		t.Fatalf("agent unit:\n%s", ag)

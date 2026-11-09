@@ -1,5 +1,15 @@
 set -e
+# bootstrap 的配置需要供 syedge 组读取；敏感文件使用显式权限。
+umask 022
 r=$(syedge_root)
+if ! runuser -u syedge-agent -- test -x "$r"; then
+  echo "syedge-agent: 无法访问安装根目录 $r，请检查父目录权限" >&2
+  exit 1
+fi
+if [ -e /etc/syedge/prefix ] && ! runuser -u syedge-agent -- test -r /etc/syedge/prefix; then
+  echo "syedge-agent: 无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
+  exit 1
+fi
 if [ "$r" = /opt/syedge ]; then
   state=/var/lib/syedge-agent
 else
@@ -16,9 +26,8 @@ if command -v visudo >/dev/null 2>&1; then
   fi
 fi
 if [ -f "$r/conf/.syedge-custom-baseline" ]; then
-  rm -f "$r/conf/current"
-  rm -rf "$r/conf/releases/r000000"
-  /usr/bin/syedge-agent bootstrap
+  # 只修复软件包基线清单；独立模式的站点与管理员修改必须保留并继续被检测。
+  /usr/bin/syedge-agent repair-package-baseline
   rm -f "$r/conf/.syedge-custom-baseline"
 elif [ ! -e "$r/conf/current" ]; then
   /usr/bin/syedge-agent bootstrap

@@ -19,6 +19,10 @@ contents:
   - src: /opt/syedge/sbin/syedge
     dst: /usr/sbin/syedge
     type: symlink
+  # 与数据面包一同升级：校验根目录并生成独立安装所需的 systemd 覆盖单元。
+  - src: ${STAGE}/syedge/syedge-instance
+    dst: /usr/libexec/syedge/syedge-instance
+    file_info: { mode: 0755, owner: root, group: root }
   - src: ${STAGE}/syedge/syedge.service
     dst: /usr/lib/systemd/system/syedge.service
   - src: ${STAGE}/syedge/syedge@.service

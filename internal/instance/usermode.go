@@ -189,6 +189,8 @@ ExecStartPre=%[5]s -t -q -e %[6]s -c %[7]s
 ExecStart=%[5]s -e %[6]s -c %[7]s
 ExecReload=%[5]s -e %[6]s -c %[7]s -s reload
 ExecStop=%[5]s -e %[6]s -c %[7]s -s quit
+KillMode=mixed
+KillSignal=SIGQUIT
 
 [Install]
 WantedBy=default.target

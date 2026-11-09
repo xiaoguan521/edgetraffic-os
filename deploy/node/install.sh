@@ -13,6 +13,8 @@
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
+# 配置需要供 syedge 组读取；密钥等敏感文件仍按各自显式权限创建。
+umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 while [[ $# -gt 0 ]]; do
@@ -43,6 +45,16 @@ if [[ -n "$missing" ]]; then
   exit 1
 fi
 
+# 在覆盖任何已安装程序前校验根目录及重复安装参数。
+if [[ -n "$PREFIX_ARG" ]]; then
+  "$HERE/rootfs/usr/sbin/syedge-instance" prefix "$PREFIX_ARG" >/dev/null
+fi
+R="$("$HERE/rootfs/usr/sbin/syedge-instance" prefix)"
+[[ -n "$R" && "$R" != "/" ]] || die "安装根目录无效"
+for d in "$R" "$R/sbin" "$R/share" "$R/html" "$R/modules" "$R/versions"; do
+  [[ ! -L "$d" ]] || die "安装目录不能是符号链接：$d"
+done
+
 echo "== 创建用户"
 getent group syedge >/dev/null || groupadd -r syedge
 id syedge >/dev/null 2>&1 || useradd -r -g syedge -d /nonexistent -s /usr/sbin/nologin syedge
@@ -50,6 +62,16 @@ id syedge-agent >/dev/null 2>&1 || useradd -r -g syedge -d /nonexistent -s /usr/
 # 可选节点防火墙的专用用户：开机加载与自动刷新规则时只带 CAP_NET_ADMIN（运行时不使用 root）
 getent group syedge-firewall >/dev/null || groupadd -r syedge-firewall
 id syedge-firewall >/dev/null 2>&1 || useradd -r -g syedge-firewall -d /nonexistent -s /usr/sbin/nologin syedge-firewall
+
+if [[ ! -d "$R" ]]; then
+  install -d -o root -g root -m 0755 "$R"
+fi
+for runtime_user in syedge syedge-agent; do
+  runuser -u "$runtime_user" -- test -x "$R" || die "$runtime_user 无法访问安装根目录 $R，请检查父目录权限"
+  if [[ -e /etc/syedge/prefix ]]; then
+    runuser -u "$runtime_user" -- test -r /etc/syedge/prefix || die "$runtime_user 无法读取 /etc/syedge/prefix，请检查父目录权限"
+  fi
+done
 
 echo "== 安装文件"
 # 可执行文件先写临时文件再 rename：正在运行的程序不能原地覆盖（Text file busy），
@@ -60,11 +82,6 @@ put "$HERE/rootfs/usr/libexec/syedge/syedge-wrapper" /usr/libexec/syedge/syedge-
 put "$HERE/rootfs/usr/sbin/syedge-firewall" /usr/sbin/syedge-firewall
 put "$HERE/rootfs/usr/sbin/syedge-instance" /usr/sbin/syedge-instance
 
-if [[ -n "$PREFIX_ARG" ]]; then
-  /usr/sbin/syedge-instance prefix "$PREFIX_ARG" >/dev/null
-fi
-R="$(/usr/sbin/syedge-instance prefix)"
-[[ "$R" != "/" ]] || die "安装根目录不能是 /"
 if [[ "$R" == "/opt/syedge" ]]; then
   LOG_DIR=/var/log/syedge
   CACHE_DIR=/var/cache/syedge
@@ -75,15 +92,29 @@ else
   STATE_DIR="$R/agent"
 fi
 
-mkdir -p "$R"
 # 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
 (cd "$HERE/rootfs/opt/syedge" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
+  if [[ "$f" == ./html/* && ( -e "$R/$f" || -L "$R/$f" ) ]]; then
+    continue # 独立站点静态内容由管理员维护，重复安装不能覆盖
+  fi
   install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syedge/$f" "$R/$f"
 done
+if [[ "$R" != "/opt/syedge" && -f "$R/share/defaults/standalone-example.conf" ]]; then
+  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+fi
 mkdir -p "$R/conf/releases"
-put "$HERE/rootfs/opt/syedge/sbin/syedge" "$R/sbin/syedge"
+# sbin 目录运行时由 syedge 拥有；在 root 所有的安装根目录中创建临时文件，
+# 避免可预测临时文件被替换，同时以 rename 更新正在运行的二进制。
+mkdir -p "$R/sbin"
+dp_tmp=$(mktemp "$R/.syedge-bin.XXXXXX")
+if ! install -o root -g root -m 0755 "$HERE/rootfs/opt/syedge/sbin/syedge" "$dp_tmp" || ! mv -f "$dp_tmp" "$R/sbin/syedge"; then
+  rm -f "$dp_tmp"
+  die "安装数据面二进制失败"
+fi
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service "$HERE"/rootfs/etc/systemd/system/*.path /etc/systemd/system/
-install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syedge" /etc/logrotate.d/syedge
+if [[ ! -e /etc/logrotate.d/syedge ]]; then
+  install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syedge" /etc/logrotate.d/syedge
+fi
 install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syedge.conf" /etc/tmpfiles.d/syedge.conf
 sudoers_new=/etc/sudoers.d/syedge-agent.new
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syedge-agent" "$sudoers_new"
@@ -95,7 +126,8 @@ if ! visudo -cf "$sudoers_new" >/dev/null 2>&1; then
 fi
 mv /etc/sudoers.d/syedge-agent.new /etc/sudoers.d/syedge-agent
 ln -sfn "$R/sbin/syedge" /usr/sbin/syedge
-chown -R root:root "$R/sbin" "$R/share" "$R/html"
+chown -R root:root "$R/sbin" "$R/share"
+chown root:root "$R/html"
 
 # syedge -t 会检查 pid 文件可写，/run/syedge 平时由 syedge.service 的 RuntimeDirectory 创建
 mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR" /run/syedge-agent /run/syedge

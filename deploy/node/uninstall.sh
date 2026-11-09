@@ -20,13 +20,26 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "uninstall: 请以 root 运行" >&2; exit 1; }
 
-if [[ -x /usr/sbin/syedge-instance ]]; then
-  R="$(/usr/sbin/syedge-instance prefix 2>/dev/null)" || { echo "uninstall: 无法读取 /etc/syedge/prefix，拒绝继续" >&2; exit 1; }
-elif [[ -f /etc/syedge/prefix ]]; then
-  R="$(sed -n '1p' /etc/syedge/prefix)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [[ -x "$HERE/rootfs/usr/sbin/syedge-instance" ]]; then
+  instance_tool="$HERE/rootfs/usr/sbin/syedge-instance"
+elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
+  instance_tool=/usr/libexec/syedge/syedge-instance
+elif [[ -x /usr/sbin/syedge-instance ]]; then
+  instance_tool=/usr/sbin/syedge-instance
+else
+  instance_tool=""
+fi
+if [[ -n "$instance_tool" ]]; then
+  R="$("$instance_tool" prefix)" || { echo "uninstall: 无法校验 /etc/syedge/prefix，拒绝继续" >&2; exit 1; }
+elif [[ -e /etc/syedge/prefix || -L /etc/syedge/prefix ]]; then
+  echo "uninstall: 缺少根目录校验工具，拒绝继续" >&2
+  exit 1
 else
   R=/opt/syedge
 fi
+[[ -n "$R" && "$R" != / ]] || { echo "uninstall: 安装根目录无效" >&2; exit 1; }
+[[ ! -L "$R" ]] || { echo "uninstall: 安装根目录不能是符号链接" >&2; exit 1; }
 if [[ "$R" == "/opt/syedge" ]]; then
   LOG_DIR=/var/log/syedge
   CACHE_DIR=/var/cache/syedge
@@ -63,7 +76,11 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
 fi
 
 if [[ -f /run/syedge/syedge.pid && -x "$R/sbin/syedge" ]]; then
-  "$R/sbin/syedge" -s quit >/dev/null 2>&1 || true
+  if [[ "$R" == /opt/syedge ]]; then
+    "$R/sbin/syedge" -s quit >/dev/null 2>&1 || true
+  else
+    "$R/sbin/syedge" -e "$R/logs/error.log" -c "$R/conf/current/syedge.conf" -s quit >/dev/null 2>&1 || true
+  fi
 fi
 
 rm -f /usr/sbin/syedge /usr/bin/syedge-agent /usr/libexec/syedge/syedge-wrapper /usr/sbin/syedge-firewall

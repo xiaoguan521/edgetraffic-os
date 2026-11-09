@@ -122,6 +122,46 @@ func TestNonrootRootMasterForced(t *testing.T) {
 	}
 }
 
+func TestRootMasterCustomPrefixUpdatesAgentAndFirewallUnits(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("prefix marker must be owned by root")
+	}
+	f := newFake(t)
+	if err := f.Prefix("/srv/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.path("/srv/syedge/conf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vendorUnits(t, f)
+	for _, unit := range []string{"syedge-agent.service", "syedge-agent@.service", "syedge-firewall-refresh.path"} {
+		b, err := os.ReadFile("../../dataplane/packaging/systemd/" + unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f.path("/usr/lib/systemd/system/"+unit), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.RootMaster = true
+	for i := 0; i < 2; i++ {
+		if err := f.Nonroot(); err != nil {
+			t.Fatal(err)
+		}
+		for unit, want := range map[string]string{
+			"syedge.service":               "ExecStart=/srv/syedge/sbin/syedge",
+			"syedge-agent.service":         "ReadWritePaths=/srv/syedge/conf /srv/syedge/agent",
+			"syedge-agent@.service":        "ConditionPathExists=/srv/syedge/instances/%i/instance.json",
+			"syedge-firewall-refresh.path": "PathChanged=/srv/syedge/conf",
+		} {
+			b, err := os.ReadFile(f.path("/etc/systemd/system/" + unit))
+			if err != nil || !strings.Contains(string(b), want) {
+				t.Errorf("pass %d: %s missing %q: %q, %v", i, unit, want, b, err)
+			}
+		}
+	}
+}
+
 // vendorUnits 把仓库中的单元文件放到模拟根的软件包目录。
 func vendorUnits(t *testing.T, f *fakeEnv) {
 	t.Helper()

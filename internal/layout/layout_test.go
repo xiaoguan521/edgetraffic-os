@@ -77,6 +77,22 @@ func TestSystemCustomRootPaths(t *testing.T) {
 	}
 }
 
+func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
+	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home/ops/edge", "/root/edge", "/opt/syedge/share/nested"} {
+		if err := ValidateSystemRoot(root); err == nil {
+			t.Errorf("unsafe system root %q accepted", root)
+		}
+	}
+	for _, root := range []string{"/opt/syedge", "/opt/syedge-custom", "/srv/syedge", "/data/edge", "/usr/local/syedge"} {
+		if err := ValidateSystemRoot(root); err != nil {
+			t.Errorf("dedicated system root %q rejected: %v", root, err)
+		}
+	}
+	if _, err := User("/home/ops/edge", ""); err != nil {
+		t.Fatalf("user-mode home directory rejected: %v", err)
+	}
+}
+
 func TestSystemRootMarkerMissingAndInvalid(t *testing.T) {
 	fsroot := t.TempDir()
 	if got, err := LoadSystemRootAt(fsroot); err != nil || got != DefaultSystemRoot() {

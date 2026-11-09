@@ -99,6 +99,10 @@ func main() {
 			fatal(log, "bootstrap", err)
 		}
 		log.Info("bootstrap done", "current", (&apply.Applier{C: cfg.Apply}).Current())
+	case "repair-package-baseline":
+		if err := repairPackageBaseline(cfg.Apply.ConfRoot, filepath.Join(lay.Root(), "share", "defaults", "baseline")); err != nil {
+			fatal(log, cmd, err)
+		}
 	case "enroll":
 		if cfg.Server == "" || *token == "" || *caFP == "" {
 			fatal(log, "enroll", fmt.Errorf("-server, -token and -ca-fingerprint are required"))

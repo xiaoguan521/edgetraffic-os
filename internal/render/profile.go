@@ -106,7 +106,7 @@ func (p Profile) Layout() (layout.Layout, error) {
 		return layout.Layout{}, errors.New("invalid instance name")
 	}
 	if p.Root != "" {
-		if err := layout.ValidateInstallRoot(p.Root); err != nil {
+		if err := layout.ValidateSystemRoot(p.Root); err != nil {
 			return layout.Layout{}, err
 		}
 	}

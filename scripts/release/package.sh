@@ -230,6 +230,7 @@ case "${1:-}" in
     mkdir -p "$st/syedge" "$st/agent" "$st/console" "$st/scripts"
     tar -C "$st/syedge" -xzf "$syedge_tgz"
     [[ -x "$st/syedge/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    gobuild linux "$arch" "$st/syedge" ./cmd/syedge-instance
     go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$st/syedge/opt/$B"   # 数据面软件包可独立使用
     cp dataplane/packaging/systemd/syedge.service "$st/syedge/syedge.service"
     cp dataplane/packaging/systemd/syedge@.service "$st/syedge/syedge@.service"

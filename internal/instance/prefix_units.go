@@ -96,11 +96,25 @@ func (e Env) writePrefixUnits() error {
 }
 
 func (e Env) writeLogrotate(root string) error {
-	body := root + "/logs/*.log " + root + "/logs/*.json " + root + "/instances/*/logs/*.log " + root + "/instances/*/logs/*.json {\n" +
+	logrotate := e.path("/etc/logrotate.d/" + brand.ID())
+	if existing, err := os.ReadFile(logrotate); err == nil {
+		// 安装时生成一次；管理员调整轮转周期或保留份数后，重复安装不得覆盖。
+		if strings.HasPrefix(string(existing), prefixUnitHeader()) || strings.Contains(string(existing), root+"/logs/") {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	body := prefixUnitHeader() + "：自定义根目录日志轮转\n" +
+		root + "/logs/*.log " + root + "/logs/*.json " + root + "/instances/*/logs/*.log " + root + "/instances/*/logs/*.json {\n" +
 		"    daily\n    su " + layout.WorkerUser() + " " + layout.Group() + "\n    rotate 14\n    missingok\n    notifempty\n    compress\n    delaycompress\n    sharedscripts\n    postrotate\n" +
-		"        /usr/sbin/" + brand.ID() + "-instance reopen-all >/dev/null 2>&1 || true\n" +
+		"        if [ -x /usr/sbin/" + brand.ID() + "-instance ]; then\n" +
+		"            /usr/sbin/" + brand.ID() + "-instance reopen-all >/dev/null 2>&1 || true\n" +
+		"        elif [ -x /usr/libexec/" + brand.ID() + "/" + brand.ID() + "-instance ]; then\n" +
+		"            /usr/libexec/" + brand.ID() + "/" + brand.ID() + "-instance reopen-all >/dev/null 2>&1 || true\n" +
+		"        fi\n" +
 		"    endscript\n}\n"
-	return writeFile(e.path("/etc/logrotate.d/"+brand.ID()), []byte(body), 0o644)
+	return writeFile(logrotate, []byte(body), 0o644)
 }
 
 // removePrefixUnits 恢复默认根目录时删除由 prefixUnit 生成的 systemd 覆盖。
@@ -122,5 +136,8 @@ func (e Env) removePrefixUnits() {
 			_ = os.Remove(p)
 		}
 	}
-	_ = os.Remove(e.path("/etc/logrotate.d/" + brand.ID()))
+	logrotate := e.path("/etc/logrotate.d/" + brand.ID())
+	if b, err := os.ReadFile(logrotate); err == nil && strings.HasPrefix(string(b), prefixUnitHeader()) {
+		_ = os.Remove(logrotate)
+	}
 }

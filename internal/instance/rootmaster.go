@@ -173,13 +173,15 @@ func (e Env) rootMasterSetup(insts []Info) error {
 	}
 	_ = os.Chown(marker, 0, 0)
 	def := e.lay("")
-	if err := e.writeCompatUnits(); err != nil {
-		return err
-	}
+	// 兼容模式同样需要 agent 与防火墙 path 单元使用自定义根目录；
+	// 随后再为数据面与防火墙服务叠加 root-master 能力配置。
 	if _, custom := e.customSystemRoot(); custom {
-		if err := e.writeLogrotate(e.lay("").Root()); err != nil {
+		if err := e.writePrefixUnits(); err != nil {
 			return err
 		}
+	}
+	if err := e.writeCompatUnits(); err != nil {
+		return err
 	}
 	// 运行时目录、日志与版本库仍交给数据面用户（worker 写日志、缓存；与默认模式一致，切回默认模式时无需再改）
 	for _, in := range insts {

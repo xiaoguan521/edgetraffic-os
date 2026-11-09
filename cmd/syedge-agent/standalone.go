@@ -2,7 +2,11 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,7 +16,100 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/apply"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
+
+// repairPackageBaseline 更新自定义安装目录下软件包初始配置的清单，保留全部
+// 本机文件。清单只按软件包默认文件计算，因此独立模式的手工改动仍会被检测。
+func repairPackageBaseline(confRoot, defaults string) error {
+	fi, err := os.Lstat(confRoot)
+	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("invalid configuration directory %s", confRoot)
+	}
+	conf, err := os.OpenRoot(confRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conf.Close() }()
+	current, err := conf.Readlink("current")
+	if err != nil || current != filepath.Join("releases", render.BaselineRevision) {
+		return nil // current 已由管理员或控制台切换，不修改任何版本
+	}
+	rel := filepath.Join("releases", render.BaselineRevision)
+	for _, dir := range []string{"releases", rel} {
+		fi, err := conf.Lstat(dir)
+		if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("invalid package baseline directory %s", dir)
+		}
+	}
+	revision, err := conf.OpenRoot(rel)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = revision.Close() }()
+	fi, err = revision.Lstat(render.ManifestName)
+	if err != nil || !fi.Mode().IsRegular() {
+		return nil // 不替换已被删除或手工改为非普通文件的清单
+	}
+	old, err := revision.ReadFile(render.ManifestName)
+	if err != nil {
+		return err
+	}
+	packaged, err := os.ReadFile(filepath.Join(defaults, render.ManifestName))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(old, packaged) {
+		return nil // 不是原始软件包清单，保留用户或其他版本的清单
+	}
+	var packageManifest render.Manifest
+	if err := json.Unmarshal(packaged, &packageManifest); err != nil || packageManifest.Revision != render.BaselineRevision || len(packageManifest.Files) == 0 {
+		return fmt.Errorf("invalid package baseline manifest")
+	}
+	source, err := os.OpenRoot(defaults)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = source.Close() }()
+	files := map[string][]byte{}
+	for name := range packageManifest.Files {
+		if !fs.ValidPath(name) || name == "." || name == render.ManifestName {
+			return fmt.Errorf("invalid package baseline file %s", name)
+		}
+		fi, err := source.Lstat(name)
+		if err != nil || !fi.Mode().IsRegular() {
+			return fmt.Errorf("invalid package baseline file %s", name)
+		}
+		b, err := source.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		files[name] = b
+	}
+	data := render.Repack(render.BaselineRevision, files).Files[render.ManifestName]
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmpName := ".manifest-" + hex.EncodeToString(nonce[:])
+	tmp, err := revision.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = revision.Remove(tmpName) }()
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return revision.Rename(tmpName, render.ManifestName)
+}
 
 // localConfigCheck 在首次注册前检查本机是否有独立模式下的手工配置（规格书 12.7：受管节点上没有合法的手工改动）。
 //

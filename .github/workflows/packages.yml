@@ -78,7 +78,36 @@ jobs:
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           export PATH="$(go env GOPATH)/bin:$PATH"
           scripts/release/package.sh pkg ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
+      - name: download v0.4.2 packages for upgrade regression
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ '${{ matrix.arch }}' == amd64 ]]; then rpm_arch=x86_64; else rpm_arch=aarch64; fi
+          mkdir -p "$RUNNER_TEMP/syedge-v0.4.2"
+          gh release download v0.4.2 -R "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/syedge-v0.4.2" \
+            -p "syedge-0.4.2-1.$rpm_arch.rpm" -p "syedge-agent-0.4.2-1.$rpm_arch.rpm" \
+            -p 'syedge_0.4.2_${{ matrix.arch }}.deb' -p 'syedge-agent_0.4.2_${{ matrix.arch }}.deb' -p SHA256SUMS
+          (cd "$RUNNER_TEMP/syedge-v0.4.2" && sha256sum -c SHA256SUMS --ignore-missing)
       - name: install smoke (parallel; PR subset unless dispatched with full)
         env:
           SMOKE_SET: ${{ inputs.smoke_set || 'pr' }}
+          SMOKE_PREVIOUS_DIR: ${{ runner.temp }}/syedge-v0.4.2
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
+      - name: node install, enroll and publish with custom prefix and systemd
+        env:
+          SMOKE_PREFIX: /srv/syedge-smoke
+          SMOKE_UMASK: '077'
+          SMOKE_ROOT_MASTER: ${{ matrix.arch == 'arm64' && '1' || '' }}
+        run: |
+          scripts/release/package.sh node ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
+          go build -mod=vendor -o "$RUNNER_TEMP/lic" ./cmd/syedge-license-server
+          "$RUNNER_TEMP/lic" keygen -kid etos-ci-ephemeral -out "$RUNNER_TEMP/keys" > "$RUNNER_TEMP/keygen.txt"
+          pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' "$RUNNER_TEMP/keygen.txt" | tail -1 | tr -d '"')
+          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o "$RUNNER_TEMP/smoke-console" ./cmd/syedge-console
+          mkdir -p "$RUNNER_TEMP/smoke-pkg"
+          tar -C "$RUNNER_TEMP/smoke-pkg" -xzf "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz"
+          CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o "$RUNNER_TEMP/smoke-pkg/syedge-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syedge-agent" ./cmd/syedge-agent
+          tar -C "$RUNNER_TEMP/smoke-pkg" -czf "$RUNNER_TEMP/smoke-node.tar.gz" .
+          LIC_TOOL="$RUNNER_TEMP/lic" LIC_KEY="$RUNNER_TEMP/keys/etos-ci-ephemeral.key" LIC_KID=etos-ci-ephemeral \
+            scripts/release/smoke-node.sh "$RUNNER_TEMP/smoke-node.tar.gz" "$RUNNER_TEMP/smoke-console"
