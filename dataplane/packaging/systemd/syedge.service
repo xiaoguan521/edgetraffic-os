@@ -20,6 +20,9 @@ ExecStartPre=/opt/syedge/sbin/syedge -t -q
 ExecStart=/opt/syedge/sbin/syedge
 ExecReload=/opt/syedge/sbin/syedge -s reload
 ExecStop=/opt/syedge/sbin/syedge -s quit
+# ExecStop 发出 QUIT 后立即返回；systemd 后续也必须让 master 优雅停止，而非向所有 worker 发送 TERM。
+KillMode=mixed
+KillSignal=SIGQUIT
 LimitNOFILE=65535
 PrivateTmp=true
 ProtectHome=true

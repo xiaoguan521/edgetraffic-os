@@ -707,7 +707,15 @@ syedge -v
 syedge -V
 ```
 
-线上配置变更优先使用 `reload`，不要用 `restart` 代替 reload。`restart` 会停止并重新启动服务，可能中断现有连接。
+线上配置变更优先使用 `reload`，不要用 `restart` 代替 reload。`restart` 会停止并重新启动服务，可能中断现有连接。`systemctl stop` 会等待现有连接完成，但等待时间受 systemd 的 `TimeoutStopSec` 限制；有长连接的环境可按需配置服务覆盖文件。
+
+升级前已生成的 user 模式 systemd 单元不会随二进制自动改写。要让这些现有单元也优雅停止，可对每个数据面单元执行 `systemctl --user edit syedge.service`（具名实例替换为 `syedge-<实例名>.service`），添加：
+
+```ini
+[Service]
+KillMode=mixed
+KillSignal=SIGQUIT
+```
 
 ### 8.7 查看日志
 

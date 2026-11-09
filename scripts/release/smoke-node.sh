@@ -136,6 +136,40 @@ expect "站点返回内容" "$(curl -s --max-time 3 -H 'Host: smoke.local' http:
 expect "Server 头为 SyEdge" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: SyEdge"
 expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /run/syedge/syedge.pid)" "$MASTER"
 
+echo "== systemd 优雅停止时保留正在传输的连接"
+printf 'server { listen 127.0.0.1:18081; location / { root %s/html; limit_rate 2k; } }\n' "$ROOT" |
+  sudo tee "$ROOT/conf/current/conf.d/graceful-stop.conf" >/dev/null
+sudo dd if=/dev/zero of="$ROOT/html/graceful-stop.bin" bs=1024 count=16 status=none
+if out=$(sudo systemctl reload syedge.service 2>&1); then
+  # reload 是异步的；先等待新监听端口就绪，避免把启动竞争误判为断连。
+  for _ in $(seq 1 100); do
+    if curl -fsSI --max-time 1 http://127.0.0.1:18081/graceful-stop.bin >/dev/null 2>&1; then break; fi
+    sleep 0.1
+  done
+  curl -fsS --max-time 30 -o "$W/graceful-response" http://127.0.0.1:18081/graceful-stop.bin &
+  slow_pid=$!
+  started=0
+  for _ in $(seq 1 100); do
+    if [[ -s "$W/graceful-response" ]]; then started=1; break; fi
+    kill -0 "$slow_pid" 2>/dev/null || break
+    sleep 0.05
+  done
+  if [[ "$started" == 1 ]]; then
+    if ! sudo systemctl stop syedge.service; then bad "systemd 停止失败"; fi
+    if wait "$slow_pid" && [[ $(wc -c < "$W/graceful-response") -eq 16384 ]]; then
+      ok "停止期间慢连接完整传输"
+    else
+      bad "停止期间慢连接中断"
+    fi
+  else
+    bad "优雅停止测试的慢连接未启动"
+    kill "$slow_pid" 2>/dev/null || true
+    wait "$slow_pid" 2>/dev/null || true
+  fi
+else
+  bad "优雅停止测试无法加载配置：$out"
+fi
+
 if [[ $fail -ne 0 ]]; then
   diag
   tail -15 "$W/console.log" | sed 's/^/::warning title=console::/'
