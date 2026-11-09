@@ -25,6 +25,7 @@ sudo install -m 0755 "$W/shared/opt/syedge/sbin/syedge" "$ROOT/sbin/syedge"
 sudo install -m 0755 "$W/independent/opt/syedge/sbin/syedge" "$ROOT/instances/green/sbin/syedge"
 printf '{"instance":"blue","mode":"system","root":"%s","http_port":18080,"https_port":18443,"status_port":8082}\n' "$ROOT" | sudo tee "$ROOT/instances/blue/instance.json" >/dev/null
 printf '{"instance":"green","mode":"system","root":"%s","resource_mode":"independent","http_port":28080,"https_port":28443,"status_port":8088}\n' "$ROOT" | sudo tee "$ROOT/instances/green/instance.json" >/dev/null
+sudo chmod 0644 "$ROOT/instances/blue/instance.json" "$ROOT/instances/green/instance.json"
 mkdir "$W/lua"
 tar -C "$W/lua" -xzf "$DIST"/syedge-lua-*-"$ARCH".tar.gz
 if out=$(sudo bash "$W/lua/install.sh" </dev/null 2>&1); then echo '多个实例时没有要求选择' >&2; exit 1; fi

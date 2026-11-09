@@ -27,12 +27,12 @@ out=$(sudo bash "$W/lua/install.sh" 2>&1) || { echo "$out" >&2; exit 1; }
 echo "$out"
 [[ "$out" == *"安装根目录：$ROOT"* && "$out" == *"已安装（$BASE）"* ]] || { echo '安装输出与目标或变体不一致' >&2; exit 1; }
 [[ -L "$ROOT/modules/lua" && ! -e /opt/syedge/modules/lua ]] || { echo '模块链接不在目标目录' >&2; exit 1; }
-sudo mkdir -p "$ROOT/instances/blue/conf/current"
+sudo install -d -m 0755 "$ROOT/instances/blue/conf/current"
 echo "load_module $ROOT/modules/lua/ndk_http_module.so;" | sudo tee "$ROOT/instances/blue/conf/current/syedge.conf" >/dev/null
 if out=$(sudo bash "$W/lua/uninstall.sh" 2>&1); then
   echo '具名实例正在使用 Lua，但卸载未被拒绝' >&2; exit 1
 fi
-[[ "$out" == *'当前配置正在使用 Lua 规则'* ]]
+[[ "$out" == *'当前配置正在使用 Lua 规则'* ]] || { echo "卸载失败原因不符合预期：$out" >&2; exit 1; }
 sudo rm "$ROOT/instances/blue/conf/current/syedge.conf"
 sudo bash "$W/lua/uninstall.sh"
 [[ ! -e "$ROOT/modules/lua" ]]
