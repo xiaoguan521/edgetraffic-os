@@ -78,18 +78,42 @@ func TestSystemCustomRootPaths(t *testing.T) {
 }
 
 func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
-	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home/ops/edge", "/root/edge", "/opt/syedge/share/nested"} {
+	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home", "/root/edge", "/opt/syedge/share/nested"} {
 		if err := ValidateSystemRoot(root); err == nil {
 			t.Errorf("unsafe system root %q accepted", root)
 		}
 	}
-	for _, root := range []string{"/opt/syedge", "/opt/syedge-custom", "/srv/syedge", "/data/edge", "/usr/local/syedge"} {
+	for _, root := range []string{"/opt/syedge", "/opt/syedge-custom", "/srv/syedge", "/data/edge", "/usr/local/syedge", "/home/atwasoft/node", "/home/ops/edge"} {
 		if err := ValidateSystemRoot(root); err != nil {
 			t.Errorf("dedicated system root %q rejected: %v", root, err)
 		}
 	}
 	if _, err := User("/home/ops/edge", ""); err != nil {
 		t.Fatalf("user-mode home directory rejected: %v", err)
+	}
+}
+
+func TestCheckSystemRootAllowsWorldWritableParents(t *testing.T) {
+	fsroot := t.TempDir()
+	home := filepath.Join(fsroot, "home")
+	if err := os.MkdirAll(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("CheckSystemRootAt rejected 0777 parent /home: %v", err)
+	}
+	target := filepath.Join(fsroot, "home/atwasoft/node")
+	if err := os.MkdirAll(filepath.Dir(target), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp", target); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Fatal("CheckSystemRootAt accepted symlink install root")
 	}
 }
 

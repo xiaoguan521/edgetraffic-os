@@ -64,9 +64,7 @@ id syedge-agent >/dev/null 2>&1 || useradd -r -g syedge -d /nonexistent -s /usr/
 getent group syedge-firewall >/dev/null || groupadd -r syedge-firewall
 id syedge-firewall >/dev/null 2>&1 || useradd -r -g syedge-firewall -d /nonexistent -s /usr/sbin/nologin syedge-firewall
 
-if [[ ! -d "$R" ]]; then
-  install -d -o root -g root -m 0755 "$R"
-fi
+install -d -o root -g root -m 0755 "$R"
 for runtime_user in syedge syedge-agent; do
   runuser -u "$runtime_user" -- test -x "$R" || die "$runtime_user 无法访问安装根目录 $R，请检查父目录权限"
   if [[ -e /etc/syedge/prefix ]]; then

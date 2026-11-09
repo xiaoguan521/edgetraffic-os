@@ -110,7 +110,7 @@ func TestRenderCustomSystemProfile(t *testing.T) {
 }
 
 func TestProfileValidation(t *testing.T) {
-	ok := []Profile{{}, instanceProfile(), {Root: "/data/edge"}, {Mode: "system", Root: "/data/edge"}, {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
+	ok := []Profile{{}, instanceProfile(), {Root: "/data/edge"}, {Mode: "system", Root: "/data/edge"}, {Mode: "system", Root: "/home/atwasoft/node"}, {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
 	for _, p := range ok {
 		if err := p.Validate(); err != nil {
 			t.Errorf("%+v rejected: %v", p, err)
@@ -121,7 +121,7 @@ func TestProfileValidation(t *testing.T) {
 		{Instance: "default"},
 		{Mode: "weird"},
 		{Mode: "system", Root: "/usr"},
-		{Mode: "system", Root: "/home/ops/edge"},
+		{Mode: "system", Root: "/home"},
 		{Mode: "user"},                     // 缺少根目录
 		{Mode: "user", Root: "relative"},   // 根目录必须是绝对路径
 		{Mode: "user", Root: "/data/edge"}, // user 模式不能用 80/443（默认端口）

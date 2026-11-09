@@ -28,6 +28,9 @@ func prefixUnit(src, root string) string {
 		if strings.HasPrefix(t, "StateDirectory=") {
 			continue
 		}
+		if strings.HasPrefix(t, "ProtectHome=") && strings.HasPrefix(root, "/home/") {
+			continue
+		}
 		line := raw
 		for _, r := range []struct{ from, to string }{
 			{"/var/lib/" + brand.Agent() + "-%i", root + "/instances/%i/agent"},

@@ -6,7 +6,7 @@ R=$(syedge_root) || exit 1
 for d in "$R" "$R/sbin" "$R/share" "$R/html" "$R/modules" "$R/versions"; do
   [ ! -L "$d" ] || { echo "syedge: 安装目录不能是符号链接：$d" >&2; exit 1; }
 done
-if [ ! -d "$R" ]; then install -d -o root -g root -m 0755 "$R"; fi
+install -d -o root -g root -m 0755 "$R"
 if ! runuser -u syedge -- test -x "$R"; then
   echo "syedge: 数据面用户无法访问安装根目录 $R，请检查父目录权限" >&2
   exit 1

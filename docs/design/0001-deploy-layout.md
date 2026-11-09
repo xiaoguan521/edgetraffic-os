@@ -91,7 +91,7 @@
 
 root 安装仍默认使用 `/opt/B`。如果发行版的 `/opt` 不适合放置运行数据，可在首次安装前由 root 写入 `/etc/B/prefix`，内容为一行规范化绝对路径 `R`（不能是 `/`）。标记文件必须是 root 所有、0644，`R` 及其已存在的父目录必须是 root 所有且不可被组或其他用户写入；读取方校验失败时拒绝运行。没有标记文件时按默认根目录处理。
 
-`R` 必须是专用目录，不能选 `/usr`、`/opt`、`/var` 等系统共享目录本身，或系统程序、配置目录及其子目录；`/home` 与 `/root` 会被 systemd 的 `ProtectHome` 屏蔽，也不用于 system 模式。受管的 `sbin`、`share`、`html`、`modules`、`versions` 目录不得是符号链接。user 模式仍可安装在用户主目录。
+`R` 必须是专用目录，不能选 `/usr`、`/opt`、`/var`、`/home` 等系统共享目录本身，或系统程序、配置目录及其子目录；`/root` 会被 systemd 的 `ProtectHome` 屏蔽，也不用于 system 模式（`R` 位于 `/home/<子目录>` 时，生成的覆盖单元自动去掉 `ProtectHome`）。受管的 `sbin`、`share`、`html`、`modules`、`versions` 目录不得是符号链接。user 模式仍可安装在用户主目录。
 
 自定义 system 根目录的实例前缀仍为 `P=R` 或 `R/instances/I`；程序、版本库、模块、静态文件、配置、日志、缓存和 agent 状态分别位于 `R/sbin`、`R/versions`、`R/modules`、`R/share`、`R/html`、`P/conf`、`P/logs`、`P/cache`、`P/agent`。运行目录继续使用 `/run/B` 与 `/run/B-I`，agent、wrapper、instance、sudoers 和 systemd 单元仍位于系统固定路径。
 

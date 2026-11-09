@@ -36,6 +36,18 @@ ExecReload=/opt/syedge/sbin/syedge -s reload
 	if again := prefixUnit(got, "/data/syedge"); again != got {
 		t.Error("prefixUnit is not idempotent")
 	}
+
+	homeSrc := src + "ProtectHome=true\n"
+	if dataGot := prefixUnit(homeSrc, "/data/syedge"); !strings.Contains(dataGot, "ProtectHome=true") {
+		t.Error("ProtectHome must be kept for non-/home custom root")
+	}
+	homeGot := prefixUnit(homeSrc, "/home/atwasoft/node")
+	if strings.Contains(homeGot, "ProtectHome=") {
+		t.Errorf("ProtectHome must be removed for /home custom root:\n%s", homeGot)
+	}
+	if again := prefixUnit(homeGot, "/home/atwasoft/node"); again != homeGot {
+		t.Error("prefixUnit for /home custom root is not idempotent")
+	}
 }
 
 func TestCustomLogrotatePreservesLocalChanges(t *testing.T) {

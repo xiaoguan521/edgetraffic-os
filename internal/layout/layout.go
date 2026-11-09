@@ -94,7 +94,7 @@ func ValidateInstallRoot(root string) error {
 }
 
 // ValidateSystemRoot 要求 system 模式使用专用目录，避免安装和卸载时触及系统
-// 文件；ProtectHome 会使 /home、/root 下的服务目录不可见。
+// 文件；ProtectHome 会使 /root 下的服务目录不可见（/home/<子目录> 由 prefixUnit 自动关闭 ProtectHome）。
 func ValidateSystemRoot(root string) error {
 	if err := ValidateInstallRoot(root); err != nil {
 		return err
@@ -102,14 +102,14 @@ func ValidateSystemRoot(root string) error {
 	if root == DefaultSystemRoot() {
 		return nil
 	}
-	for _, dir := range []string{"/usr", "/usr/local", "/opt", "/var", "/var/lib", "/var/cache"} {
+	for _, dir := range []string{"/usr", "/usr/local", "/opt", "/var", "/var/lib", "/var/cache", "/home"} {
 		if root == dir {
 			return fmt.Errorf("system install root %s must be a dedicated directory", root)
 		}
 	}
 	for _, dir := range []string{
 		"/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/etc", "/proc", "/run", "/sys",
-		"/home", "/root", "/var/log", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share",
+		"/root", "/var/log", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share",
 		"/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/usr/local/lib64", "/usr/local/libexec", "/usr/local/share",
 		DefaultSystemRoot(),
 	} {
@@ -367,8 +367,8 @@ func LoadSystemRootAt(fsroot string) (string, error) {
 }
 
 // CheckSystemRoot 校验一个 system 模式安装根目录在本机上的安全属性。
-// 根目录本身可以尚不存在（安装脚本会先写标记再复制文件），但所有已存在的
-// 父目录以及已存在的根目录都必须是 root 所有且不可被组或其他用户写入。
+// 根目录本身可以尚不存在（安装脚本会先写标记再以 root:root 0755 创建目录），
+// 已存在的根目录及父目录都必须是真实目录（非符号链接）。
 func CheckSystemRoot(root string) error { return CheckSystemRootAt("/", root) }
 
 // CheckSystemRootAt 是 CheckSystemRoot 的可注入版本。
@@ -391,8 +391,8 @@ func CheckSystemRootAt(fsroot, root string) error {
 		if err != nil {
 			return fmt.Errorf("check install root %s: %w", root, err)
 		}
-		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm()&0o022 != 0 || !ownedByRoot(fi) {
-			return fmt.Errorf("install root %s or its parents must be root-owned directories not writable by group or others", root)
+		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("install root %s or its parents must be non-symlink directories", root)
 		}
 		if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
 			break
