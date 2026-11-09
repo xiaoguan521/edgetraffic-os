@@ -50,6 +50,49 @@ func newUserFake(t *testing.T, systemd bool) (*fakeEnv, *[]spawned) {
 
 var userPorts = render.Profile{HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}
 
+func TestIndependentUserEnsureAndRemove(t *testing.T) {
+	f, _ := newUserFake(t, false)
+	if err := f.Add(AddOptions{Profile: userPorts}); err != nil {
+		t.Fatal(err)
+	}
+	shared := f.path(uroot + "/sbin/syedge")
+	if err := os.MkdirAll(filepath.Dir(shared), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := render.Profile{Instance: "blue", ResourceMode: "independent", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8083}
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := layout.User(uroot, "blue")
+	l = l.WithIndependentRuntime()
+	f.cmds = nil
+	if err := f.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran(l.Bin() + " -e " + l.ErrorLog()) {
+		t.Fatalf("ensure did not start independent binary: %v", f.cmds)
+	}
+	if err := os.WriteFile(f.path(l.PidFile()), []byte("5150\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.path("/proc/5150"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(l.Versions()+"/9.1.0/sbin/syedge", f.path("/proc/5150/exe")); err != nil {
+		t.Fatal(err)
+	}
+	f.cmds = nil
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran(l.Bin() + " -e " + l.ErrorLog() + " -c " + l.CurrentConf() + " -s quit") {
+		t.Fatalf("independent master not stopped: %v", f.cmds)
+	}
+}
+
 func TestUserAddDefaultWithoutSystemd(t *testing.T) {
 	f, _ := newUserFake(t, false)
 	if err := f.Add(AddOptions{Profile: userPorts}); err != nil {

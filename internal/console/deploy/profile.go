@@ -20,7 +20,7 @@ import (
 
 var (
 	// ErrProfileLocked 表示组内已有节点，实例名、模式、根目录不能再改（节点上的目录已按它们创建）。
-	ErrProfileLocked = errors.New("PROFILE_LOCKED: 节点组内已有节点，实例名、安装模式与安装根目录不能修改；如需迁移请新建节点组")
+	ErrProfileLocked = errors.New("PROFILE_LOCKED: 节点组内已有节点，实例名、安装模式、安装根目录与共享/独立模式不能修改；如需迁移请新建节点组")
 	// ErrHostConflict 表示与同一主机上的其他实例冲突。
 	ErrHostConflict = errors.New("HOST_CONFLICT")
 	// ErrInstanceMismatch 表示 agent 本机的实例档案与节点组档案不一致。
@@ -67,7 +67,7 @@ func (d *Service) SetProfile(groupID uint, p render.Profile, user, ip string) er
 	q := d.q()
 	if n, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(groupID)).Count(); err != nil {
 		return err
-	} else if n > 0 && (old.Instance != p.Instance || old.Mode != p.Mode || old.Root != p.Root) {
+	} else if n > 0 && (old.Instance != p.Instance || old.Mode != p.Mode || old.Root != p.Root || old.Effective().ResourceMode != p.Effective().ResourceMode) {
 		return ErrProfileLocked
 	}
 	streams, err := d.groupStreams(groupID)
@@ -285,5 +285,5 @@ func describeProfile(p render.Profile) string {
 	if e.Root != "" {
 		where = "，安装根目录 " + e.Root
 	}
-	return fmt.Sprintf("%s（%s 模式%s，HTTP %d / HTTPS %d / 状态页 %d）", instanceLabel(e), e.Mode, where, e.HTTPPort, e.HTTPSPort, e.StatusPort)
+	return fmt.Sprintf("%s（%s 模式%s，运行文件 %s，HTTP %d / HTTPS %d / 状态页 %d）", instanceLabel(e), e.Mode, where, e.ResourceMode, e.HTTPPort, e.HTTPSPort, e.StatusPort)
 }

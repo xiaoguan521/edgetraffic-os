@@ -71,14 +71,17 @@
 
 ```
 mkdir syedge-lua && tar -C syedge-lua -xzf syedge-lua-1.30.6-x86_64.tar.gz && cd syedge-lua
-bash install.sh      # 校验与运行中的 syedge 版本一致，自动选择标准版 / 国密版模块，真实 syedge -t 自检
-bash uninstall.sh    # 当前配置仍使用 JWT 规则时拒绝；先在控制台去掉 JWT 规则并发布
+sudo bash install.sh      # 多个实例时交互选择；自动选择标准版 / 国密版模块并用 syedge -t 自检
+sudo bash uninstall.sh    # 当前配置仍使用 Lua 时拒绝；先在控制台去掉规则并发布
+# 非交互环境需指定目标；默认实例名为 default：
+sudo bash install.sh --instance blue
+sudo bash uninstall.sh --instance blue
 ```
 
 安装的具体行为：
-- system 模式自动识别节点安装根目录 `R`（默认为 `/opt/syedge`，也可以是 `/home/atwasoft/node`），无需再次传入路径；模块装到 `R/modules/lua-<版本>/`，通过软链 `R/modules/lua` 加载；
-- 同一 `R` 下的默认实例和所有具名实例共用模块，安装一次即可；是否使用 Lua 由各实例的配置决定，不能只向其中一个实例安装共享模块。卸载前须确保所有实例的当前配置均不再使用它；
-- 免 root 的 user 模式需显式指定根目录，例如 `SYEDGE_ROOT=/home/alice/node bash install.sh`（卸载时同样设置 `SYEDGE_ROOT`）；
+- system 模式自动识别节点安装根目录 `R`（默认为 `/opt/syedge`，也可以是 `/home/atwasoft/node`），无需再次传入路径；只有一个实例时自动选择，多个实例时交互选择；非交互环境必须用 `--instance` 指定；
+- 共享实例的模块位于 `R/modules/lua`，安装或卸载会影响同一根目录的所有共享实例；独立实例 `blue` 的模块位于 `R/instances/blue/modules/lua`，只影响该实例。卸载前检查使用该模块的实例配置；
+- 免 root 的 user 模式需指定根目录，例如 `SYEDGE_ROOT=/home/alice/node bash install.sh --instance blue`（卸载时同样设置 `SYEDGE_ROOT`）；
 - 安装、卸载都不重启、不停止 syedge；
 - agent 在心跳中上报附加包，节点列表显示“Lua”标签。
 

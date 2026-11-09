@@ -12,13 +12,14 @@ import (
 // Profile 是节点组的实例档案（设计 0001 第 3.4 节）：决定节点上的路径与监听端口。
 // 同组节点使用同一档案，因此同组节点拿到的配置包逐字节相同。零值即默认实例，渲染结果与引入档案前完全一致。
 type Profile struct {
-	Instance   string `json:"instance,omitempty"`    // 空串为默认实例
-	Mode       string `json:"mode,omitempty"`        // system（默认）| user
-	Root       string `json:"root,omitempty"`        // 安装根目录；system 为空表示默认 /opt/syedge
-	HTTPPort   int    `json:"http_port,omitempty"`   // 默认 80
-	HTTPSPort  int    `json:"https_port,omitempty"`  // 默认 443
-	StatusPort int    `json:"status_port,omitempty"` // 本机状态页，默认 8081
-	NoFile     int    `json:"nofile,omitempty"`      // worker_rlimit_nofile，默认 65535
+	Instance     string `json:"instance,omitempty"`      // 空串为默认实例
+	Mode         string `json:"mode,omitempty"`          // system（默认）| user
+	Root         string `json:"root,omitempty"`          // 安装根目录；system 为空表示默认 /opt/syedge
+	ResourceMode string `json:"resource_mode,omitempty"` // shared（默认）| independent（具名实例独立）
+	HTTPPort     int    `json:"http_port,omitempty"`     // 默认 80
+	HTTPSPort    int    `json:"https_port,omitempty"`    // 默认 443
+	StatusPort   int    `json:"status_port,omitempty"`   // 本机状态页，默认 8081
+	NoFile       int    `json:"nofile,omitempty"`        // worker_rlimit_nofile，默认 65535
 }
 
 // ErrProfile 表示实例档案不合法。
@@ -65,6 +66,12 @@ func (p Profile) Validate() error {
 	if !layout.ValidInstance(p.Instance) {
 		return fmt.Errorf("%w: instance name %q", ErrProfile, p.Instance)
 	}
+	if p.ResourceMode != "" && p.ResourceMode != "shared" && p.ResourceMode != "independent" {
+		return fmt.Errorf("%w: resource_mode must be shared or independent", ErrProfile)
+	}
+	if p.ResourceMode == "independent" && p.Instance == "" {
+		return fmt.Errorf("%w: independent runtime requires a named instance", ErrProfile)
+	}
 	if p.Root != "" {
 		if err := layout.ValidateInstallRoot(p.Root); err != nil {
 			return fmt.Errorf("%w: %v", ErrProfile, err)
@@ -99,18 +106,34 @@ func (p Profile) Validate() error {
 
 // Layout 返回档案对应的部署布局。
 func (p Profile) Layout() (layout.Layout, error) {
+	if p.ResourceMode != "" && p.ResourceMode != "shared" && p.ResourceMode != "independent" {
+		return layout.Layout{}, errors.New("invalid resource mode")
+	}
+	if p.ResourceMode == "independent" && p.Instance == "" {
+		return layout.Layout{}, errors.New("independent runtime requires a named instance")
+	}
+	var l layout.Layout
 	if p.mode() == layout.ModeUser {
-		return layout.User(p.Root, p.Instance)
-	}
-	if !layout.ValidInstance(p.Instance) {
-		return layout.Layout{}, errors.New("invalid instance name")
-	}
-	if p.Root != "" {
-		if err := layout.ValidateSystemRoot(p.Root); err != nil {
+		var err error
+		l, err = layout.User(p.Root, p.Instance)
+		if err != nil {
 			return layout.Layout{}, err
 		}
+	} else {
+		if !layout.ValidInstance(p.Instance) {
+			return layout.Layout{}, errors.New("invalid instance name")
+		}
+		if p.Root != "" {
+			if err := layout.ValidateSystemRoot(p.Root); err != nil {
+				return layout.Layout{}, err
+			}
+		}
+		l = layout.SystemAt(p.Root, p.Instance)
 	}
-	return layout.SystemAt(p.Root, p.Instance), nil
+	if p.ResourceMode == "independent" {
+		l = l.WithIndependentRuntime()
+	}
+	return l, nil
 }
 
 // lay 返回已校验档案的布局；只在 Validate 通过后调用。
@@ -154,7 +177,7 @@ type profileView struct {
 func (p Profile) view() profileView {
 	l := p.lay()
 	mods := "modules/"
-	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() {
+	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() || l.IndependentRuntime() {
 		mods = l.Modules() + "/"
 	}
 	return profileView{
@@ -192,6 +215,9 @@ func rebase(files map[string][]byte, releases, oldRev, newRev string) map[string
 func (p Profile) Effective() Profile {
 	if p.Mode == "" {
 		p.Mode = "system"
+	}
+	if p.ResourceMode == "" {
+		p.ResourceMode = "shared"
 	}
 	if p.Mode == string(layout.ModeSystem) && p.Root == layout.DefaultSystemRoot() {
 		p.Root = ""

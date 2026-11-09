@@ -82,6 +82,11 @@ func TestSetProfileValidation(t *testing.T) {
 	if err := d.SetProfile(g.ID, moved, "alice", ""); !errors.Is(err, ErrProfileLocked) {
 		t.Fatalf("instance change with nodes: %v", err)
 	}
+	isolate := blue
+	isolate.ResourceMode = "independent"
+	if err := d.SetProfile(g.ID, isolate, "alice", ""); !errors.Is(err, ErrProfileLocked) {
+		t.Fatalf("resource mode change with nodes: %v", err)
+	}
 	ports := blue
 	ports.HTTPPort = 28080
 	if err := d.SetProfile(g.ID, ports, "alice", ""); err != nil {
@@ -213,5 +218,10 @@ func TestCheckInstance(t *testing.T) {
 	}
 	if err := d.CheckInstance(def.ID, &blue); !errors.Is(err, ErrInstanceMismatch) {
 		t.Fatalf("instance agent into default group: %v", err)
+	}
+	wrong = blue
+	wrong.ResourceMode = "independent"
+	if err := d.CheckInstance(blueG.ID, &wrong); !errors.Is(err, ErrInstanceMismatch) {
+		t.Fatalf("independent instance accepted into shared group: %v", err)
 	}
 }

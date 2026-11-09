@@ -120,13 +120,28 @@ user_phase() {
   [[ "$(exe "$dpid")" == "$newbin" && "$(exe "$bpid")" == "$newbin" ]] && ok "MI-03 两个实例都运行新版本" || bad "MI-03 运行版本：$(exe "$dpid") / $(exe "$bpid")"
   [[ "$n" == 0 ]] && ok "MI-03 热升级期间持续请求零错误" || bad "MI-03 热升级期间 $n 次请求失败：$(head -3 "$W/load-user.err" | tr '\n' ' ')"
 
+  echo "== user 模式独立实例"
+  out=$("${as[@]}" "$R/bin/syedge-instance" --root "$R" add gold --http 18380 --https 18743 --status 18381 --resource-mode independent 2>&1) \
+    && ok "普通用户创建独立实例" || bad "普通用户创建独立实例：$out"
+  local ipid=$R/instances/gold/run/syedge.pid before_shared
+  before_shared=$(masterpid "$dpid")
+  [[ "$(exe "$ipid")" == "$R/instances/gold/sbin/syedge" ]] && ok "独立实例使用自己的二进制" || bad "独立实例二进制：$(exe "$ipid")"
+  "${as[@]}" mkdir -p "$R/instances/gold/agent/upgrade"
+  drop "$R/instances/gold/agent/upgrade"; chown -R "$U" "$R/instances/gold/agent/upgrade"
+  out=$("${as[@]}" "$R/bin/syedge-wrapper" --instance gold upgrade-start "$UP" 2>&1) \
+    && "${as[@]}" "$R/bin/syedge-wrapper" --instance gold upgrade-commit >/dev/null 2>&1 \
+    && ok "普通用户独立热升级" || bad "普通用户独立热升级：$out"
+  [[ "$(exe "$ipid")" == "$R/instances/gold/versions/$UP/sbin/syedge" && "$(masterpid "$dpid")" == "$before_shared" ]] \
+    && ok "独立升级不影响共享实例" || bad "独立升级影响共享实例"
+
   # ensure（cron 每分钟执行）：热升级后的 master 运行版本库中的二进制，仍须识别为在运行，不能再启动一份
-  local m0 m1; m0="$(masterpid "$dpid") $(masterpid "$bpid")"
+  local m0 m1; m0="$(masterpid "$dpid") $(masterpid "$bpid") $(masterpid "$ipid")"
   out=$("${as[@]}" "$R/bin/syedge-instance" --root "$R" ensure 2>&1)
-  m1="$(masterpid "$dpid") $(masterpid "$bpid")"
+  m1="$(masterpid "$dpid") $(masterpid "$bpid") $(masterpid "$ipid")"
   [[ "$m0" == "$m1" && "$out" != *已启动数据面* ]] && ok "热升级后 ensure 不重复启动数据面" || bad "热升级后 ensure 误判：$out（master $m0 → $m1）"
 
   echo "== 删除 blue（默认实例持续请求）"
+  "${as[@]}" "$R/bin/syedge-instance" --root "$R" remove gold --yes >/dev/null 2>&1 || bad "remove gold"
   load_start userrm 18181
   out=$("${as[@]}" "$R/bin/syedge-instance" --root "$R" remove blue --yes 2>&1) || bad "remove blue：$out"
   n=$(load_stop userrm)
@@ -273,6 +288,20 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occu
     && ok "MI-03 三个实例都运行新版本" || bad "MI-03 运行版本：$(exe $D) / $(exe $B) / $(exe $G)"
   [[ "$n" == 0 ]] && ok "MI-03 热升级期间持续请求零错误" || bad "MI-03 $n 次请求失败：$(head -3 "$W/load-sys.err" | tr '\n' ' ')"
   systemctl is-active -q syedge.service syedge@blue.service syedge@green.service && ok "全程没有实例停止" || bad "有实例的单元不在运行"
+
+  echo "== 独立实例单独安装与升级"
+  out=$(syedge-instance add gold --http 38080 --https 38443 --status 8084 --resource-mode independent 2>&1) \
+    && ok "创建独立实例 gold" || bad "创建独立实例：$out"
+  local GOLD=/run/syedge-gold/syedge.pid shared_pid shared_link
+  shared_pid=$(masterpid "$D"); shared_link=$(readlink /opt/syedge/sbin/syedge)
+  [[ "$(exe "$GOLD")" == /opt/syedge/instances/gold/sbin/syedge ]] && ok "gold 使用独立二进制" || bad "gold 二进制：$(exe "$GOLD")"
+  mkdir -p /var/lib/syedge-agent-gold/upgrade; drop /var/lib/syedge-agent-gold/upgrade
+  local W_I=(runuser -u syedge-agent-gold -- sudo -n -u syedge /usr/libexec/syedge/syedge-wrapper --instance gold)
+  out=$("${W_I[@]}" upgrade-start "$UP" 2>&1) && "${W_I[@]}" upgrade-commit >/dev/null 2>&1 \
+    && ok "gold 独立热升级" || bad "gold 热升级：$out"
+  [[ "$(exe "$GOLD")" == "/opt/syedge/instances/gold/versions/$UP/sbin/syedge" && "$(masterpid "$D")" == "$shared_pid" && "$(readlink /opt/syedge/sbin/syedge)" == "$shared_link" ]] \
+    && ok "gold 升级不改变共享实例" || bad "独立升级影响共享实例"
+  syedge-instance remove gold --yes >/dev/null 2>&1 || bad "删除独立实例失败"
 
   echo "== MI-04 删除 blue（默认实例与 green 持续请求）；有具名实例时卸载被拒绝"
   load_start rm 8081 8083

@@ -35,6 +35,15 @@ func TestCheckInstanceAt(t *testing.T) {
 	if err := checkInstanceAt(good, "blue", me); err != nil {
 		t.Fatalf("valid instance rejected: %v", err)
 	}
+	if err := os.Chmod(base, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkInstanceAt(good, "blue", me); err == nil {
+		t.Fatal("world-writable instances parent accepted")
+	}
+	if err := os.Chmod(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name, dir, inst, want string
 		owner                 int

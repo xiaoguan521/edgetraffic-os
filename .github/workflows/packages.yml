@@ -11,7 +11,12 @@ on:
       - "dataplane/**"
       - "scripts/release/**"
       - "cmd/syedge-wrapper/**"
+      - "cmd/syedge-agent/**"
+      - "cmd/syedge-instance/**"
       - "internal/wrapper/**"
+      - "internal/instance/**"
+      - "internal/layout/**"
+      - "internal/render/profile.go"
       - ".github/workflows/packages.yml"
   pull_request:
     paths:
@@ -19,7 +24,12 @@ on:
       - "dataplane/**"
       - "scripts/release/**"
       - "cmd/syedge-wrapper/**"
+      - "cmd/syedge-agent/**"
+      - "cmd/syedge-instance/**"
       - "internal/wrapper/**"
+      - "internal/instance/**"
+      - "internal/layout/**"
+      - "internal/render/profile.go"
       - ".github/workflows/packages.yml"
   workflow_dispatch:
     inputs:

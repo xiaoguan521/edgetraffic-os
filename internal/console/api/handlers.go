@@ -502,6 +502,9 @@ func enrollCommand(p render.Profile, server, token, caFP string) string {
 			return fmt.Sprintf("%s/bin/%s enroll -root %s %s && %s/bin/%s-instance --root %s ensure", r, brand.Agent(), r, reg, r, brand.ID(), r)
 		}
 		cmd := fmt.Sprintf("%s/bin/%s-instance --root %s add %s --http %d --https %d --status %d", r, brand.ID(), r, p.Instance, p.HTTP(), p.HTTPS(), p.Status())
+		if p.ResourceMode == "independent" {
+			cmd += " --resource-mode independent"
+		}
 		if p.NoFile != 0 {
 			cmd += fmt.Sprintf(" --nofile %d", p.NoFile)
 		}
@@ -513,6 +516,9 @@ func enrollCommand(p render.Profile, server, token, caFP string) string {
 			brand.Agent(), server, token, caFP, brand.Agent(), brand.Agent())
 	}
 	cmd := fmt.Sprintf("sudo %s-instance add %s --http %d --https %d --status %d", brand.ID(), p.Instance, p.HTTP(), p.HTTPS(), p.Status())
+	if p.ResourceMode == "independent" {
+		cmd += " --resource-mode independent"
+	}
 	if p.NoFile != 0 {
 		cmd += fmt.Sprintf(" --nofile %d", p.NoFile)
 	}

@@ -49,16 +49,21 @@ func handover(name string) error {
 	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
 	}
-	return wrapper.Handover(wrapper.DefaultPathsForInstance(name), self, uid, gid)
+	paths, err := wrapper.DefaultPathsAt("", name)
+	if err != nil {
+		return err
+	}
+	return wrapper.Handover(paths, self, uid, gid)
 }
 
 func usage(w io.Writer) {
 	n := brand.ID() + "-instance"
 	_, _ = fmt.Fprintf(w, `用法：
-  %[1]s add <实例名> --http <端口> --https <端口> --status <端口> [--nofile N]
+  %[1]s add <实例名> --http <端口> --https <端口> --status <端口> [--nofile N] [--resource-mode shared|independent]
         [--console <控制台 host:port> --token <注册令牌> --ca-fingerprint <指纹>]
   %[1]s remove <实例名> [--purge] [--yes]     不加 --yes 只显示将执行的操作
   %[1]s list
+  %[1]s runtimes                              列出实例、共享方式和功能包安装目录
   %[1]s check
   %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用，可由数据面用户执行）
   %[1]s prefix [<安装根目录>]                  首次设置 system 模式安装根目录（默认 /opt/%[1]s）
@@ -185,6 +190,17 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		err = remove(e, rest)
 	case "list":
 		err = list(e, stdout)
+	case "runtimes":
+		if len(rest) != 0 {
+			return 2
+		}
+		var targets []instance.RuntimeTarget
+		targets, err = e.RuntimeTargets()
+		if err == nil {
+			for _, t := range targets {
+				_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", t.Name, t.Mode, t.Root)
+			}
+		}
 	case "check":
 		if probs := e.Check(); len(probs) > 0 {
 			for _, p := range probs {
@@ -243,6 +259,7 @@ func add(e instance.Env, args []string) error {
 	httpsP := fs.Int("https", 0, "")
 	status := fs.Int("status", 0, "")
 	nofile := fs.Int("nofile", 0, "")
+	resourceMode := fs.String("resource-mode", "", "")
 	console := fs.String("console", "", "")
 	token := fs.String("token", "", "")
 	caFP := fs.String("ca-fingerprint", "", "")
@@ -254,7 +271,7 @@ func add(e instance.Env, args []string) error {
 		return fmt.Errorf("%w：--http、--https、--status 都必须指定", errUsage)
 	}
 	return e.Add(instance.AddOptions{
-		Profile: render.Profile{Instance: name, HTTPPort: *httpP, HTTPSPort: *httpsP, StatusPort: *status, NoFile: *nofile},
+		Profile: render.Profile{Instance: name, HTTPPort: *httpP, HTTPSPort: *httpsP, StatusPort: *status, NoFile: *nofile, ResourceMode: *resourceMode},
 		Console: *console, Token: *token, CAFingerprint: *caFP,
 	})
 }
@@ -280,7 +297,7 @@ func list(e instance.Env, out io.Writer) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "实例\tHTTP\tHTTPS\t状态页\t数据面")
+	_, _ = fmt.Fprintln(tw, "实例\t运行文件\tHTTP\tHTTPS\t状态页\t数据面")
 	for _, in := range l {
 		name, state := in.Name, "未运行"
 		if name == "" {
@@ -289,7 +306,11 @@ func list(e instance.Env, out io.Writer) error {
 		if in.Running {
 			state = fmt.Sprintf("运行中 pid %d", in.PID)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%s\n", name, in.Profile.HTTP(), in.Profile.HTTPS(), in.Profile.Status(), state)
+		resources := "共享"
+		if in.Profile.ResourceMode == "independent" {
+			resources = "独立"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\n", name, resources, in.Profile.HTTP(), in.Profile.HTTPS(), in.Profile.Status(), state)
 	}
 	return tw.Flush()
 }

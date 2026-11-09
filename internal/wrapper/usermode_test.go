@@ -47,6 +47,33 @@ func TestBuildUserMode(t *testing.T) {
 	}
 }
 
+func TestIndependentRuntimeUsesTrustedInstanceProfile(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "edge")
+	dir := filepath.Join(root, "instances", "blue")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(dir, InstanceFile)
+	body := `{"instance":"blue","mode":"user","root":"` + root + `","resource_mode":"independent"}`
+	if err := os.WriteFile(profile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := BuildAt(root, []string{"--instance", "blue", "reload"})
+	if err != nil || cmd.Path != filepath.Join(dir, "sbin/syedge") {
+		t.Fatalf("command = %+v %v", cmd, err)
+	}
+	paths, err := DefaultPathsAt(root, "blue")
+	if err != nil || paths.Modules != filepath.Join(dir, "modules") || paths.Versions != filepath.Join(dir, "versions") {
+		t.Fatalf("upgrade paths = %+v %v", paths, err)
+	}
+	if err := os.Chmod(profile, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildAt(root, []string{"--instance", "blue", "reload"}); err == nil {
+		t.Fatal("writable profile was trusted")
+	}
+}
+
 func TestRootFromExecutable(t *testing.T) {
 	if r, err := RootFromExecutable("/usr/libexec/syedge/syedge-wrapper"); err != nil || r != "" {
 		t.Fatalf("system path: %q %v", r, err)

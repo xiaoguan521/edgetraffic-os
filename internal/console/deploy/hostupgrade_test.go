@@ -16,6 +16,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 func addHostNode(t *testing.T, d *Service, g *store.NodeGroup, name, host string) uint {
@@ -56,6 +57,31 @@ func statusOf(v *UpgradeView) map[uint]string {
 		m[n.NodeID] = n.Status
 	}
 	return m
+}
+
+func TestUpgradeParticipantsHonorIndependentRuntime(t *testing.T) {
+	d, def, _, ids, _ := hostFixture(t)
+	green := addGroup(t, d, "green-independent")
+	p := render.Profile{Instance: "green", ResourceMode: "independent", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8088}
+	if err := d.SetProfile(green.ID, p, "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	greenID := addHostNode(t, d, green, "g1", "h1aaaaaaaaaaaaaaaa")
+	shared, err := d.upgradeParticipants(def.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[uint]bool{}
+	for _, n := range shared {
+		seen[n.ID] = true
+	}
+	if !seen[ids["d1"]] || !seen[ids["b1"]] || seen[greenID] {
+		t.Fatalf("shared participants: %v", seen)
+	}
+	independent, err := d.upgradeParticipants(green.ID)
+	if err != nil || len(independent) != 1 || independent[0].ID != greenID {
+		t.Fatalf("independent participants = %+v, %v", independent, err)
+	}
 }
 
 // 升级默认组：同机的 blue 实例一起升级；主机内本组实例先、同机实例后，依次 START→COMMIT。

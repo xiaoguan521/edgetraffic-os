@@ -16,4 +16,8 @@ func TestInstanceInfo(t *testing.T) {
 	if b.Name != "blue" || b.HttpPort != 18080 || b.StatusPort != 8082 {
 		t.Fatalf("blue = %+v", b)
 	}
+	independent := instanceInfo(render.Profile{Instance: "blue", ResourceMode: "independent"})
+	if independent.GetResourceMode() != "independent" || d.GetResourceMode() != "shared" {
+		t.Fatalf("resource mode: independent=%q default=%q", independent.GetResourceMode(), d.GetResourceMode())
+	}
 }

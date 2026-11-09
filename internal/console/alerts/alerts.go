@@ -29,6 +29,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 // 规则种类。
@@ -634,13 +635,32 @@ func (s *Service) Evaluate() error {
 			if err != nil {
 				return err
 			}
+			groups, err := q.NodeGroup.WithContext(bg).Find()
+			if err != nil {
+				return err
+			}
+			profiles := map[uint]render.Profile{}
+			for _, g := range groups {
+				var p render.Profile
+				if strings.TrimSpace(g.InstanceProfile) != "" {
+					if err := json.Unmarshal([]byte(g.InstanceProfile), &p); err != nil {
+						return fmt.Errorf("node group %s profile: %w", g.Name, err)
+					}
+				}
+				profiles[g.ID] = p.Effective()
+			}
 			by := map[string][]*store.Node{}
 			var keys []string
 			for _, n := range nodes {
-				if _, ok := by[n.HostKey]; !ok {
-					keys = append(keys, n.HostKey)
+				p := profiles[n.GroupID].Effective()
+				if p.ResourceMode == "independent" {
+					continue
 				}
-				by[n.HostKey] = append(by[n.HostKey], n)
+				key := n.HostKey + "\x00" + p.Mode + "\x00" + p.Root
+				if _, ok := by[key]; !ok {
+					keys = append(keys, key)
+				}
+				by[key] = append(by[key], n)
 			}
 			for _, k := range keys {
 				vs := map[string]bool{}
@@ -650,7 +670,14 @@ func (s *Service) Evaluate() error {
 					parts = append(parts, n.Name+"="+n.RunningVersion)
 				}
 				if len(vs) > 1 {
-					found = append(found, finding{r.Kind, "host:" + k[:min(12, len(k))], fmt.Sprintf("主机 %s 上的实例运行着不同的数据面版本（%s），请完成或回退该主机的升级", by[k][0].Hostname, strings.Join(parts, "、"))})
+					host := by[k][0].HostKey
+					key := "host:" + host[:min(12, len(host))]
+					p := profiles[by[k][0].GroupID].Effective()
+					if p.Mode != "system" || p.Root != "" {
+						hash := sha256.Sum256([]byte(p.Mode + "\x00" + p.Root))
+						key += fmt.Sprintf(":%x", hash[:4])
+					}
+					found = append(found, finding{r.Kind, key, fmt.Sprintf("主机 %s 上共享程序的实例运行着不同的数据面版本（%s），请完成或回退升级", by[k][0].Hostname, strings.Join(parts, "、"))})
 				}
 			}
 		case KindDrift:

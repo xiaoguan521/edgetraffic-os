@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
@@ -62,6 +63,227 @@ func (f *fakeEnv) ran(sub string) bool {
 }
 
 var blue = render.Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
+
+func TestAddIndependentInstanceCreatesSeparateRuntime(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	f := newFake(t)
+	sharedBin := f.path(layout.System("").Bin())
+	if err := os.MkdirAll(filepath.Dir(sharedBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sharedBin, []byte("shared binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := blue
+	p.ResourceMode = "independent"
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	l := layout.System("blue").WithIndependentRuntime()
+	if b, err := os.ReadFile(f.path(l.Bin())); err != nil || string(b) != "shared binary" {
+		t.Fatalf("independent binary: %q %v", b, err)
+	}
+	for _, dir := range []string{l.Versions(), l.Modules()} {
+		if st, err := os.Stat(f.path(dir)); err != nil || !st.IsDir() || st.Mode().Perm() != 0o755 {
+			t.Fatalf("missing %s: %v", dir, err)
+		}
+	}
+	if st, err := os.Stat(f.path(l.Bin())); err != nil || st.Mode().Perm() != 0o755 {
+		t.Fatalf("binary mode: %v %v", st, err)
+	}
+	unit := f.path("/etc/systemd/system/syedge@blue.service.d/runtime.conf")
+	b, err := os.ReadFile(unit)
+	if err != nil || !strings.Contains(string(b), l.Bin()+" ") || !strings.Contains(string(b), "ExecStart=\n") {
+		t.Fatalf("data plane unit: %q %v", b, err)
+	}
+	agentUnit := f.path("/etc/systemd/system/syedge-agent@blue.service.d/runtime.conf")
+	b, err = os.ReadFile(agentUnit)
+	if err != nil || !strings.Contains(string(b), l.Modules()) || !strings.Contains(string(b), l.Versions()) {
+		t.Fatalf("agent unit: %q %v", b, err)
+	}
+	metadata, err := os.ReadFile(f.path(l.InstanceFile()))
+	if err != nil || !strings.Contains(string(metadata), `"resource_mode": "independent"`) {
+		t.Fatalf("profile: %q %v", metadata, err)
+	}
+	f.cmds = nil
+	if err := f.ReopenAll(); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran(l.Bin() + " -c " + l.CurrentConf() + " -s reopen") {
+		t.Fatalf("independent reopen missing: %v", f.cmds)
+	}
+	if err := os.Remove(unit); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Nonroot(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(unit); err != nil || !strings.Contains(string(b), l.Bin()+" ") {
+		t.Fatalf("independent unit not repaired: %q %v", b, err)
+	}
+}
+
+func TestRuntimeTargetsIdentifySharedAndIndependentInstances(t *testing.T) {
+	f := newFake(t)
+	shared := f.path(layout.System("").Bin())
+	if err := os.MkdirAll(filepath.Dir(shared), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Add(AddOptions{Profile: blue}); err != nil {
+		t.Fatal(err)
+	}
+	green := render.Profile{Instance: "green", ResourceMode: "independent", HTTPPort: 28080, HTTPSPort: 28443, StatusPort: 8088}
+	if err := f.Add(AddOptions{Profile: green}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := f.RuntimeTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 3 || targets[0].Name != "default" || targets[0].Root != "/opt/syedge" || targets[1].Name != "blue" || targets[1].Root != "/opt/syedge" || targets[2].Name != "green" || targets[2].Root != "/opt/syedge/instances/green" {
+		t.Fatalf("targets = %+v", targets)
+	}
+	parent := f.path(layout.System("").InstancesDir())
+	if err := os.Chmod(parent, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.RuntimeTargets(); err == nil {
+		t.Fatal("writable instances parent was accepted")
+	}
+	if err := os.Chmod(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := f.path("/opt/syedge/instances/blue/instance.json")
+	if err := os.WriteFile(bad, []byte("invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.RuntimeTargets(); err == nil {
+		t.Fatal("invalid profile silently omitted from targets")
+	}
+}
+
+func TestIndependentRuntimeRejectsSymlinkedDirectory(t *testing.T) {
+	f := newFake(t)
+	l := layout.System("blue").WithIndependentRuntime()
+	if err := os.MkdirAll(f.path(l.Prefix()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	if err := os.Symlink(victim, f.path(l.Modules())); err != nil {
+		t.Fatal(err)
+	}
+	p := blue
+	p.ResourceMode = "independent"
+	if err := f.Add(AddOptions{Profile: p}); err == nil {
+		t.Fatal("symlinked runtime directory accepted")
+	}
+	if entries, err := os.ReadDir(victim); err != nil || len(entries) != 0 {
+		t.Fatalf("symlink target changed: %v %v", entries, err)
+	}
+}
+
+func TestAddRejectsUntrustedInstancesParent(t *testing.T) {
+	f := newFake(t)
+	dir := f.path(layout.System("").InstancesDir())
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Add(AddOptions{Profile: blue}); err == nil {
+		t.Fatal("world-writable instances directory accepted")
+	}
+	if f.ran("useradd") {
+		t.Fatal("created user before validating instance parent")
+	}
+}
+
+func TestRemoveRejectsSymlinkedInstance(t *testing.T) {
+	f := newFake(t)
+	parent := f.path(layout.System("").InstancesDir())
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "instance.json"), []byte(`{"instance":"blue"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(parent, "blue")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", false, true); err == nil {
+		t.Fatal("symlinked instance accepted")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "instance.json")); err != nil {
+		t.Fatalf("victim modified: %v", err)
+	}
+}
+
+func TestRemoveCustomRootPreservesLogsAndCache(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("system root marker ownership requires root")
+	}
+	f := newFake(t)
+	if err := f.Prefix("/data/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	root := layout.SystemAt("/data/syedge", "blue")
+	shared := f.path(layout.SystemAt("/data/syedge", "").Bin())
+	if err := os.MkdirAll(filepath.Dir(shared), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := blue
+	p.ResourceMode = "independent"
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.LogDir()), "access.log"), []byte("logs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.CacheDir()), "entry"), []byte("cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path(root.Prefix())); !os.IsNotExist(err) {
+		t.Fatalf("instance still exists: %v", err)
+	}
+	logs, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/logs/access.log"))
+	caches, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/cache/entry"))
+	if len(logs) != 1 || len(caches) != 1 {
+		t.Fatalf("logs=%v cache=%v", logs, caches)
+	}
+	if b, err := os.ReadFile(logs[0]); err != nil || string(b) != "logs" {
+		t.Fatalf("logs: %q %v", b, err)
+	}
+	if b, err := os.ReadFile(caches[0]); err != nil || string(b) != "cache" {
+		t.Fatalf("cache: %q %v", b, err)
+	}
+	if b, err := os.ReadFile(shared); err != nil || string(b) != "binary" {
+		t.Fatalf("shared binary changed: %q %v", b, err)
+	}
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.LogDir()), "discard.log"), []byte("discard"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if archived, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/logs/*")); len(archived) != 1 || archived[0] != logs[0] {
+		t.Fatalf("purge archived new logs or removed old archive: %v", archived)
+	}
+}
 
 func TestAddCreatesInstance(t *testing.T) {
 	f := newFake(t)

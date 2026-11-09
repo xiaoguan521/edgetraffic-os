@@ -9,16 +9,30 @@ on:
       - "dataplane/lua/**"
       - "dataplane/build-syedge-lua.sh"
       - "internal/render/lua*"
+      - "internal/render/profile.go"
+      - "internal/layout/**"
+      - "internal/instance/**"
+      - "cmd/syedge-instance/**"
       - "internal/wrapper/lua*"
       - "scripts/ci/lua-acceptance.sh"
+      - "scripts/ci/lua-custom-prefix.sh"
+      - "scripts/ci/lua-instance-targets.sh"
+      - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   pull_request:
     paths:
       - "dataplane/lua/**"
       - "dataplane/build-syedge-lua.sh"
       - "internal/render/lua*"
+      - "internal/render/profile.go"
+      - "internal/layout/**"
+      - "internal/instance/**"
+      - "cmd/syedge-instance/**"
       - "internal/wrapper/lua*"
       - "scripts/ci/lua-acceptance.sh"
+      - "scripts/ci/lua-custom-prefix.sh"
+      - "scripts/ci/lua-instance-targets.sh"
+      - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   workflow_dispatch:
 
@@ -87,6 +101,8 @@ jobs:
           CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syedge-wrapper
       - name: Lua custom system root and named instances (${{ matrix.base }})
         run: bash scripts/ci/lua-custom-prefix.sh dist-lua ${{ matrix.base }}
+      - name: Lua shared and independent instance selection (${{ matrix.base }})
+        run: bash scripts/ci/lua-instance-targets.sh dist-lua ${{ matrix.base }}
       - name: GM and Lua multi-instance upgrade and rollback
         if: matrix.base == 'standard'
         run: |

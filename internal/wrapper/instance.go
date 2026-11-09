@@ -43,6 +43,11 @@ func checkInstanceAt(prefix, instance string, owner int) error {
 }
 
 func checkAt(prefix, instance string, owner int, mode, root string) error {
+	if instance != "" {
+		if err := ownedNotShared(filepath.Dir(prefix), owner, true); err != nil {
+			return err
+		}
+	}
 	if err := ownedNotShared(prefix, owner, true); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("instance %s is not installed", instance)
@@ -62,9 +67,10 @@ func checkAt(prefix, instance string, owner int, mode, root string) error {
 	}
 	// 只读取 wrapper 需要的两个字段（与 render.Profile 的 JSON 一致）；提权程序不引入渲染器
 	var p struct {
-		Instance string `json:"instance"`
-		Mode     string `json:"mode"`
-		Root     string `json:"root"`
+		Instance     string `json:"instance"`
+		Mode         string `json:"mode"`
+		Root         string `json:"root"`
+		ResourceMode string `json:"resource_mode"`
 	}
 	if err := json.Unmarshal(b, &p); err != nil {
 		return fmt.Errorf("%s: %w", InstanceFile, err)
@@ -82,7 +88,51 @@ func checkAt(prefix, instance string, owner int, mode, root string) error {
 	if mode == string(layout.ModeUser) && p.Root != root {
 		return fmt.Errorf("%s names install root %q, but this wrapper belongs to %q", InstanceFile, p.Root, root)
 	}
+	if p.ResourceMode != "" && p.ResourceMode != "shared" && p.ResourceMode != "independent" {
+		return fmt.Errorf("%s has invalid resource mode %q", InstanceFile, p.ResourceMode)
+	}
+	if p.ResourceMode == "independent" && instance == "" {
+		return fmt.Errorf("%s cannot mark the default instance independent", InstanceFile)
+	}
 	return nil
+}
+
+// runtimeLayout 仅在校验受管档案的属主、权限和身份后读取运行模式。
+// 不存在的档案仍返回共享布局；命令入口的 CheckInstance 会拒绝不存在的实例。
+func runtimeLayout(l layout.Layout, root string) (layout.Layout, error) {
+	if l.Instance() == "" {
+		return l, nil
+	}
+	if _, err := os.Lstat(l.InstanceFile()); errors.Is(err, os.ErrNotExist) {
+		return l, nil
+	} else if err != nil {
+		return layout.Layout{}, err
+	}
+	owner, mode := 0, string(layout.ModeSystem)
+	if root != "" {
+		owner, mode = os.Getuid(), string(layout.ModeUser)
+	}
+	if err := checkAt(l.Prefix(), l.Instance(), owner, mode, root); err != nil {
+		return layout.Layout{}, err
+	}
+	b, err := os.ReadFile(l.InstanceFile())
+	if err != nil {
+		return layout.Layout{}, err
+	}
+	var p struct {
+		ResourceMode string `json:"resource_mode"`
+		Root         string `json:"root"`
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return layout.Layout{}, err
+	}
+	if root == "" && p.Root != "" && p.Root != l.Root() {
+		return layout.Layout{}, fmt.Errorf("%s names install root %q, not %q", InstanceFile, p.Root, l.Root())
+	}
+	if p.ResourceMode == "independent" {
+		l = l.WithIndependentRuntime()
+	}
+	return l, nil
 }
 
 // ownedNotShared 要求 path（不跟随软链接）属于 owner，且不可被组或其他用户写入。

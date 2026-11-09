@@ -369,4 +369,18 @@ func TestEvaluateHostVersionMixed(t *testing.T) {
 	if evs := firing(); len(evs) != 0 {
 		t.Fatalf("not resolved: %+v", evs)
 	}
+	group := store.NodeGroup{Name: "independent", InstanceProfile: `{"instance":"green","resource_mode":"independent"}`}
+	if err := q.NodeGroup.WithContext(ctx).Create(&group); err != nil {
+		t.Fatal(err)
+	}
+	independent := store.Node{GroupID: group.ID, Name: "green", Hostname: "edge-a", HostKey: "aaaaaaaaaaaaaaaa", Status: "online", RunningVersion: "1.31.0"}
+	if err := q.Node.WithContext(ctx).Create(&independent); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 0 {
+		t.Fatalf("independent instance caused mixed-version alert: %+v", evs)
+	}
 }

@@ -105,6 +105,18 @@ else
   bad "日志轮转测试无法重命名错误日志"
 fi
 expect "节点防火墙默认不启用" "$(sudo syedge-firewall status)" "未启用"
+echo "== 创建独立实例"
+SOLO_PID=""
+if out=$(sudo syedge-instance add solo --http 28080 --https 28443 --status 28081 --resource-mode independent 2>&1); then
+  ok "独立实例创建成功"
+  expect "独立实例 systemd 服务运行" "$(systemctl is-active syedge@solo.service)" "active"
+  expect "独立实例资源列表" "$(sudo syedge-instance runtimes)" "$(printf 'solo\tindependent\t%s/instances/solo' "$ROOT")"
+  SOLO_PID=$(cat /run/syedge-solo/syedge.pid 2>/dev/null || true)
+  expect "独立实例使用自己的程序" "$(sudo readlink "/proc/$SOLO_PID/exe" 2>/dev/null)" "$ROOT/instances/solo/sbin/syedge"
+  if sudo syedge-instance reopen-all >/dev/null 2>&1; then ok "共享及独立实例日志轮转"; else bad "独立实例日志重新打开失败"; fi
+else
+  bad "独立实例创建失败：$(echo "$out" | tail -12)"
+fi
 printf 'standalone-static-preserved\n' | sudo tee "$ROOT/html/index.html" >/dev/null
 printf '# smoke-logrotate-policy\n' | sudo tee -a /etc/logrotate.d/syedge >/dev/null
 before=$(sha256sum /usr/bin/syedge-agent)
@@ -142,6 +154,10 @@ if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
 fi
 expect "重复安装保留静态文件" "$(cat "$ROOT/html/index.html")" "standalone-static-preserved"
 expect "重复安装保留轮转策略" "$(cat /etc/logrotate.d/syedge)" "smoke-logrotate-policy"
+if [[ -n "$SOLO_PID" ]]; then
+  expect "重复安装保留独立实例" "$(cat /run/syedge-solo/syedge.pid 2>/dev/null)" "$SOLO_PID"
+  expect "独立实例状态页" "$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:28081/__syedge_status)" "200"
+fi
 online=0
 for _ in $(seq 1 30); do
   online=$("${C[@]}" "$B/nodes" | j "sum(1 for n in d if n['status']=='online')")
@@ -169,6 +185,20 @@ expect "发布生效" "$st" "APPLIED"
 expect "站点返回内容" "$(curl -s --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "smoke ok"
 expect "Server 头为 SyEdge" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: SyEdge"
 expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /run/syedge/syedge.pid)" "$MASTER"
+if [[ -n "$SOLO_PID" ]]; then
+  if [[ "$ROOT" != /opt/syedge ]]; then
+    printf 'preserved\n' | sudo tee "$ROOT/instances/solo/logs/preserve-smoke.log" "$ROOT/instances/solo/cache/preserve-smoke.cache" >/dev/null
+  fi
+  if out=$(sudo syedge-instance remove solo --yes 2>&1); then ok "独立实例可单独删除"; else bad "独立实例删除失败：$out"; fi
+  if [[ "$ROOT" != /opt/syedge ]]; then
+    if sudo find "$ROOT/removed-instances" -name preserve-smoke.log -print -quit | grep -q . && sudo find "$ROOT/removed-instances" -name preserve-smoke.cache -print -quit | grep -q .; then
+      ok "独立实例删除时保留日志与缓存"
+    else
+      bad "独立实例删除时未保留日志或缓存"
+    fi
+  fi
+  expect "删除独立实例不影响默认实例" "$(cat /run/syedge/syedge.pid)" "$MASTER"
+fi
 
 echo "== systemd 优雅停止时保留正在传输的连接"
 printf 'server { listen 127.0.0.1:18081; location / { root %s/html; limit_rate 2k; } }\n' "$ROOT" |

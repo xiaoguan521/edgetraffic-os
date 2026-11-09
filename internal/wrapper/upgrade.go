@@ -60,7 +60,11 @@ func DefaultPaths() Paths {
 
 // DefaultPathsForInstance 返回 system 模式下指定实例（空串表示默认单实例）的热升级路径。
 func DefaultPathsForInstance(instance string) Paths {
-	return pathsFor(layout.System(instance))
+	l, err := layoutAt("", instance)
+	if err != nil {
+		panic("wrapper: invalid instance layout: " + err.Error())
+	}
+	return pathsFor(l)
 }
 
 // DefaultPathsAt 返回热升级路径：root 为空时为 system 模式，否则为 user 模式的安装根目录。

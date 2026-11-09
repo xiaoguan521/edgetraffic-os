@@ -30,7 +30,7 @@ type CommandResult_Status int32
 const (
 	CommandResult_STATUS_UNSPECIFIED CommandResult_Status = 0
 	CommandResult_APPLIED            CommandResult_Status = 1
-	CommandResult_INVALID            CommandResult_Status = 2 // syapp -t 失败
+	CommandResult_INVALID            CommandResult_Status = 2 // syedge -t 失败
 	CommandResult_CONFLICT           CommandResult_Status = 3 // parent_revision_id 不符
 	CommandResult_ROLLED_BACK        CommandResult_Status = 4
 	CommandResult_DEGRADED           CommandResult_Status = 5 // 回滚也失败
@@ -390,6 +390,7 @@ type InstanceInfo struct {
 	HttpPort      uint32                 `protobuf:"varint,4,opt,name=http_port,json=httpPort,proto3" json:"http_port,omitempty"`
 	HttpsPort     uint32                 `protobuf:"varint,5,opt,name=https_port,json=httpsPort,proto3" json:"https_port,omitempty"`
 	StatusPort    uint32                 `protobuf:"varint,6,opt,name=status_port,json=statusPort,proto3" json:"status_port,omitempty"`
+	ResourceMode  string                 `protobuf:"bytes,7,opt,name=resource_mode,json=resourceMode,proto3" json:"resource_mode,omitempty"` // shared（旧版为空）| independent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -464,6 +465,13 @@ func (x *InstanceInfo) GetStatusPort() uint32 {
 		return x.StatusPort
 	}
 	return 0
+}
+
+func (x *InstanceInfo) GetResourceMode() string {
+	if x != nil {
+		return x.ResourceMode
+	}
+	return ""
 }
 
 type EnrollResponse struct {
@@ -675,14 +683,14 @@ func (*AgentMessage_Drift) isAgentMessage_Body() {}
 type Hello struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	AgentVersion       string                 `protobuf:"bytes,1,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	SyappVersionOutput string                 `protobuf:"bytes,2,opt,name=syapp_version_output,json=syappVersionOutput,proto3" json:"syapp_version_output,omitempty"` // syapp -V 原始输出
+	SyappVersionOutput string                 `protobuf:"bytes,2,opt,name=syapp_version_output,json=syappVersionOutput,proto3" json:"syapp_version_output,omitempty"` // syedge -V 原始输出
 	SyappSha256        string                 `protobuf:"bytes,3,opt,name=syapp_sha256,json=syappSha256,proto3" json:"syapp_sha256,omitempty"`
 	AppliedRevisionId  string                 `protobuf:"bytes,4,opt,name=applied_revision_id,json=appliedRevisionId,proto3" json:"applied_revision_id,omitempty"`
 	MachineFingerprint string                 `protobuf:"bytes,5,opt,name=machine_fingerprint,json=machineFingerprint,proto3" json:"machine_fingerprint,omitempty"`
-	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                   // 已安装的 syapp-lua 附加包：<syapp 版本>/<基础变体>（未安装为空，P10）
+	LuaAddon           string                 `protobuf:"bytes,6,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                   // 已安装的 syedge-lua 附加包：<syedge 版本>/<基础变体>（未安装为空，P10）
 	Instance           *InstanceInfo          `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`                                   // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
 	Brand              string                 `protobuf:"bytes,8,opt,name=brand,proto3" json:"brand,omitempty"`                                         // 同 EnrollRequest.brand
-	RunningVersion     string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syapp -V 不同）
+	RunningVersion     string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syedge -V 不同）
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1715,7 +1723,8 @@ func (x *LicenseUpdate) GetRaw() string {
 }
 
 // 漂移 diff 上报（规格书 12.7 路径 B，CLAUDE.md“agent 与安全”）：agent 发现当前版本目录被手工改动时主动上报。
-// 只限受管版本目录 /opt/syapp/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
+// 只限本实例前缀下 conf/releases/<当前版本>/ 内的文件（默认实例为 /opt/syedge/conf/releases/）；
+// 单文件超过上限或私钥文件（*.key）只报哈希。
 // 协议中没有任何“读取文件”的请求：控制台不能让 agent 读取指定路径。
 type DriftReport struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1871,7 +1880,7 @@ type UpgradeDataplane struct {
 	SignatureJson    []byte                  `protobuf:"bytes,4,opt,name=signature_json,json=signatureJson,proto3" json:"signature_json,omitempty"` // 厂商升级包签名文件（pkgsig），wrapper 以 root 校验
 	PostChecks       []*PostCheck            `protobuf:"bytes,5,rep,name=post_checks,json=postChecks,proto3" json:"post_checks,omitempty"`
 	TimeoutSeconds   int32                   `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	LuaSignatureJson []byte                  `protobuf:"bytes,7,opt,name=lua_signature_json,json=luaSignatureJson,proto3" json:"lua_signature_json,omitempty"` // 节点装有 syapp-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syapp 包一起校验、一起切换
+	LuaSignatureJson []byte                  `protobuf:"bytes,7,opt,name=lua_signature_json,json=luaSignatureJson,proto3" json:"lua_signature_json,omitempty"` // 节点装有 syedge-lua 时，目标版本附加包的厂商签名（P10）；wrapper 与 syedge 包一起校验、一起切换
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1955,7 +1964,7 @@ func (x *UpgradeDataplane) GetLuaSignatureJson() []byte {
 	return nil
 }
 
-// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syapp）。
+// agent 自升级：同一种厂商签名包，agent 校验后替换自身并只重启 agent 进程（不影响 syedge）。
 type UpgradeAgent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -2018,7 +2027,7 @@ func (x *UpgradeAgent) GetSignatureJson() []byte {
 
 type FetchPackageRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // syapp | syapp-agent | syapp-lua
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // syedge | syedge-agent | syedge-lua
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	Arch          string                 `protobuf:"bytes,3,opt,name=arch,proto3" json:"arch,omitempty"`       // amd64 | arm64
 	Variant       string                 `protobuf:"bytes,4,opt,name=variant,proto3" json:"variant,omitempty"` // standard | gmssl | lua
@@ -2200,7 +2209,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x13machine_fingerprint\x18\x04 \x01(\tR\x12machineFingerprint\x12#\n" +
 	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\x12>\n" +
 	"\binstance\x18\x06 \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\x12\x14\n" +
-	"\x05brand\x18\a \x01(\tR\x05brand\"\xa7\x01\n" +
+	"\x05brand\x18\a \x01(\tR\x05brand\"\xcc\x01\n" +
 	"\fInstanceInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +
@@ -2209,7 +2218,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"https_port\x18\x05 \x01(\rR\thttpsPort\x12\x1f\n" +
 	"\vstatus_port\x18\x06 \x01(\rR\n" +
-	"statusPort\"\x98\x01\n" +
+	"statusPort\x12#\n" +
+	"\rresource_mode\x18\a \x01(\tR\fresourceMode\"\x98\x01\n" +
 	"\x0eEnrollResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12&\n" +
 	"\x0fclient_cert_der\x18\x02 \x01(\fR\rclientCertDer\x12\x1e\n" +

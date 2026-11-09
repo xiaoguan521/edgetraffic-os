@@ -38,6 +38,7 @@ message InstanceInfo {
   uint32 http_port = 4;
   uint32 https_port = 5;
   uint32 status_port = 6;
+  string resource_mode = 7;    // shared（旧版为空）| independent
 }
 
 message EnrollResponse {

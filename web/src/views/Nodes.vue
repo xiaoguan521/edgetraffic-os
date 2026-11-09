@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { brand } from '../brand'
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
@@ -30,7 +30,8 @@ const instanceLabel = computed(() => {
   if (!p) return ''
   const e = p.effective || {}
   const where = p.root ? `（${p.root}）` : ''
-  return `${p.instance || '默认实例'} · ${p.mode === 'user' ? 'user 模式' : 'system 模式'}${where} · HTTP ${e.http_port} / HTTPS ${e.https_port}`
+  const resources = p.resource_mode === 'independent' ? '独立程序' : '共享程序'
+  return `${p.instance || '默认实例'} · ${p.mode === 'user' ? 'user 模式' : 'system 模式'}${where} · ${resources} · HTTP ${e.http_port} / HTTPS ${e.https_port}`
 })
 function dataplaneVersion(n: any) {
   return (n.syapp_version || '').replace(brand.proc + ' version: ', '')
@@ -62,19 +63,20 @@ function copy(text: string) {
 // 节点组设置（含实例档案：同机多实例与 user 模式，设计 0001 第 3.4、5.2 节）
 const editing = ref(false)
 const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '' })
-const pform = reactive({ instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
+const pform = reactive({ instance: '', mode: 'system', root: '', resource_mode: 'shared', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
 const locked = computed(() => nodes.value.length > 0) // 组内已有节点：实例名、模式、根目录不可改
+watch(() => pform.instance, (name) => { if (!name && !locked.value) pform.resource_mode = 'shared' })
 function openGroup() {
   Object.assign(gform, { name: group.value.name, description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
   const p = profile.value || {}
   const e = p.effective || {}
-  Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
+  Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', resource_mode: p.resource_mode || 'shared', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
   editing.value = true
 }
 function profileChanged() {
   const p = profile.value || {}
   const e = p.effective || {}
-  return pform.instance !== (p.instance || '') || pform.mode !== (p.mode || 'system') || pform.root !== (p.root || '') ||
+  return pform.instance !== (p.instance || '') || pform.mode !== (p.mode || 'system') || pform.root !== (p.root || '') || pform.resource_mode !== (p.resource_mode || 'shared') ||
     pform.http_port !== e.http_port || pform.https_port !== e.https_port || pform.status_port !== e.status_port || pform.nofile !== (p.nofile || 0)
 }
 // 新建节点组（仅管理员）：沿用当前组的回源网段，建好后打开“节点组设置”填写实例档案
@@ -106,6 +108,7 @@ async function saveGroup() {
     if (profileChanged()) {
       const body: any = { instance: pform.instance, http_port: pform.http_port, https_port: pform.https_port, status_port: pform.status_port }
       if (pform.mode === 'user' || pform.root) Object.assign(body, { mode: pform.mode, root: pform.root })
+      if (pform.resource_mode === 'independent') body.resource_mode = 'independent'
       if (pform.nofile) body.nofile = pform.nofile
       await api.put(`/node-groups/${gid.value}/profile`, body)
     }
@@ -342,7 +345,7 @@ function mb(b: number) {
           <a-input v-model:value="gform.real_ip_from" class="code" placeholder="例如 10.0.0.0/8" />
         </a-form-item>
         <a-divider orientation="left" style="font-size: 13px">实例档案</a-divider>
-        <p class="sub" style="margin-top: -8px">组内所有节点使用同一个档案。同一台服务器上运行多套 {{ brand.id }} 时，每套属于不同的节点组，实例名与端口不能冲突。{{ locked ? '组内已有节点：实例名、运行方式与安装目录不能再改，端口可以改（改后需在各节点上按新端口重建实例）。' : '' }}</p>
+        <p class="sub" style="margin-top: -8px">组内所有节点使用同一个档案。同一台服务器上运行多套 {{ brand.id }} 时，每套属于不同的节点组，实例名与端口不能冲突。{{ locked ? '组内已有节点：实例名、运行方式、安装目录与共享方式不能再改，端口可以改（改后需在各节点上按新端口重建实例）。' : '' }}</p>
         <a-form-item label="实例名" extra="留空为默认实例；具名实例只能用小写字母、数字和短横线。">
           <a-input v-model:value="pform.instance" class="code" :disabled="locked" placeholder="默认实例" />
         </a-form-item>
@@ -350,6 +353,12 @@ function mb(b: number) {
           <a-radio-group v-model:value="pform.mode" :disabled="locked">
             <a-radio value="system">system（root 安装软件包）</a-radio>
             <a-radio value="user">user（普通用户安装，不需要 root）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item label="数据面与模块" extra="共享：与同目录共享实例一起安装和升级。独立：本实例的 Lua 和标准版 / 国密版可单独安装、升级；仅新建具名实例可选择。">
+          <a-radio-group v-model:value="pform.resource_mode" :disabled="locked">
+            <a-radio value="shared">共享</a-radio>
+            <a-radio value="independent" :disabled="!pform.instance">独立</a-radio>
           </a-radio-group>
         </a-form-item>
         <a-form-item label="安装根目录" :extra="pform.mode === 'user' ? '节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。' : 'system 模式默认使用 /opt/syedge；填写后，软件包会把程序与实例数据放在该绝对路径，并写入 /etc/syedge/prefix。'">
