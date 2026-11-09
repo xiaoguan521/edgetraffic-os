@@ -203,6 +203,88 @@ func TestAddRejectsUntrustedInstancesParent(t *testing.T) {
 	}
 }
 
+func TestRemoveRejectsSymlinkedInstance(t *testing.T) {
+	f := newFake(t)
+	parent := f.path(layout.System("").InstancesDir())
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "instance.json"), []byte(`{"instance":"blue"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(parent, "blue")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", false, true); err == nil {
+		t.Fatal("symlinked instance accepted")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "instance.json")); err != nil {
+		t.Fatalf("victim modified: %v", err)
+	}
+}
+
+func TestRemoveCustomRootPreservesLogsAndCache(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("system root marker ownership requires root")
+	}
+	f := newFake(t)
+	if err := f.Prefix("/data/syedge"); err != nil {
+		t.Fatal(err)
+	}
+	root := layout.SystemAt("/data/syedge", "blue")
+	shared := f.path(layout.SystemAt("/data/syedge", "").Bin())
+	if err := os.MkdirAll(filepath.Dir(shared), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := blue
+	p.ResourceMode = "independent"
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.LogDir()), "access.log"), []byte("logs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.CacheDir()), "entry"), []byte("cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path(root.Prefix())); !os.IsNotExist(err) {
+		t.Fatalf("instance still exists: %v", err)
+	}
+	logs, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/logs/access.log"))
+	caches, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/cache/entry"))
+	if len(logs) != 1 || len(caches) != 1 {
+		t.Fatalf("logs=%v cache=%v", logs, caches)
+	}
+	if b, err := os.ReadFile(logs[0]); err != nil || string(b) != "logs" {
+		t.Fatalf("logs: %q %v", b, err)
+	}
+	if b, err := os.ReadFile(caches[0]); err != nil || string(b) != "cache" {
+		t.Fatalf("cache: %q %v", b, err)
+	}
+	if b, err := os.ReadFile(shared); err != nil || string(b) != "binary" {
+		t.Fatalf("shared binary changed: %q %v", b, err)
+	}
+	if err := f.Add(AddOptions{Profile: p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.path(root.LogDir()), "discard.log"), []byte("discard"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Remove("blue", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if archived, _ := filepath.Glob(f.path("/data/syedge/removed-instances/blue-*/logs/*")); len(archived) != 1 || archived[0] != logs[0] {
+		t.Fatalf("purge archived new logs or removed old archive: %v", archived)
+	}
+}
+
 func TestAddCreatesInstance(t *testing.T) {
 	f := newFake(t)
 	err := f.Add(AddOptions{Profile: blue, Console: "console.example.com:9443", Token: "tok", CAFingerprint: "abc"})

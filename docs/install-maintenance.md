@@ -662,7 +662,7 @@ sudo syedge-instance remove blue --yes     # 优雅停止并删除实例（保�
 
 删除实例后，请在控制台“节点”页吊销对应节点；不再使用的节点组可随后删除（见下）。日志轮转（logrotate）会对所有实例执行 `syedge-instance reopen-all`。
 
-**卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syedge-instance remove`，或执行 `uninstall.sh --all`。软件包升级不会停止任何实例。
+**卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syedge-instance remove`，或执行 `uninstall.sh --all`。自定义 system 根目录下删除单个实例时，日志和缓存默认移到 `R/removed-instances/<实例>-*/`，加 `--purge` 才一并删除。软件包升级不会停止任何实例。
 
 **控制台中的同机多实例**：
 

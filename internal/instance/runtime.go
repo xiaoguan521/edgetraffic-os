@@ -192,6 +192,61 @@ func (e Env) prepareIndependentRuntime(l layout.Layout) error {
 	return nil
 }
 
+// preserveInstanceData 在删除自定义根目录的实例前，将内嵌日志与缓存移到同一根目录的归档目录。
+func (e Env) preserveInstanceData(l layout.Layout) (string, error) {
+	items := []struct{ name, path string }{{"logs", l.LogDir()}, {"cache", l.CacheDir()}}
+	var present []struct{ name, path string }
+	for _, item := range items {
+		st, err := os.Lstat(e.path(item.path))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("不能保留非目录：%s", item.path)
+		}
+		present = append(present, item)
+	}
+	if len(present) == 0 {
+		return "", nil
+	}
+	parent := e.path(filepath.Join(l.Root(), "removed-instances"))
+	if _, err := os.Lstat(parent); os.IsNotExist(err) {
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			return "", err
+		}
+		if err := os.Chmod(parent, 0o755); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	st, err := os.Lstat(parent)
+	if err != nil {
+		return "", err
+	}
+	owner := 0
+	if e.Root != "/" {
+		owner = os.Getuid()
+	}
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || int(sys.Uid) != owner || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0o022 != 0 {
+		return "", fmt.Errorf("归档目录不安全：%s", parent)
+	}
+	dest, err := os.MkdirTemp(parent, l.Instance()+"-")
+	if err != nil {
+		return "", err
+	}
+	for _, item := range present {
+		if err := os.Rename(e.path(item.path), filepath.Join(dest, item.name)); err != nil {
+			return dest, fmt.Errorf("保留 %s 失败（已保留的文件位于 %s）：%w", item.path, dest, err)
+		}
+	}
+	return dest, nil
+}
+
 // writeIndependentUnits 只覆盖该实例的程序路径，并允许 agent 调用的 wrapper 写入其独立运行目录。
 func (e Env) writeIndependentUnits(l layout.Layout) error {
 	unit := fmt.Sprintf(`[Service]

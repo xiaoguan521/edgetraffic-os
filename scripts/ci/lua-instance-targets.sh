@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 在一次性 CI 主机上验证 Lua 安装目标选择、共享范围和独立实例卸载保护。
 set -euo pipefail
+trap 'rc=$?; echo "lua-instance-targets: line $LINENO failed (exit $rc): $BASH_COMMAND" >&2' ERR
 DIST=$(realpath "$1"); BASE=$2; ARCH=$(uname -m)
 ROOT=/home/atwasoft/node
 [[ ! -e /home/atwasoft && ! -L /home/atwasoft && ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix && ! -e /usr/sbin/syedge-instance && ! -L /usr/sbin/syedge-instance ]] || { echo '需要干净的 CI 主机' >&2; exit 1; }

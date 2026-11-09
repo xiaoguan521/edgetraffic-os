@@ -350,6 +350,9 @@ func (e Env) removeUser(name string, purge, yes bool) error {
 	if _, err := os.Stat(e.path(l.Prefix())); err != nil {
 		return fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
+	if err := e.prepareInstancesDir(l); err != nil {
+		return err
+	}
 	if b, err := os.ReadFile(e.path(l.InstanceFile())); err == nil {
 		var p render.Profile
 		if err := json.Unmarshal(b, &p); err != nil {

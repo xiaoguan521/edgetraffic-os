@@ -186,7 +186,17 @@ expect "站点返回内容" "$(curl -s --max-time 3 -H 'Host: smoke.local' http:
 expect "Server 头为 SyEdge" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: SyEdge"
 expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /run/syedge/syedge.pid)" "$MASTER"
 if [[ -n "$SOLO_PID" ]]; then
-  if sudo syedge-instance remove solo --yes >/dev/null 2>&1; then ok "独立实例可单独删除"; else bad "独立实例删除失败"; fi
+  if [[ "$ROOT" != /opt/syedge ]]; then
+    printf 'preserved\n' | sudo tee "$ROOT/instances/solo/logs/preserve-smoke.log" "$ROOT/instances/solo/cache/preserve-smoke.cache" >/dev/null
+  fi
+  if out=$(sudo syedge-instance remove solo --yes 2>&1); then ok "独立实例可单独删除"; else bad "独立实例删除失败：$out"; fi
+  if [[ "$ROOT" != /opt/syedge ]]; then
+    if sudo find "$ROOT/removed-instances" -name preserve-smoke.log -print -quit | grep -q . && sudo find "$ROOT/removed-instances" -name preserve-smoke.cache -print -quit | grep -q .; then
+      ok "独立实例删除时保留日志与缓存"
+    else
+      bad "独立实例删除时未保留日志或缓存"
+    fi
+  fi
   expect "删除独立实例不影响默认实例" "$(cat /run/syedge/syedge.pid)" "$MASTER"
 fi
 

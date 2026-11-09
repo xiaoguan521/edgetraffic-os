@@ -273,9 +273,16 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		}
 		// 半途失败的 add 只留下部分目录：仍允许清理
 	}
-	dirs := []string{l.Prefix(), l.AgentState()}
-	if purge {
-		dirs = append(dirs, l.LogDir(), l.CacheDir())
+	if err := e.prepareInstancesDir(l); err != nil {
+		return err
+	}
+	custom := l.Root() != layout.DefaultSystemRoot()
+	dirs := []string{l.Prefix()}
+	if !custom {
+		dirs = append(dirs, l.AgentState())
+		if purge {
+			dirs = append(dirs, l.LogDir(), l.CacheDir())
+		}
 	}
 	if !yes {
 		e.say("将删除实例 %s（加 --yes 执行）：", name)
@@ -283,7 +290,11 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		e.say("  删除 %s、用户 %s", l.SudoersFile(), l.AgentUser())
 		e.say("  删除目录 %s", strings.Join(dirs, "、"))
 		if !purge {
-			e.say("  保留日志 %s 与缓存 %s（加 --purge 一并删除）", l.LogDir(), l.CacheDir())
+			if custom {
+				e.say("  日志和缓存将保留到 %s/removed-instances/%s-*（加 --purge 一并删除）", l.Root(), name)
+			} else {
+				e.say("  保留日志 %s 与缓存 %s（加 --purge 一并删除）", l.LogDir(), l.CacheDir())
+			}
 		}
 		return nil
 	}
@@ -291,6 +302,15 @@ func (e Env) Remove(name string, purge, yes bool) error {
 	for _, u := range []string{l.AgentUnit(), l.DataplaneUnit()} {
 		_ = e.Run("systemctl", "stop", u)
 		_ = e.Run("systemctl", "disable", u)
+	}
+	if custom && !purge {
+		kept, err := e.preserveInstanceData(l)
+		if err != nil {
+			return err
+		}
+		if kept != "" {
+			e.say("日志和缓存已保留：%s", kept)
+		}
 	}
 	if err := os.Remove(e.path(l.SudoersFile())); err != nil && !os.IsNotExist(err) {
 		return err
