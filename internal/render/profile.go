@@ -14,7 +14,7 @@ import (
 type Profile struct {
 	Instance   string `json:"instance,omitempty"`    // 空串为默认实例
 	Mode       string `json:"mode,omitempty"`        // system（默认）| user
-	Root       string `json:"root,omitempty"`        // user 模式的安装根目录
+	Root       string `json:"root,omitempty"`        // 安装根目录；system 为空表示默认 /opt/syedge
 	HTTPPort   int    `json:"http_port,omitempty"`   // 默认 80
 	HTTPSPort  int    `json:"https_port,omitempty"`  // 默认 443
 	StatusPort int    `json:"status_port,omitempty"` // 本机状态页，默认 8081
@@ -65,8 +65,10 @@ func (p Profile) Validate() error {
 	if !layout.ValidInstance(p.Instance) {
 		return fmt.Errorf("%w: instance name %q", ErrProfile, p.Instance)
 	}
-	if p.mode() == layout.ModeSystem && p.Root != "" {
-		return fmt.Errorf("%w: root is only used in user mode", ErrProfile)
+	if p.Root != "" {
+		if err := layout.ValidateInstallRoot(p.Root); err != nil {
+			return fmt.Errorf("%w: %v", ErrProfile, err)
+		}
 	}
 	if _, err := p.Layout(); err != nil {
 		return fmt.Errorf("%w: %v", ErrProfile, err)
@@ -103,7 +105,12 @@ func (p Profile) Layout() (layout.Layout, error) {
 	if !layout.ValidInstance(p.Instance) {
 		return layout.Layout{}, errors.New("invalid instance name")
 	}
-	return layout.System(p.Instance), nil
+	if p.Root != "" {
+		if err := layout.ValidateInstallRoot(p.Root); err != nil {
+			return layout.Layout{}, err
+		}
+	}
+	return layout.SystemAt(p.Root, p.Instance), nil
 }
 
 // lay 返回已校验档案的布局；只在 Validate 通过后调用。
@@ -147,13 +154,13 @@ type profileView struct {
 func (p Profile) view() profileView {
 	l := p.lay()
 	mods := "modules/"
-	if l.Mode() == layout.ModeUser {
+	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() {
 		mods = l.Modules() + "/"
 	}
 	return profileView{
 		NoFile:  p.Files(),
 		PidFile: l.PidFile(), ErrorLog: l.ErrorLog(), AccessLog: l.AccessLog(), StreamLog: l.LogDir() + "/stream.log",
-		CustomTemp: l.CacheDir() != layout.System("").CacheDir(), TempDir: l.CacheDir(),
+		CustomTemp: l.CacheDir() != layout.SystemAt("", "").CacheDir(), TempDir: l.CacheDir(),
 		HTTP: p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
 		VersionPath: layout.VersionPath(), VersionVar: "$" + brand.ID() + "_version",
 		SitesDir: l.ConfRoot() + "/current/sites/", ReleasesDir: p.ReleasesDir(),
@@ -185,6 +192,9 @@ func rebase(files map[string][]byte, releases, oldRev, newRev string) map[string
 func (p Profile) Effective() Profile {
 	if p.Mode == "" {
 		p.Mode = "system"
+	}
+	if p.Mode == string(layout.ModeSystem) && p.Root == layout.DefaultSystemRoot() {
+		p.Root = ""
 	}
 	p.HTTPPort, p.HTTPSPort, p.StatusPort, p.NoFile = p.HTTP(), p.HTTPS(), p.Status(), p.Files()
 	return p

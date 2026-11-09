@@ -22,6 +22,9 @@ func loadInstance(name string) (render.Profile, layout.Layout, error) {
 
 // loadInstanceAt 同 loadInstance；root 非空时为 user 模式（设计 0001 第 6 节）：默认实例也必须有档案（端口来自它）。
 func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
+	if !layout.ValidInstance(name) {
+		return render.Profile{}, layout.Layout{}, fmt.Errorf("invalid instance name %q", name)
+	}
 	if root != "" {
 		lay, err := layout.User(root, name)
 		if err != nil {
@@ -40,13 +43,17 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 		}
 		return p, lay, nil
 	}
+	systemRoot, err := layout.LoadSystemRoot()
+	if err != nil {
+		return render.Profile{}, layout.Layout{}, err
+	}
+	lay := layout.SystemAt(systemRoot, name)
 	if name == "" {
-		return render.Profile{}, layout.System(""), nil
+		if systemRoot == layout.DefaultSystemRoot() {
+			return render.Profile{}, lay, nil
+		}
+		return render.Profile{Mode: string(layout.ModeSystem), Root: systemRoot}, lay, nil
 	}
-	if !layout.ValidInstance(name) {
-		return render.Profile{}, layout.Layout{}, fmt.Errorf("invalid instance name %q", name)
-	}
-	lay := layout.System(name)
 	b, err := os.ReadFile(lay.InstanceFile())
 	if err != nil {
 		return render.Profile{}, lay, fmt.Errorf("instance %s is not installed: %w", name, err)
@@ -54,6 +61,14 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 	p, err := parseInstance(b, name)
 	if err != nil {
 		return render.Profile{}, lay, fmt.Errorf("%s: %w", lay.InstanceFile(), err)
+	}
+	// 旧版实例档案没有 root 字段；自定义 system 根目录下将其补成节点实际根，
+	// 使上报档案与控制台的 system + root 档案一致。
+	if p.Root == "" && systemRoot != layout.DefaultSystemRoot() {
+		p.Mode, p.Root = string(layout.ModeSystem), systemRoot
+		if err := p.Validate(); err != nil {
+			return render.Profile{}, lay, fmt.Errorf("%s: %w", lay.InstanceFile(), err)
+		}
 	}
 	return p, lay, nil
 }

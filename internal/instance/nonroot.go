@@ -41,12 +41,20 @@ func (e Env) Nonroot() error {
 	if e.RootMaster || e.rootMaster() || (e.Ambient != nil && !e.Ambient()) {
 		return e.rootMasterSetup(insts)
 	}
-	// 离开（或从未进入）兼容模式：删除生成的覆盖单元与旧版附加配置，软件包单元生效
-	e.removeCompatUnits()
-	_ = e.Run("systemctl", "daemon-reload")
+	if _, custom := e.customSystemRoot(); custom {
+		if err := e.writePrefixUnits(); err != nil {
+			return err
+		}
+		_ = e.Run("systemctl", "daemon-reload")
+	} else {
+		// 离开兼容模式：删除生成的覆盖单元与旧版附加配置，软件包单元生效
+		e.removeCompatUnits()
+		e.removePrefixUnits()
+		_ = e.Run("systemctl", "daemon-reload")
+	}
 	dp := layout.WorkerUser()
 	owner := dp + ":" + dp
-	def := layout.System("")
+	def := e.lay("")
 	e.say("== 运行时目录交给 %s", dp)
 	// 共用：版本库（含升级状态文件）递归；二进制目录与模块目录只改目录本身（wrapper 在其中切换软链、安装新版本，
 	// 已安装的文件仍由 root 拥有）
@@ -68,7 +76,7 @@ func (e Env) Nonroot() error {
 		return err
 	}
 	for _, in := range insts {
-		l := layout.System(in.Name)
+		l := e.lay(in.Name)
 		for _, d := range []string{l.RunDir(), l.LogDir(), l.CacheDir()} {
 			if err := os.MkdirAll(e.path(d), 0o755); err != nil {
 				return err
@@ -106,7 +114,7 @@ func (e Env) Nonroot() error {
 	units := []string{def.AgentUnit()}
 	for _, in := range insts {
 		if in.Name != "" {
-			units = append(units, layout.System(in.Name).AgentUnit())
+			units = append(units, e.lay(in.Name).AgentUnit())
 		}
 	}
 	_ = e.Run("systemctl", append([]string{"try-restart"}, units...)...)
@@ -121,7 +129,7 @@ var errNotRunning = errors.New("master not running")
 // wrapperCaps：wrapper 以数据面用户运行，`-t` 需要绑定 80/443，文件带 CAP_NET_BIND_SERVICE（permitted 与 inheritable，
 // 不在 effective）；只有数据面组可以执行。软件包每次升级都会换掉文件，因此每次 nonroot / add 都重新设置。
 func (e Env) wrapperCaps() error {
-	w := layout.System("").WrapperBin()
+	w := e.lay("").WrapperBin()
 	if _, err := os.Stat(e.path(w)); err != nil {
 		return nil // 只装了数据面软件包
 	}
@@ -141,7 +149,7 @@ func (e Env) wrapperCaps() error {
 }
 
 func (e Env) handover(name string) error {
-	l := layout.System(name)
+	l := e.lay(name)
 	if b, err := os.ReadFile(e.path(l.PidFile())); err != nil || len(b) == 0 {
 		return errNotRunning
 	}

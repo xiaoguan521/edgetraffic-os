@@ -2,7 +2,7 @@
 # 边缘节点卸载脚本（随节点发布包分发）。以 root 运行：
 #
 #   sudo ./uninstall.sh           停止服务并移除程序与 systemd 单元（保留配置版本与日志）
-#   sudo ./uninstall.sh --purge   同时清除 /opt/syedge、/var/lib/syedge-agent、/var/log/syedge、/var/cache/syedge
+#   sudo ./uninstall.sh --purge   同时清除安装根目录、agent 状态、日志与缓存
 #   sudo ./uninstall.sh --instance <名称> [--purge]   只删除一个同机实例（等同 syedge-instance remove <名称> --yes）
 #   sudo ./uninstall.sh --all [--purge]   先删除全部同机实例，再卸载节点
 set -euo pipefail
@@ -20,12 +20,29 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "uninstall: 请以 root 运行" >&2; exit 1; }
 
+if [[ -x /usr/sbin/syedge-instance ]]; then
+  R="$(/usr/sbin/syedge-instance prefix 2>/dev/null)" || { echo "uninstall: 无法读取 /etc/syedge/prefix，拒绝继续" >&2; exit 1; }
+elif [[ -f /etc/syedge/prefix ]]; then
+  R="$(sed -n '1p' /etc/syedge/prefix)"
+else
+  R=/opt/syedge
+fi
+if [[ "$R" == "/opt/syedge" ]]; then
+  LOG_DIR=/var/log/syedge
+  CACHE_DIR=/var/cache/syedge
+  STATE_DIR=/var/lib/syedge-agent
+else
+  LOG_DIR="$R/logs"
+  CACHE_DIR="$R/cache"
+  STATE_DIR="$R/agent"
+fi
+
 purge_arg=(); [[ $PURGE -eq 1 ]] && purge_arg=(--purge)
 if [[ -n "$INSTANCE" ]]; then
   exec /usr/sbin/syedge-instance remove "$INSTANCE" --yes "${purge_arg[@]+"${purge_arg[@]}"}"
 fi
 insts=()
-for f in /opt/syedge/instances/*/instance.json; do [[ -f "$f" ]] && insts+=("$(basename "$(dirname "$f")")"); done
+for f in "$R"/instances/*/instance.json; do [[ -f "$f" ]] && insts+=("$(basename "$(dirname "$f")")"); done
 if [[ ${#insts[@]} -gt 0 ]]; then
   if [[ $ALL -ne 1 ]]; then
     echo "本机还有同机多实例：${insts[*]}" >&2
@@ -45,8 +62,8 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   fi
 fi
 
-if [[ -f /run/syedge/syedge.pid && -x /opt/syedge/sbin/syedge ]]; then
-  /opt/syedge/sbin/syedge -s quit >/dev/null 2>&1 || true
+if [[ -f /run/syedge/syedge.pid && -x "$R/sbin/syedge" ]]; then
+  "$R/sbin/syedge" -s quit >/dev/null 2>&1 || true
 fi
 
 rm -f /usr/sbin/syedge /usr/bin/syedge-agent /usr/libexec/syedge/syedge-wrapper /usr/sbin/syedge-firewall
@@ -56,16 +73,17 @@ rm -f /etc/systemd/system/syedge.service /etc/systemd/system/syedge@.service \
       /etc/systemd/system/syedge-firewall.service /etc/systemd/system/syedge-firewall-refresh.service \
       /etc/systemd/system/syedge-firewall-refresh.path
 rm -rf /etc/systemd/system/syedge-firewall-refresh.path.d
-rm -rf /opt/syedge/sbin /opt/syedge/versions /opt/syedge/modules
+rm -rf "$R/sbin" "$R/versions" "$R/modules"
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf /opt/syedge /var/lib/syedge-agent /var/lib/syedge-agent-* /var/lib/syedge-firewall /var/log/syedge /var/cache/syedge /etc/syedge-agent /run/syedge /run/syedge-* /run/syedge-agent /run/syedge-agent-*
+  rm -rf "$R" "$STATE_DIR" /var/lib/syedge-agent-* /var/lib/syedge-firewall "$LOG_DIR" "$CACHE_DIR" /etc/syedge-agent /run/syedge /run/syedge-* /run/syedge-agent /run/syedge-agent-*
+  rm -f /etc/syedge/prefix
   echo "已卸载 SyEdge 节点并清理全部配置与数据（--purge）。"
 else
-  echo "已卸载 SyEdge 节点程序（保留 /opt/syedge/conf 与 /var/log/syedge；如需彻底清除请加 --purge）。"
+  echo "已卸载 SyEdge 节点程序（保留 $R/conf、$LOG_DIR 与 $CACHE_DIR；如需彻底清除请加 --purge）。"
 fi
 

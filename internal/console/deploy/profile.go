@@ -282,7 +282,7 @@ func (d *Service) CheckInstance(groupID uint, reported *render.Profile) error {
 func describeProfile(p render.Profile) string {
 	e := p.Effective()
 	where := ""
-	if e.Mode == "user" {
+	if e.Root != "" {
 		where = "，安装根目录 " + e.Root
 	}
 	return fmt.Sprintf("%s（%s 模式%s，HTTP %d / HTTPS %d / 状态页 %d）", instanceLabel(e), e.Mode, where, e.HTTPPort, e.HTTPSPort, e.StatusPort)

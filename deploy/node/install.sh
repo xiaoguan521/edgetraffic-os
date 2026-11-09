@@ -5,6 +5,7 @@
 #   sudo ./install.sh --server H:P --token T --ca-fingerprint F
 #                                                       同时注册到控制台并启动 syedge-agent
 #   sudo ./install.sh ... --replace-local-config         本机原为独立模式且有自定义配置时，备份后由控制台接管
+#   sudo ./install.sh --prefix /data/syedge                    指定 system 安装根目录（只允许首次安装）
 #   sudo ./install.sh --firewall-ssh-from 10.0.0.0/8[,IP...]
 #                                                       同时启用节点防火墙（可选，见 syedge-firewall）
 #   sudo ./install.sh --root-master                     兼容模式：与传统 Web 服务器相同由 root 运行 master（worker 仍以 syedge 运行）。
@@ -13,12 +14,13 @@
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; REPLACE_LOCAL=(); ROOT_MASTER=()
+SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
     --token)          TOKEN="$2";  shift 2 ;;
     --ca-fingerprint) CAFP="$2";   shift 2 ;;
+    --prefix)         [[ $# -ge 2 ]] || { echo "--prefix 需要一个安装根目录" >&2; exit 2; }; PREFIX_ARG="$2"; shift 2 ;;
     --firewall-ssh-from) FW_FROM="$2"; shift 2 ;;
     --replace-local-config) REPLACE_LOCAL=(-replace-local-config); shift ;;
     --root-master)    ROOT_MASTER=(--root-master); shift ;;
@@ -53,17 +55,33 @@ echo "== 安装文件"
 # 可执行文件先写临时文件再 rename：正在运行的程序不能原地覆盖（Text file busy），
 # 运行中的 syedge 不受影响，新二进制在下次二进制热升级（USR2）时才生效。
 put() { install -o root -g root -m 0755 -D "$1" "$2.new" && mv -f "$2.new" "$2"; }
-mkdir -p /opt/syedge
-# 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
-(cd "$HERE/rootfs/opt/syedge" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
-  install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syedge/$f" "/opt/syedge/$f"
-done
-mkdir -p /opt/syedge/conf/releases
-put "$HERE/rootfs/opt/syedge/sbin/syedge" /opt/syedge/sbin/syedge
 put "$HERE/rootfs/usr/bin/syedge-agent" /usr/bin/syedge-agent
 put "$HERE/rootfs/usr/libexec/syedge/syedge-wrapper" /usr/libexec/syedge/syedge-wrapper
 put "$HERE/rootfs/usr/sbin/syedge-firewall" /usr/sbin/syedge-firewall
 put "$HERE/rootfs/usr/sbin/syedge-instance" /usr/sbin/syedge-instance
+
+if [[ -n "$PREFIX_ARG" ]]; then
+  /usr/sbin/syedge-instance prefix "$PREFIX_ARG" >/dev/null
+fi
+R="$(/usr/sbin/syedge-instance prefix)"
+[[ "$R" != "/" ]] || die "安装根目录不能是 /"
+if [[ "$R" == "/opt/syedge" ]]; then
+  LOG_DIR=/var/log/syedge
+  CACHE_DIR=/var/cache/syedge
+  STATE_DIR=/var/lib/syedge-agent
+else
+  LOG_DIR="$R/logs"
+  CACHE_DIR="$R/cache"
+  STATE_DIR="$R/agent"
+fi
+
+mkdir -p "$R"
+# 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
+(cd "$HERE/rootfs/opt/syedge" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
+  install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syedge/$f" "$R/$f"
+done
+mkdir -p "$R/conf/releases"
+put "$HERE/rootfs/opt/syedge/sbin/syedge" "$R/sbin/syedge"
 install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service "$HERE"/rootfs/etc/systemd/system/*.path /etc/systemd/system/
 install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syedge" /etc/logrotate.d/syedge
 install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syedge.conf" /etc/tmpfiles.d/syedge.conf
@@ -76,18 +94,18 @@ if ! visudo -cf "$sudoers_new" >/dev/null 2>&1; then
   visudo -cf "$sudoers_new" >/dev/null || { rm -f "$sudoers_new"; die "sudoers 校验失败"; }
 fi
 mv /etc/sudoers.d/syedge-agent.new /etc/sudoers.d/syedge-agent
-ln -sfn /opt/syedge/sbin/syedge /usr/sbin/syedge
-chown -R root:root /opt/syedge/sbin /opt/syedge/share /opt/syedge/html
+ln -sfn "$R/sbin/syedge" /usr/sbin/syedge
+chown -R root:root "$R/sbin" "$R/share" "$R/html"
 
 # syedge -t 会检查 pid 文件可写，/run/syedge 平时由 syedge.service 的 RuntimeDirectory 创建
-mkdir -p /opt/syedge/conf/releases /var/log/syedge /var/cache/syedge /var/lib/syedge-agent /run/syedge-agent /run/syedge
-chmod 0750 /var/lib/syedge-agent
+mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR" /run/syedge-agent /run/syedge
+chmod 0750 "$STATE_DIR"
 
 echo "== 初始化配置"
-if [[ ! -e /opt/syedge/conf/current ]]; then
+if [[ ! -e "$R/conf/current" ]]; then
   syedge-agent bootstrap
 fi
-chown -R syedge-agent:syedge /opt/syedge/conf /var/lib/syedge-agent /run/syedge-agent
+chown -R syedge-agent:syedge "$R/conf" "$STATE_DIR" /run/syedge-agent
 
 echo "== 运行时不使用 root"
 # 旧版本把防火墙规则放在 /etc/syedge：迁移到防火墙用户的目录
@@ -102,7 +120,7 @@ systemctl daemon-reload
 /usr/sbin/syedge-instance nonroot ${ROOT_MASTER[@]+"${ROOT_MASTER[@]}"}
 # 经 wrapper 校验：默认以 syedge（wrapper 带 CAP_NET_BIND_SERVICE，-t 需要绑定 80/443；不会创建属于 root 的日志）；
 # 兼容模式下 master 以 root 运行，wrapper 也以 root 运行
-REV="$(basename "$(readlink /opt/syedge/conf/current)")"
+REV="$(basename "$(readlink "$R/conf/current")")"
 if [[ -f /etc/syedge/root-master ]]; then
   /usr/libexec/syedge/syedge-wrapper test "$REV"
 else
@@ -117,16 +135,16 @@ if systemctl is-active -q syedge.service; then
 else
   systemctl start syedge.service
 fi
-echo "$(/opt/syedge/sbin/syedge -v 2>&1)，systemd 单元 syedge.service 已启动"
+echo "$($R/sbin/syedge -v 2>&1)，systemd 单元 syedge.service 已启动"
 
 if [[ -n "$SERVER$TOKEN$CAFP" ]]; then
   [[ -n "$SERVER" && -n "$TOKEN" && -n "$CAFP" ]] || die "--server、--token、--ca-fingerprint 需同时提供"
   echo "== 注册到控制台 $SERVER"
   syedge-agent enroll -server "$SERVER" -token "$TOKEN" -ca-fingerprint "$CAFP" ${REPLACE_LOCAL[@]+"${REPLACE_LOCAL[@]}"}
-  chown -R syedge-agent:syedge /var/lib/syedge-agent
+  chown -R syedge-agent:syedge "$STATE_DIR"
   systemctl enable syedge-agent.service && systemctl start syedge-agent.service   # 不用 --now：systemd 220 以下不支持
   echo "syedge-agent 已启动，几秒后节点会出现在控制台。"
-elif [[ -f /var/lib/syedge-agent/node.json ]]; then
+elif [[ -f "$STATE_DIR/node.json" ]]; then
   systemctl enable syedge-agent.service >/dev/null 2>&1
   systemctl restart syedge-agent.service   # 只重启 agent 进程，不影响 syedge
   echo "已注册节点，syedge-agent 已更新并重启。"

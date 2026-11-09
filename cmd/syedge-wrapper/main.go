@@ -31,6 +31,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "user-mode wrapper must not run as root")
 		os.Exit(wrapper.ExitUsage)
 	}
+	if root == "" {
+		if _, err := layout.LoadSystemRoot(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(wrapper.ExitUsage)
+		}
+	}
 	// system 模式：运行时不使用 root（设计 0001 D5）。sudoers 以数据面用户运行 wrapper，与 master 同一身份。
 	// 例外是兼容模式（内核或 systemd 不支持 ambient 能力，如 CentOS 7）：master 与传统 Web 服务器一样以 root 运行，
 	// wrapper 须以 root 才能向它发信号；是否兼容模式只由 root 所有的标记文件决定（layout.RootMasterAt）

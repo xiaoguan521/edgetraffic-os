@@ -68,7 +68,7 @@ func freePort(t *testing.T) int {
 func TestHotUpgradeWithRealSyedge(t *testing.T) {
 	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
-		src = DataplaneBin
+		src = DataplaneBin()
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {

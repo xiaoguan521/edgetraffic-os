@@ -43,7 +43,7 @@ func chownR(t *testing.T, dir string, uid, gid int) {
 func TestHandoverRealSyedge(t *testing.T) {
 	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
-		src = DataplaneBin
+		src = DataplaneBin()
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {

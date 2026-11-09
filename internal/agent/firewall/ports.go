@@ -21,7 +21,19 @@ type Ports struct {
 
 // InstanceConfs 返回本机（system 模式）全部实例当前生效的主配置文件：默认实例，加上 instances/ 下已创建的具名实例。
 func InstanceConfs() []string {
-	return instanceConfs(layout.System(""), layout.System)
+	root, err := layout.LoadSystemRoot()
+	if err != nil {
+		return nil
+	}
+	return InstanceConfsAt(root)
+}
+
+// InstanceConfsAt 返回指定 system 安装根目录下全部实例的当前配置文件。
+// 控制台/测试等调用方应使用它避免读取调用机器的安装根目录标记。
+func InstanceConfsAt(root string) []string {
+	return instanceConfs(layout.SystemAt(root, ""), func(name string) layout.Layout {
+		return layout.SystemAt(root, name)
+	})
 }
 
 func instanceConfs(def layout.Layout, inst func(string) layout.Layout) []string {

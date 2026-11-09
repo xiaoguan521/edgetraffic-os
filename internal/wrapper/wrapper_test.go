@@ -27,7 +27,7 @@ func TestBuildAllowed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: unexpected error %v", c.argv, err)
 		}
-		if cmd.Path != DataplaneBin {
+		if cmd.Path != DataplaneBin() {
 			t.Fatalf("%v: path = %q", c.argv, cmd.Path)
 		}
 		if !reflect.DeepEqual(cmd.Args, c.want) {

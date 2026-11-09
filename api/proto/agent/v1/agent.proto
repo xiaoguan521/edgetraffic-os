@@ -163,7 +163,8 @@ message Signal {
 message LicenseUpdate { string raw = 1; }
 
 // 漂移 diff 上报（规格书 12.7 路径 B，CLAUDE.md“agent 与安全”）：agent 发现当前版本目录被手工改动时主动上报。
-// 只限受管版本目录 /opt/syedge/conf/releases/<当前版本>/ 内的文件；单文件超过上限或私钥文件（*.key）只报哈希。
+// 只限本实例前缀下 conf/releases/<当前版本>/ 内的文件（默认实例为 /opt/syedge/conf/releases/）；
+// 单文件超过上限或私钥文件（*.key）只报哈希。
 // 协议中没有任何“读取文件”的请求：控制台不能让 agent 读取指定路径。
 message DriftReport {
   string revision_id = 1;

@@ -207,6 +207,14 @@ cd syedge-node-<版本>-linux-<架构>
 sudo ./install.sh
 ```
 
+默认 system 安装根目录为 `/opt/syedge`。如果需要把程序和运行数据放到其他目录，可在首次安装时指定一个由 root 控制的绝对路径：
+
+```bash
+sudo ./install.sh --prefix /data/syedge
+```
+
+安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；`/run/syedge*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
+
 安装脚本会：
 
 - 创建 `syedge` 和 `syedge-agent` 系统用户；
@@ -265,6 +273,9 @@ sudo syedge-agent enroll \
 RPM 系统：
 
 ```bash
+sudo mkdir -p /etc/syedge
+printf '%s\n' /data/syedge | sudo tee /etc/syedge/prefix
+sudo chmod 0644 /etc/syedge/prefix
 sudo dnf install ./syedge-<版本>*.rpm ./syedge-agent-<版本>*.rpm
 sudo systemctl enable syedge && sudo systemctl start syedge
 ```
@@ -272,11 +283,16 @@ sudo systemctl enable syedge && sudo systemctl start syedge
 Debian/Ubuntu：
 
 ```bash
+sudo mkdir -p /etc/syedge
+printf '%s\n' /data/syedge | sudo tee /etc/syedge/prefix
+sudo chmod 0644 /etc/syedge/prefix
 sudo apt install ./syedge_<版本>*.deb ./syedge-agent_<版本>*.deb
 sudo systemctl enable syedge && sudo systemctl start syedge
 ```
 
 首次安装后，按照“4.2 安装后注册到控制台”注册 Agent。`syedge-agent` 软件包依赖 `syedge` 和 `sudo`；可选的 `syedge-firewall` 需要额外安装 `nftables`。
+
+不需要自定义目录时不要创建该标记文件，软件包行为与历史版本相同。RPM/DEB 的 payload 仍会保留一份 `/opt/syedge` 静态文件，这是包管理器升级所需；postinstall 会把 `sbin`、`share`、`html` 和 `modules` 同步到标记的根目录，配置、日志、缓存、版本库和 agent 状态不会写入默认目录。标记文件一旦存在，修改为另一个路径不会触发迁移，程序会拒绝运行。
 
 ### 4.4 裸数据面二进制安装
 

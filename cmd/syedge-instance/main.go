@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/instance"
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
@@ -59,6 +61,7 @@ func usage(w io.Writer) {
   %[1]s list
   %[1]s check
   %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用，可由数据面用户执行）
+  %[1]s prefix [<安装根目录>]                  首次设置 system 模式安装根目录（默认 /opt/%[1]s）
   %[1]s nonroot [--root-master]               运行时不使用 root：交出运行时目录、仍以 root 运行的 master
                                               无中断切换为数据面用户（安装与升级软件包时自动执行）。
                                               内核或 systemd 不支持 ambient 能力（如 CentOS 7）时，或加 --root-master，
@@ -81,7 +84,7 @@ func env(out io.Writer, userRoot string) instance.Env {
 		Spawn:    spawn,
 		Handover: handover,
 		SetCaps: func(path string, value []byte) error {
-			return syscall.Setxattr(path, "security.capability", value, 0)
+			return unix.Setxattr(path, "security.capability", value, 0)
 		},
 		Root: "/",
 		Out:  out,
@@ -142,9 +145,30 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: "+cmd+" 只用于 user 模式（--root）")
 		return 2
 	}
+	if userRoot == "" && cmd != "prefix" {
+		if _, err := layout.LoadSystemRoot(); err != nil {
+			_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: "+err.Error())
+			return 1
+		}
+	}
 	e := env(stdout, userRoot)
 	var err error
 	switch cmd {
+	case "prefix":
+		if len(rest) > 1 {
+			usage(stderr)
+			return 2
+		}
+		if len(rest) == 0 {
+			root, err := layout.LoadSystemRootAt(e.Root)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: "+err.Error())
+				return 1
+			}
+			_, _ = fmt.Fprintln(stdout, root)
+			return 0
+		}
+		err = e.Prefix(rest[0])
 	case "add":
 		err = add(e, rest)
 	case "init":

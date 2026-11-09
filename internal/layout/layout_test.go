@@ -1,6 +1,10 @@
 package layout
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // 默认品牌、system 模式下的路径必须与重构前写死的值逐字相同，保证本次重构不改变任何已部署节点的行为。
 func TestSystemDefaultMatchesLegacyPaths(t *testing.T) {
@@ -46,6 +50,48 @@ func TestSystemInstancePaths(t *testing.T) {
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestSystemCustomRootPaths(t *testing.T) {
+	l := SystemAt("/data/syedge", "blue")
+	for _, c := range []struct{ name, got, want string }{
+		{"Prefix", l.Prefix(), "/data/syedge/instances/blue"},
+		{"ConfRoot", l.ConfRoot(), "/data/syedge/instances/blue/conf"},
+		{"Bin", l.Bin(), "/data/syedge/sbin/syedge"},
+		{"Versions", l.Versions(), "/data/syedge/versions"},
+		{"Modules", l.Modules(), "/data/syedge/modules"},
+		{"PidFile", l.PidFile(), "/run/syedge-blue/syedge.pid"},
+		{"ErrorLog", l.ErrorLog(), "/data/syedge/instances/blue/logs/error.log"},
+		{"CacheDir", l.CacheDir(), "/data/syedge/instances/blue/cache"},
+		{"AgentState", l.AgentState(), "/data/syedge/instances/blue/agent"},
+		{"WrapperBin", l.WrapperBin(), "/usr/libexec/syedge/syedge-wrapper"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+	if got := SystemAt("/data/syedge", "").AgentState(); got != "/data/syedge/agent" {
+		t.Errorf("default AgentState = %q", got)
+	}
+}
+
+func TestSystemRootMarkerMissingAndInvalid(t *testing.T) {
+	fsroot := t.TempDir()
+	if got, err := LoadSystemRootAt(fsroot); err != nil || got != DefaultSystemRoot() {
+		t.Fatalf("missing marker: got %q, err %v", got, err)
+	}
+	marker := filepath.Join(fsroot, filepath.FromSlash(PrefixMarker()))
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"relative\n", "/\n", "/data/../syedge\n", "/data/sy edge\n"} {
+		if err := os.WriteFile(marker, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadSystemRootAt(fsroot); err == nil {
+			t.Errorf("marker %q accepted", body)
 		}
 	}
 }

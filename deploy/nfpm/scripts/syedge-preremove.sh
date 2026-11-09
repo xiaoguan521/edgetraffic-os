@@ -4,8 +4,9 @@ if is_remove "$1"; then
     systemctl stop syedge.service >/dev/null 2>&1; systemctl disable syedge.service >/dev/null 2>&1 || true
     systemctl stop 'syedge@*.service' >/dev/null 2>&1 || true
   fi
-  if [ -f /run/syedge/syedge.pid ] && [ -x /opt/syedge/sbin/syedge ]; then
-    /opt/syedge/sbin/syedge -s quit >/dev/null 2>&1 || true
+  r=$(syedge_root)
+  if [ -f /run/syedge/syedge.pid ] && [ -x "$r/sbin/syedge" ]; then
+    "$r/sbin/syedge" -s quit >/dev/null 2>&1 || true
   fi
 fi
 exit 0

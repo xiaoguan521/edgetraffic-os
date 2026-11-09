@@ -66,7 +66,7 @@ func dropLua(t *testing.T, p Paths, priv ed25519.PrivateKey, ver, variant string
 func TestHotUpgradeWithLuaAddon(t *testing.T) {
 	src := os.Getenv("SYEDGE_BIN")
 	if src == "" {
-		src = DataplaneBin
+		src = DataplaneBin()
 	}
 	bin, err := os.ReadFile(src)
 	if err != nil {

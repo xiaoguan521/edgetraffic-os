@@ -8,6 +8,7 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/agent/firewall"
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // firewallMain 实现离线子命令（不连接控制台，由 syedge-firewall 脚本调用）：
@@ -19,6 +20,11 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(stderr, "用法："+brand.Agent()+" firewall render|covers ...")
 		return 2
+	}
+	root, err := layout.LoadSystemRoot()
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, brand.Agent()+": "+err.Error())
+		return 1
 	}
 	fs := flag.NewFlagSet("firewall "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -52,7 +58,7 @@ func firewallMain(args []string, stdout, stderr io.Writer) int {
 		}
 		o := firewall.Options{SSHFrom: from, SSHPort: *sshPort, AllowTCP: tcp, AllowUDP: udp, AllowAnySSH: *anySSH}
 		if *instances {
-			if p, ok := firewall.ListenPorts(firewall.InstanceConfs()); ok {
+			if p, ok := firewall.ListenPorts(firewall.InstanceConfsAt(root)); ok {
 				o.Public = &p
 			}
 		}

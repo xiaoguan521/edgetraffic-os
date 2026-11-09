@@ -12,7 +12,7 @@
   patch 只允许改字符串字面量与宏的值，禁止改动判断、结构体、函数签名、模块 ABI。
 - 信号：reload=HUP，quit=QUIT，stop=TERM，reopen=USR1；USR2 与 WINCH 仅用于二进制热升级流程
   （USR2 发给当前 master 启动新版，WINCH 只发给旧 master `syedge.pid.oldbin` 让旧 worker 退出），均由 wrapper 发出。
-- Lua 发行变体（P10）：lua-nginx-module、ngx_devel_kit、LuaJIT 以动态模块形式放在 /opt/syedge/modules/，
+- Lua 发行变体（P10）：lua-nginx-module、ngx_devel_kit、LuaJIT 以动态模块形式放在安装根目录的 modules/ 下（默认为 /opt/syedge），
   不改 syedge 核心与改名 patch。只有该目录下的 Lua 模块文件免于“二进制无上游名”检查；进程名、命令、日志、包名仍须为 syedge。
 - 国密发行变体（P8）：`build-syedge.sh -t tongsuo` 只把 OpenSSL 换成铜锁（开启 NTLS），不改 syedge 源码与改名 patch；
   国密双证书只通过 syedge 已有的 `ssl_conf_command`（Enable_ntls / SignCertificate / EncCertificate …）由 internal/render 生成，
@@ -31,14 +31,14 @@
 
 ## 配置
 - 禁止用字符串拼接用户输入生成配置；一律经 internal/render 的校验器 + 模板 + 转义函数。
-- 版本目录自包含，include 一律相对路径；--conf-path=/opt/syedge/conf/current/syedge.conf。
+- 版本目录自包含，include 一律相对路径；默认实例的 --conf-path=/opt/syedge/conf/current/syedge.conf；自定义 system 根目录见 /etc/syedge/prefix。
 - location 内禁止 add_header；location 内出现 proxy_set_header 时必须重发基线 5 条。
 - 每次修改模板都要让 render 黄金用例通过真实 `syedge -t`。
 
 ## agent 与安全
 - agent 只主动连接控制台，不得监听任何端口。
 - agent 协议中不得加入「执行命令」「读写任意文件」类指令。仅有两个受限的专用消息：
-  - 漂移 diff 上报：只限受管版本目录 /opt/syedge/conf/releases/ 内的文件，单文件大小设上限，私钥文件只报哈希。
+  - 漂移 diff 上报：只限本实例前缀下 conf/releases/ 内的文件（默认实例为 /opt/syedge/conf/releases/），单文件大小设上限，私钥文件只报哈希。
   - UpgradeDataplane：升级包必须带厂商 Ed25519 签名（与 License 签名密钥分开），由 wrapper 验签后才可使用。
 - 所有外部命令用 exec.Command 切片调用，禁止 sh -c。
 - wrapper 只接受子命令 test|reload|reopen|quit|upgrade-start|upgrade-commit|upgrade-abort（升级三个在 P8 实现）；

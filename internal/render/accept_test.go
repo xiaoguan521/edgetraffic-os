@@ -98,7 +98,7 @@ ngx.say(table.concat(r, " "))`}},
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(ReleasesDir, rev)
+	dir := filepath.Join(Profile{}.ReleasesDir(), rev)
 	_ = os.RemoveAll(dir)
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
