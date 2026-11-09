@@ -142,6 +142,46 @@ func TestCheckSystemRootRejectsUntrustedParents(t *testing.T) {
 	}
 }
 
+func TestCheckSystemRootAllowsTrustedChildOfStickyHome(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("ownership checks require root")
+	}
+	fsroot := t.TempDir()
+	home := filepath.Join(fsroot, "home")
+	parent := filepath.Join(home, "atwasoft")
+	target := filepath.Join(parent, "node")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, os.ModeSticky|0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("trusted child under sticky /home rejected: %v", err)
+	}
+	if err := os.Rename(target, target+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err != nil {
+		t.Fatalf("missing root under trusted child of sticky /home rejected: %v", err)
+	}
+	if err := os.Chown(parent, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted an untrusted child of sticky /home")
+	}
+	if err := os.Chown(parent, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(parent, parent+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSystemRootAt(fsroot, "/home/atwasoft/node"); err == nil {
+		t.Error("accepted a missing child of sticky /home")
+	}
+}
+
 func TestSystemRootMarkerMissingAndInvalid(t *testing.T) {
 	fsroot := t.TempDir()
 	if got, err := LoadSystemRootAt(fsroot); err != nil || got != DefaultSystemRoot() {

@@ -368,7 +368,8 @@ func LoadSystemRootAt(fsroot string) (string, error) {
 
 // CheckSystemRoot 校验一个 system 模式安装根目录在本机上的安全属性。
 // 根目录本身可以尚不存在（安装脚本会先写标记再创建目录）；已存在的根目录
-// 及父目录必须是 root 所有、不可被组或其他用户写入的真实目录。
+// 及父目录必须由 root 所有且不可被组或其他用户写入；粘滞 /home 可有
+// 写权限，但下一级目录必须已经存在且由 root 所有。
 func CheckSystemRoot(root string) error { return CheckSystemRootAt("/", root) }
 
 // CheckSystemRootAt 是 CheckSystemRoot 的可注入版本。
@@ -380,12 +381,14 @@ func CheckSystemRootAt(fsroot, root string) error {
 		return err
 	}
 	clean := filepath.Join(fsroot, filepath.FromSlash(root))
+	childTrusted := false
 	for p := clean; ; p = filepath.Dir(p) {
 		fi, err := os.Lstat(p)
 		if errors.Is(err, os.ErrNotExist) {
 			if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
 				break
 			}
+			childTrusted = false
 			continue
 		}
 		if err != nil {
@@ -394,9 +397,18 @@ func CheckSystemRootAt(fsroot, root string) error {
 		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("install root %s or its parents must be non-symlink directories", root)
 		}
-		if fi.Mode().Perm()&0o022 != 0 || !ownedByRoot(fi) {
-			return fmt.Errorf("install root %s: %s must be root-owned and not writable by group or others (mode %04o, root-owned %t)", root, p, fi.Mode().Perm(), ownedByRoot(fi))
+		rootOwned := ownedByRoot(fi)
+		if !rootOwned || fi.Mode().Perm()&0o022 != 0 {
+			stickyHome := rootOwned && p == filepath.Join(fsroot, "home") && fi.Mode()&os.ModeSticky != 0
+			if stickyHome && !childTrusted {
+				return fmt.Errorf("install root %s: sticky /home requires its first child directory to exist and be root-owned", root)
+			}
+			// 粘滞位阻止非 root 删除或替换 root 所有的下一级目录；不放宽其他父目录。
+			if !stickyHome || !childTrusted {
+				return fmt.Errorf("install root %s: %s must be root-owned and not writable by group or others (mode %04o, root-owned %t)", root, p, fi.Mode().Perm(), rootOwned)
+			}
 		}
+		childTrusted = true
 		if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
 			break
 		}

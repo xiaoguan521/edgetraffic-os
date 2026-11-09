@@ -215,7 +215,7 @@ sudo ./install.sh --prefix /data/syedge
 
 安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；`/run/syedge*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
 
-建议选择 `/data/syedge`、`/srv/syedge` 或 `/home/<子目录>` 这样的专用目录；不能把 `/usr`、`/opt`、`/var`、`/home` 等系统共享目录本身作为安装根目录，也不能放在 `/root` 下。安装根目录及已存在的父目录必须由 root 所有、不能被组或其他用户写入，也不能是符号链接；同时要允许 `syedge` 与 `syedge-agent` 用户逐级穿过目录、读取 `/etc/syedge/prefix`。安装脚本不会修改已有父目录或安装根目录的属主与权限；不满足条件时，请管理员选择受控目录或调整权限后重试。
+建议选择 `/data/syedge`、`/srv/syedge` 或 `/home/<子目录>` 这样的专用目录；不能把 `/usr`、`/opt`、`/var`、`/home` 等系统共享目录本身作为安装根目录，也不能放在 `/root` 下。安装根目录及已存在的父目录必须由 root 所有、不能被组或其他用户写入，也不能是符号链接；唯一例外是 root 所有且带粘滞位的 `/home`（例如 `1777`），此时其下一级目录必须已经存在并属于 root。同时要允许 `syedge` 与 `syedge-agent` 用户逐级穿过目录、读取 `/etc/syedge/prefix`。安装脚本不会修改已有父目录或安装根目录的属主与权限；不满足条件时，请管理员选择受控目录或调整权限后重试。
 
 例如首次安装到 `/home/atwasoft/node`：
 
@@ -223,7 +223,7 @@ sudo ./install.sh --prefix /data/syedge
 sudo ./install.sh --prefix /home/atwasoft/node
 ```
 
-路径中尚不存在的目录由安装脚本创建。若 `/home/atwasoft` 已属于普通用户，或者 `/home`、`/home/atwasoft` 对其他用户可写，需要先由管理员处理目录归属和权限；仅把 `node` 设为 root 所有无法防止可写的父目录替换它。
+路径中尚不存在的目录由安装脚本创建。若 `/home/atwasoft` 已属于普通用户，或者 `/home`、`/home/atwasoft` 对其他用户可写且不满足上述粘滞位例外，需要先由管理员处理目录归属和权限；仅把 `node` 设为 root 所有无法防止可写的父目录替换它。
 
 位于 `/home` 时，新版 systemd 会仅将安装目录映射进服务沙箱，其他家目录仍被隐藏。较旧 systemd 不支持该映射功能，会开放 `/home` 并继续隐藏 `/root` 和 `/run/user`；此时其他家目录仍依赖其文件权限保护。
 
