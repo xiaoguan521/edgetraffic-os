@@ -84,8 +84,33 @@ func TestRenderUserProfile(t *testing.T) {
 	}
 }
 
+func TestRenderCustomSystemProfile(t *testing.T) {
+	in := luaInput(t)
+	in.Profile = Profile{Mode: "system", Root: "/data/syedge"}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(b.Files["syedge.conf"])
+	for _, want := range []string{
+		"pid   /run/syedge/syedge.pid;",
+		"error_log  /data/syedge/logs/error.log  warn;",
+		"client_body_temp_path  /data/syedge/cache/client_temp;",
+		"load_module  /data/syedge/modules/lua/ndk_http_module.so;",
+		`lua_package_path   "/data/syedge/modules/lua/lualib/?.lua";`,
+		"/data/syedge/conf/releases/" + in.Revision + "/lua/",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("custom system main config missing %q", want)
+		}
+	}
+	if strings.Contains(main, "user ") {
+		t.Error("custom system mode must retain the system user directive")
+	}
+}
+
 func TestProfileValidation(t *testing.T) {
-	ok := []Profile{{}, instanceProfile(), {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
+	ok := []Profile{{}, instanceProfile(), {Root: "/data/edge"}, {Mode: "system", Root: "/data/edge"}, {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
 	for _, p := range ok {
 		if err := p.Validate(); err != nil {
 			t.Errorf("%+v rejected: %v", p, err)
@@ -97,7 +122,6 @@ func TestProfileValidation(t *testing.T) {
 		{Mode: "weird"},
 		{Mode: "user"},                     // 缺少根目录
 		{Mode: "user", Root: "relative"},   // 根目录必须是绝对路径
-		{Root: "/data/edge"},               // system 模式不接受根目录
 		{Mode: "user", Root: "/data/edge"}, // user 模式不能用 80/443（默认端口）
 		{HTTPPort: 8080, HTTPSPort: 8080},  // 端口重复
 		{StatusPort: 443},                  // 与 HTTPS 端口冲突

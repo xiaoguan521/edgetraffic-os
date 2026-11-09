@@ -51,7 +51,7 @@
 | --- | --- | --- |
 | 品牌 `B` | 例如 `syedge`（默认）、`syedge` | **构建时**写入所有程序，见第 4 节 |
 | 模式 `M` | `system`（root 安装，当前方式）或 `user`（普通用户安装） | 安装时选择 |
-| 根目录 `R` | system 模式固定为 `/opt/B`；user 模式由用户指定，例如 `~/syedge` | 安装时确定 |
+| 根目录 `R` | system 模式默认 `/opt/B`，也可在首次安装前由 `/etc/B/prefix` 指定；user 模式由用户指定，例如 `~/syedge` | 安装时确定 |
 | 实例名 `I` | 空字符串表示默认实例；具名实例匹配 `^[a-z][a-z0-9-]{0,15}$`，`default` 为保留名 | `B-instance add` 时确定 |
 
 代码中只有 `internal/layout` 一个包负责根据 `(B, M, R, I)` 计算路径。agent、wrapper、实例管理命令和渲染器都调用它，**任何地方都不允许再拼写路径或写死程序名**。wrapper 永远只接收实例名，不接收路径，路径由它自己算出，这是保持提权安全的关键。
@@ -86,6 +86,14 @@
 | 本机共用部分 | 二进制 `/opt/B/sbin/B`（软链到 `versions/`）、版本库 `/opt/B/versions/`、Lua 模块 `/opt/B/modules/`、`/usr/libexec/B/B-wrapper`、`/usr/bin/B-agent`、`/usr/sbin/B-instance` | |
 
 `/run` 下的目录由 systemd 的 `RuntimeDirectory=` 或 tmpfiles 在开机时创建。
+
+#### system 模式的自定义安装根目录
+
+root 安装仍默认使用 `/opt/B`。如果发行版的 `/opt` 不适合放置运行数据，可在首次安装前由 root 写入 `/etc/B/prefix`，内容为一行规范化绝对路径 `R`（不能是 `/`）。标记文件必须是 root 所有、0644，`R` 及其已存在的父目录必须是 root 所有且不可被组或其他用户写入；读取方校验失败时拒绝运行。没有标记文件时按默认根目录处理。
+
+自定义 system 根目录的实例前缀仍为 `P=R` 或 `R/instances/I`；程序、版本库、模块、静态文件、配置、日志、缓存和 agent 状态分别位于 `R/sbin`、`R/versions`、`R/modules`、`R/share`、`R/html`、`P/conf`、`P/logs`、`P/cache`、`P/agent`。运行目录继续使用 `/run/B` 与 `/run/B-I`，agent、wrapper、instance、sudoers 和 systemd 单元仍位于系统固定路径。
+
+只允许首次安装时设置根目录。完整节点包可执行 `install.sh --prefix R`；RPM/DEB 应在安装前写入标记文件，软件包会把程序静态文件同步到 `R`。已有标记或已有默认安装时，传入不同根目录会拒绝且不迁移数据。
 
 **user 模式**（安装根目录为 `R`，所有内容都在 `R` 之下，归安装用户所有）
 

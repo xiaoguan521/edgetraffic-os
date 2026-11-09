@@ -38,7 +38,7 @@ func overrideHeader() string { return "# " + brand.ID() + "-instance nonroot 生
 // rootMasterUnits 返回兼容模式需要覆盖的单元及其能力。
 func rootMasterUnits() map[string]string {
 	return map[string]string{
-		layout.System("").DataplaneUnit():        rootMasterCaps,
+		brand.ID() + ".service":                  rootMasterCaps,
 		brand.ID() + "@.service":                 rootMasterCaps,
 		brand.ID() + "-firewall.service":         rootFirewallCaps,
 		brand.ID() + "-firewall-refresh.service": rootFirewallCaps,
@@ -101,11 +101,15 @@ func (e Env) writeCompatUnits() error {
 		if !ok {
 			continue // 未安装该单元（例如只装了数据面）
 		}
+		source := string(b)
+		if root, custom := e.customSystemRoot(); custom {
+			source = prefixUnit(source, root)
+		}
 		dst := e.path("/etc/systemd/system/" + unit)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		if err := writeFile(dst, []byte(compatUnit(string(b), units[unit], dp)), 0o644); err != nil {
+		if err := writeFile(dst, []byte(compatUnit(source, units[unit], dp)), 0o644); err != nil {
 			return err
 		}
 		e.say("   %s：已按 %s 生成兼容模式单元 /etc/systemd/system/%s", unit, src, unit)
@@ -168,13 +172,18 @@ func (e Env) rootMasterSetup(insts []Info) error {
 		return err
 	}
 	_ = os.Chown(marker, 0, 0)
-	def := layout.System("")
+	def := e.lay("")
 	if err := e.writeCompatUnits(); err != nil {
 		return err
 	}
+	if _, custom := e.customSystemRoot(); custom {
+		if err := e.writeLogrotate(e.lay("").Root()); err != nil {
+			return err
+		}
+	}
 	// 运行时目录、日志与版本库仍交给数据面用户（worker 写日志、缓存；与默认模式一致，切回默认模式时无需再改）
 	for _, in := range insts {
-		l := layout.System(in.Name)
+		l := e.lay(in.Name)
 		for _, d := range []string{l.RunDir(), l.LogDir(), l.CacheDir()} {
 			if err := os.MkdirAll(e.path(d), 0o755); err != nil {
 				return err
@@ -198,7 +207,7 @@ func (e Env) rootMasterSetup(insts []Info) error {
 	units2 := []string{def.AgentUnit()}
 	for _, in := range insts {
 		if in.Name != "" {
-			units2 = append(units2, layout.System(in.Name).AgentUnit())
+			units2 = append(units2, e.lay(in.Name).AgentUnit())
 		}
 	}
 	_ = e.Run("systemctl", append([]string{"try-restart"}, units2...)...)
@@ -207,7 +216,7 @@ func (e Env) rootMasterSetup(insts []Info) error {
 
 // rootSudoersDefault 把默认实例的 sudoers（软件包提供，以数据面用户运行 wrapper）改为以 root 运行，7 行内容不变。
 func (e Env) rootSudoersDefault() error {
-	l := layout.System("")
+	l := e.lay("")
 	sp := e.path(l.SudoersFile())
 	b, err := os.ReadFile(sp)
 	if err != nil {

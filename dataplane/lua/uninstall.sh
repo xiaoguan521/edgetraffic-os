@@ -3,7 +3,15 @@
 # 当前生效的配置仍在加载附加包模块时拒绝卸载（否则下一次 reload 会失败）：
 # 先在控制台去掉 JWT 规则并发布，再卸载。卸载不重启、不停止 syedge。
 set -euo pipefail
-ROOT="${SYEDGE_ROOT:-/opt/syedge}"
+if [[ -n "${SYEDGE_ROOT:-}" ]]; then
+  ROOT="$SYEDGE_ROOT"
+elif [[ -x /usr/sbin/syedge-instance ]]; then
+  ROOT="$(/usr/sbin/syedge-instance prefix)"
+elif [[ -f /etc/syedge/prefix ]]; then
+  ROOT="$(sed -n '1p' /etc/syedge/prefix)"
+else
+  ROOT=/opt/syedge
+fi
 M="$ROOT/modules"
 die() { echo "syedge-lua: $*" >&2; exit 1; }
 

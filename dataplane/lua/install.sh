@@ -6,7 +6,15 @@
 # - 用真实 syedge -t 自检，失败则恢复原状。不重启、不停止 syedge，也不改动任何已发布的配置。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${SYEDGE_ROOT:-/opt/syedge}"
+if [[ -n "${SYEDGE_ROOT:-}" ]]; then
+  ROOT="$SYEDGE_ROOT"
+elif [[ -x /usr/sbin/syedge-instance ]]; then
+  ROOT="$(/usr/sbin/syedge-instance prefix)"
+elif [[ -f /etc/syedge/prefix ]]; then
+  ROOT="$(sed -n '1p' /etc/syedge/prefix)"
+else
+  ROOT=/opt/syedge
+fi
 SY="$ROOT/sbin/syedge"
 die() { echo "syedge-lua: $*" >&2; exit 1; }
 

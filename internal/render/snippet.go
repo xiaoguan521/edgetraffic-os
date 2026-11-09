@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
+	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
@@ -38,6 +38,7 @@ type SnippetContext struct {
 	Site       string          // server / location 片段所属站点（root / alias 只能指向该站点目录）
 	Upstreams  map[string]bool // 已登记的上游组
 	AllowedNet []netip.Prefix  // 允许回源网段
+	SitesBase  string          // 当前实例的静态站点目录父路径；空值为默认 system 路径
 }
 
 // SnippetIssue 是一条不允许的指令。
@@ -274,7 +275,7 @@ func (c *checker) one(d *conf.Directive, scope SnippetScope, allow map[string]bo
 		}
 	case "root", "alias":
 		if len(d.Args) != 1 || !c.underSite(d.Args[0]) {
-			c.bad(d, "只能指向本站点目录 "+sitesBase()+c.ctx.Site+"/")
+			c.bad(d, "只能指向本站点目录 "+c.sitesBase()+c.ctx.Site+"/")
 		}
 	case "set":
 		if len(d.Args) != 2 || !strings.HasPrefix(d.Args[0], "$") {
@@ -305,8 +306,15 @@ func (c *checker) proxyTarget(t string) error {
 }
 
 func (c *checker) underSite(p string) bool {
-	base := sitesBase() + c.ctx.Site + "/"
+	base := c.sitesBase() + c.ctx.Site + "/"
 	return c.ctx.Site != "" && strings.HasPrefix(p, base) && !strings.Contains(p, "..") && !strings.ContainsAny(p, "$")
+}
+
+func (c *checker) sitesBase() string {
+	if c.ctx.SitesBase != "" {
+		return c.ctx.SitesBase
+	}
+	return "/opt/" + brand.ID() + "/conf/current/sites/"
 }
 
 // ensureBaseline：location 内出现 proxy_pass / proxy_set_header 时，在块开头补齐缺失的基线代理头（规格书 6.3）。
@@ -357,7 +365,7 @@ func (in *Input) validateInputSnippets() error {
 		if strings.TrimSpace(src) == "" {
 			return "", nil
 		}
-		out, issues, err := ValidateSnippet(scope, src, SnippetContext{Site: site, Upstreams: ups, AllowedNet: in.AllowedNet})
+		out, issues, err := ValidateSnippet(scope, src, SnippetContext{Site: site, Upstreams: ups, AllowedNet: in.AllowedNet, SitesBase: in.P().SitesDir})
 		if err != nil {
 			return "", err
 		}
@@ -397,6 +405,3 @@ func (in *Input) validateInputSnippets() error {
 	}
 	return nil
 }
-
-// sitesBase 是节点上当前版本静态站点目录的父目录（片段中 root / alias 只能指向本站点子目录）。
-func sitesBase() string { return layout.System("").ConfRoot() + "/current/sites/" }

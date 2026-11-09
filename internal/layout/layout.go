@@ -6,9 +6,14 @@ package layout
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 )
@@ -26,6 +31,11 @@ const (
 var (
 	instanceRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 	rootRe     = regexp.MustCompile(`^(/[A-Za-z0-9._@+-]+)+$`)
+	systemRoot struct {
+		sync.Once
+		root string
+		err  error
+	}
 )
 
 // ValidInstance 判断实例名是否合法；空串表示默认实例，default 为保留名。
@@ -33,19 +43,54 @@ func ValidInstance(name string) bool {
 	return name == "" || (name != "default" && instanceRe.MatchString(name))
 }
 
-// Layout 是一个实例的部署布局。零值不可用，请用 System 或 User 构造。
+// Layout 是一个实例的部署布局。零值不可用，请用 System、SystemAt 或 User 构造。
 type Layout struct {
 	mode     Mode
 	root     string // 安装根目录：system 模式为 /opt/<品牌>
 	instance string // 空串为默认实例
 }
 
-// System 返回 system 模式下的布局。实例名非法时 panic：调用方必须先用 ValidInstance 校验外部输入。
+// DefaultSystemRoot 返回未设置 /etc/syedge/prefix 时使用的安装根目录。
+func DefaultSystemRoot() string { return "/opt/" + brand.ID() }
+
+// System 返回 system 模式下的布局。根目录从 /etc/syedge/prefix 读取一次；标记
+// 缺失时使用 DefaultSystemRoot。实例名非法或标记无效时 panic：命令入口应在
+// 调用前用 LoadSystemRoot 显式报告错误。
 func System(instance string) Layout {
+	root, err := LoadSystemRoot()
+	if err != nil {
+		panic("layout: invalid system root: " + err.Error())
+	}
+	return SystemAt(root, instance)
+}
+
+// SystemAt 返回指定安装根目录下的 system 模式布局。它是纯函数，不读取本机
+// 标记文件，供控制台渲染和测试使用。root 为空表示固定的默认根目录。
+func SystemAt(root, instance string) Layout {
 	if !ValidInstance(instance) {
 		panic("layout: invalid instance name " + strconv.Quote(instance))
 	}
-	return Layout{mode: ModeSystem, root: "/opt/" + brand.ID(), instance: instance}
+	if root == "" {
+		root = DefaultSystemRoot()
+	}
+	if err := ValidateInstallRoot(root); err != nil {
+		panic("layout: invalid install root: " + err.Error())
+	}
+	return Layout{mode: ModeSystem, root: root, instance: instance}
+}
+
+// ValidateInstallRoot 校验安装根目录的词法形式。它不检查目录是否存在或属主，
+// 因而可用于控制台保存尚未部署到本机的节点组档案。
+func ValidateInstallRoot(root string) error {
+	if root == "/" || !rootRe.MatchString(root) || path.Clean(root) != root {
+		return errors.New("install root must be a clean absolute path")
+	}
+	for _, seg := range splitPath(root) {
+		if seg == "." || seg == ".." {
+			return errors.New("install root must be a clean absolute path")
+		}
+	}
+	return nil
 }
 
 // User 返回 user 模式下的布局。root 必须是规范化的绝对路径。
@@ -53,13 +98,8 @@ func User(root, instance string) (Layout, error) {
 	if !ValidInstance(instance) {
 		return Layout{}, errors.New("invalid instance name")
 	}
-	if root == "/" || !rootRe.MatchString(root) || path.Clean(root) != root {
-		return Layout{}, errors.New("install root must be a clean absolute path")
-	}
-	for _, seg := range splitPath(root) {
-		if seg == "." || seg == ".." {
-			return Layout{}, errors.New("install root must be a clean absolute path")
-		}
+	if err := ValidateInstallRoot(root); err != nil {
+		return Layout{}, err
 	}
 	return Layout{mode: ModeUser, root: root, instance: instance}, nil
 }
@@ -129,12 +169,18 @@ func (l Layout) LogDir() string {
 	if l.mode == ModeUser {
 		return path.Join(l.Prefix(), "logs")
 	}
+	if l.root != DefaultSystemRoot() {
+		return path.Join(l.Prefix(), "logs")
+	}
 	return "/var/log/" + brand.ID() + l.suffix()
 }
 
 // CacheDir 返回实例的临时文件目录。
 func (l Layout) CacheDir() string {
 	if l.mode == ModeUser {
+		return path.Join(l.Prefix(), "cache")
+	}
+	if l.root != DefaultSystemRoot() {
 		return path.Join(l.Prefix(), "cache")
 	}
 	return "/var/cache/" + brand.ID() + l.suffix()
@@ -152,6 +198,9 @@ func (l Layout) AccessLog() string { return path.Join(l.LogDir(), "access.json")
 // AgentState 返回该实例 agent 的身份与状态目录。
 func (l Layout) AgentState() string {
 	if l.mode == ModeUser {
+		return path.Join(l.Prefix(), "agent")
+	}
+	if l.root != DefaultSystemRoot() {
 		return path.Join(l.Prefix(), "agent")
 	}
 	return "/var/lib/" + brand.Agent() + l.suffix()
@@ -237,3 +286,90 @@ func (l Layout) SudoersFile() string { return path.Join("/etc/sudoers.d", l.Agen
 
 // InstancesDir 返回具名实例前缀的父目录。
 func (l Layout) InstancesDir() string { return path.Join(l.root, "instances") }
+
+// PrefixMarker 返回 system 模式安装根目录标记文件的绝对路径。
+func PrefixMarker() string { return "/etc/" + brand.ID() + "/prefix" }
+
+// LoadSystemRoot 读取本机 system 模式安装根目录。缺少标记表示历史默认安装；
+// 一旦标记存在但不满足安全校验则返回错误。结果在进程内缓存，避免运行过程中
+// 通过替换标记改变路径。
+func LoadSystemRoot() (string, error) {
+	systemRoot.Do(func() {
+		systemRoot.root, systemRoot.err = LoadSystemRootAt("/")
+	})
+	if systemRoot.err != nil {
+		return "", systemRoot.err
+	}
+	return systemRoot.root, nil
+}
+
+// LoadSystemRootAt 是 LoadSystemRoot 的可注入版本：fsroot 是模拟的文件系统根，
+// 生产调用使用 "/"。它不使用全局缓存。
+func LoadSystemRootAt(fsroot string) (string, error) {
+	if fsroot == "" {
+		fsroot = "/"
+	}
+	marker := filepath.Join(fsroot, filepath.FromSlash(PrefixMarker()))
+	fi, err := os.Lstat(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return DefaultSystemRoot(), nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", PrefixMarker(), err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o644 || !ownedByRoot(fi) {
+		return "", fmt.Errorf("%s must be a root-owned regular file with mode 0644", PrefixMarker())
+	}
+	b, err := os.ReadFile(marker)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", PrefixMarker(), err)
+	}
+	s := string(b)
+	if strings.HasSuffix(s, "\r\n") {
+		s = strings.TrimSuffix(s, "\r\n")
+	} else if strings.HasSuffix(s, "\n") {
+		s = strings.TrimSuffix(s, "\n")
+	}
+	if strings.ContainsAny(s, "\r\n") || strings.TrimSpace(s) != s {
+		return "", fmt.Errorf("%s must contain one clean absolute path", PrefixMarker())
+	}
+	if err := CheckSystemRootAt(fsroot, s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+// CheckSystemRoot 校验一个 system 模式安装根目录在本机上的安全属性。
+// 根目录本身可以尚不存在（安装脚本会先写标记再复制文件），但所有已存在的
+// 父目录以及已存在的根目录都必须是 root 所有且不可被组或其他用户写入。
+func CheckSystemRoot(root string) error { return CheckSystemRootAt("/", root) }
+
+// CheckSystemRootAt 是 CheckSystemRoot 的可注入版本。
+func CheckSystemRootAt(fsroot, root string) error {
+	if fsroot == "" {
+		fsroot = "/"
+	}
+	if err := ValidateInstallRoot(root); err != nil {
+		return err
+	}
+	clean := filepath.Join(fsroot, filepath.FromSlash(root))
+	for p := clean; ; p = filepath.Dir(p) {
+		fi, err := os.Lstat(p)
+		if errors.Is(err, os.ErrNotExist) {
+			if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
+				break
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("check install root %s: %w", root, err)
+		}
+		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm()&0o022 != 0 || !ownedByRoot(fi) {
+			return fmt.Errorf("install root %s or its parents must be root-owned directories not writable by group or others", root)
+		}
+		if p == filepath.Join(fsroot, string(filepath.Separator)) || p == fsroot {
+			break
+		}
+	}
+	return nil
+}

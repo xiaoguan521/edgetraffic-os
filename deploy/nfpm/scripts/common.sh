@@ -11,9 +11,24 @@ nologin_shell() {
 ensure_group() { getent group "$1" >/dev/null 2>&1 || groupadd -r "$1"; }
 ensure_user() { id "$1" >/dev/null 2>&1 || useradd -r -g "$2" -d /nonexistent -M -s "$(nologin_shell)" "$1"; }
 is_remove() { [ "$1" = "0" ] || [ "$1" = "remove" ] || [ "$1" = "purge" ]; }
+syedge_root() {
+  if [ -x /usr/sbin/syedge-instance ]; then
+    /usr/sbin/syedge-instance prefix 2>/dev/null || {
+      echo "syedge: 无法读取或校验 /etc/syedge/prefix" >&2
+      return 1
+    }
+    return 0
+  fi
+  if [ -f /etc/syedge/prefix ]; then
+    sed -n '1p' /etc/syedge/prefix
+  else
+    echo /opt/syedge
+  fi
+}
 # 同机多实例（syedge-instance add 创建）：卸载软件包前必须先逐个删除实例，否则拒绝卸载（设计 0001 第 5.7 节）
 named_instances() {
-  for f in /opt/syedge/instances/*/instance.json; do [ -f "$f" ] && basename "$(dirname "$f")"; done
+  r=$(syedge_root)
+  for f in "$r"/instances/*/instance.json; do [ -f "$f" ] && basename "$(dirname "$f")"; done
 }
 refuse_remove_with_instances() {
   is_remove "$1" || return 0

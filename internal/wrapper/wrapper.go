@@ -20,12 +20,12 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
-var (
-	// DataplaneBin 是数据面二进制的绝对路径（同机实例共用）。
-	DataplaneBin = layout.System("").Bin()
-	// ReleasesDir 是默认实例版本目录的根。
-	ReleasesDir = layout.System("").ReleasesDir()
-)
+// DataplaneBin 返回默认 system 布局的数据面路径。生产命令使用实际 Layout
+// 计算，因此自定义安装根目录不会经过这个兼容辅助函数。
+func DataplaneBin() string { return layout.SystemAt("", "").Bin() }
+
+// ReleasesDir 返回默认 system 布局的版本目录。升级与 wrapper 生产路径均从 Layout 计算。
+func ReleasesDir() string { return layout.SystemAt("", "").ReleasesDir() }
 
 // ExitUsage 是参数非法时的退出码（与 sysexits.h 的 EX_USAGE 一致）。
 const ExitUsage = 64
@@ -75,8 +75,9 @@ func BuildAt(root string, argv []string) (Command, error) {
 	}
 	bin, releasesDir, currentConf := l.Bin(), l.ReleasesDir(), ""
 	var early []string
-	if root != "" {
-		currentConf = l.CurrentConf() // user 模式：编译期默认配置路径在 /opt 下，总是显式指定
+	customSystem := l.Mode() == layout.ModeSystem && l.Root() != layout.DefaultSystemRoot()
+	if root != "" || customSystem {
+		currentConf = l.CurrentConf() // user / 自定义 system 根目录：总是显式指定配置与错误日志
 		early = []string{"-e", l.ErrorLog()}
 	} else if instance != "" {
 		currentConf = l.CurrentConf()
@@ -118,7 +119,11 @@ func BuildAt(root string, argv []string) (Command, error) {
 // layoutAt 返回 system 模式（root 为空）或 user 模式的布局。
 func layoutAt(root, instance string) (layout.Layout, error) {
 	if root == "" {
-		return layout.System(instance), nil
+		r, err := layout.LoadSystemRoot()
+		if err != nil {
+			return layout.Layout{}, err
+		}
+		return layout.SystemAt(r, instance), nil
 	}
 	return layout.User(root, instance)
 }
@@ -127,13 +132,14 @@ func layoutAt(root, instance string) (layout.Layout, error) {
 // 位于 system 模式的固定路径时返回空串；位于 <根目录>/bin/<品牌>-wrapper 时返回该根目录（user 模式）；
 // 其他位置一律拒绝。安装根目录从不来自命令行参数。
 func RootFromExecutable(exe string) (string, error) {
-	if exe == layout.System("").WrapperBin() {
+	systemWrapper := layout.SystemAt("", "").WrapperBin()
+	if exe == systemWrapper {
 		return "", nil
 	}
 	dir, name := filepath.Split(exe)
 	dir = filepath.Clean(dir)
 	if name != brand.Wrapper() || filepath.Base(dir) != "bin" {
-		return "", fmt.Errorf("%s must be installed as %s or <root>/bin/%s", brand.Wrapper(), layout.System("").WrapperBin(), brand.Wrapper())
+		return "", fmt.Errorf("%s must be installed as %s or <root>/bin/%s", brand.Wrapper(), systemWrapper, brand.Wrapper())
 	}
 	root := filepath.Dir(dir)
 	if _, err := layout.User(root, ""); err != nil {

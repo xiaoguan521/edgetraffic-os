@@ -99,7 +99,7 @@ func TestGMSitePublishAndRenew(t *testing.T) {
 	waitDone(t, d, dep)
 	r1, _ := d.revision(currentRev(t, d, g), g.ID)
 	f1, _ := render.ReadTarGz(r1.Bundle)
-	if !strings.Contains(string(f1["conf.d/site-gm.conf"]), render.ReleasesDir+r1.ID+"/certs/site-gm.sm2-sign.crt") {
+	if !strings.Contains(string(f1["conf.d/site-gm.conf"]), (render.Profile{}).ReleasesDir()+r1.ID+"/certs/site-gm.sm2-sign.crt") {
 		t.Fatal("GM directives missing")
 	}
 
@@ -117,7 +117,7 @@ func TestGMSitePublishAndRenew(t *testing.T) {
 	if r2.ID == r1.ID || string(f2["certs/site-gm.sm2-sign.crt"]) == string(f1["certs/site-gm.sm2-sign.crt"]) {
 		t.Fatal("renewal produced no new GM cert")
 	}
-	if !strings.Contains(string(f2["conf.d/site-gm.conf"]), render.ReleasesDir+r2.ID+"/certs/") {
+	if !strings.Contains(string(f2["conf.d/site-gm.conf"]), (render.Profile{}).ReleasesDir()+r2.ID+"/certs/") {
 		t.Fatal("release path not rebased")
 	}
 	if !render.CertOnlyChange(f1, f2) {

@@ -49,7 +49,7 @@ type Paths struct {
 	// Instance 是本次升级的实例（空串为默认实例）。升级状态按实例分别保存在 root 所有的 Versions 下：
 	// 二进制同机共用，但每个实例的 master 各自经历 start / commit / abort（设计 0001 第 5.6 节）。
 	Instance string
-	// ErrorLog 非空时（user 模式）作为 -e 传给数据面，使启动早期的日志写到实例目录而不是编译期的 /var/log。
+	// ErrorLog 非空时（user 或自定义 system 根目录）作为 -e 传给数据面，使启动早期的日志写到实例目录。
 	ErrorLog string
 }
 
@@ -76,7 +76,7 @@ func pathsFor(l layout.Layout) Paths {
 	instance := l.Instance()
 	p := Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
 		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second, Instance: instance}
-	if l.Mode() == layout.ModeUser {
+	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() {
 		p.ErrorLog = l.ErrorLog()
 	}
 	return p

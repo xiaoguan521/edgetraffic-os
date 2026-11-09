@@ -48,6 +48,14 @@ type Env struct {
 
 func (e Env) path(p string) string { return filepath.Join(e.Root, filepath.FromSlash(p)) }
 
+func (e Env) systemRoot() string {
+	root, err := layout.LoadSystemRootAt(e.Root)
+	if err != nil {
+		panic("instance: invalid system root: " + err.Error())
+	}
+	return root
+}
+
 func (e Env) say(format string, a ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", a...) }
 
 // AddOptions 是 add 的参数。
@@ -91,7 +99,19 @@ func (e Env) Add(o AddOptions) error {
 	if enroll && (o.Console == "" || o.Token == "" || o.CAFingerprint == "") {
 		return errors.New("--console、--token、--ca-fingerprint 需同时提供")
 	}
-	l := layout.System(p.Instance)
+	l := e.lay(p.Instance)
+	if p.Root != "" && p.Root != l.Root() {
+		return fmt.Errorf("实例档案安装根目录 %q 与本机 system 根目录 %q 不一致", p.Root, l.Root())
+	}
+	// system 模式的实例档案需要把自定义根目录写入节点，供 agent 与控制台核对；
+	// 默认根目录继续使用零值，保持旧版 instance.json 兼容。
+	if l.Root() != layout.DefaultSystemRoot() {
+		p.Mode, p.Root = string(layout.ModeSystem), l.Root()
+		if err := p.Validate(); err != nil {
+			return err
+		}
+		o.Profile = p
+	}
 	if _, err := os.Stat(e.path(l.InstanceFile())); err == nil {
 		return fmt.Errorf("%w: %s（%s）", ErrExists, p.Instance, l.Prefix())
 	}
@@ -230,7 +250,7 @@ func (e Env) Remove(name string, purge, yes bool) error {
 	if name == "" || !layout.ValidInstance(name) {
 		return errors.New("remove 只用于具名实例，且实例名必须合法；默认实例随安装包卸载")
 	}
-	l := layout.System(name)
+	l := e.lay(name)
 	if _, err := os.Stat(e.path(l.InstanceFile())); err != nil {
 		if _, derr := os.Stat(e.path(l.Prefix())); derr != nil {
 			return fmt.Errorf("%w: %s", ErrNotFound, name)
@@ -299,7 +319,7 @@ func (e Env) writeRuntimeTmpfiles() error {
 	var b strings.Builder
 	b.WriteString("# 由 " + brand.ID() + "-instance 生成：各实例的运行时目录（开机时重建）。请勿手改\n")
 	for _, in := range insts {
-		l := layout.System(in.Name)
+		l := e.lay(in.Name)
 		if in.Name != "" {
 			fmt.Fprintf(&b, "d %s 0755 %s %s -\n", l.RunDir(), dp, dp)
 		}
@@ -337,7 +357,7 @@ func (e Env) syncFirewall() {
 	b.WriteString("# 由 " + brand.ID() + "-instance 生成：发布具名实例的配置后同样刷新防火墙规则\n[Path]\n")
 	for _, in := range insts {
 		if in.Name != "" {
-			b.WriteString("PathChanged=" + layout.System(in.Name).ConfRoot() + "\n")
+			b.WriteString("PathChanged=" + e.lay(in.Name).ConfRoot() + "\n")
 		}
 	}
 	dp := e.path(firewallDropIn())

@@ -30,7 +30,7 @@ func (e Env) lay(name string) layout.Layout {
 		}
 		return l
 	}
-	return layout.System(name)
+	return layout.SystemAt(e.systemRoot(), name)
 }
 
 // agentArgs 返回 agent 在 user 模式下的公共参数。

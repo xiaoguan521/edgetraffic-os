@@ -25,19 +25,26 @@ dockerrun() { # 场景编号 docker run 参数……
   fi
   return $rc
 }
-run() { # 发行版名 镜像 安装命令
-  local name=$1 image=$2 install=$3 out
+run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
+  local name=$1 image=$2 install=$3 prefix=${4:-} out root=/opt/syedge dp_opts prefix_setup=:
+  if [[ -n "$prefix" ]]; then
+    root=$prefix
+    dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
+    prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
+  fi
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
+    $prefix_setup
     $install
     syedge -v 2>&1
     test -x /usr/libexec/syedge/syedge-wrapper
     test -x /usr/sbin/syedge-firewall && test -f /usr/lib/systemd/system/syedge-firewall.service
     test ! -e /var/lib/syedge-firewall/firewall.nft   # 防火墙默认不启用
     id syedge-agent >/dev/null && id syedge-console >/dev/null
-    test -L /opt/syedge/conf/current
-    /opt/syedge/sbin/syedge -t -q
-    /opt/syedge/sbin/syedge
+    test \"\$(syedge-instance prefix)\" = '$root'
+    test -L '$root/conf/current'
+    '$root/sbin/syedge' $dp_opts -t -q
+    '$root/sbin/syedge' $dp_opts
     sleep 1
     grep -qs 'SyEdge: master process' /proc/[0-9]*/cmdline
     test -f /etc/syedge-console/console.env
@@ -113,6 +120,7 @@ scenarios=(
   "full|run|Ubuntu 20.04|ubuntu:20.04|$deb"
   "full|run|Ubuntu 22.04|ubuntu:22.04|$deb"
   "pr|run|Ubuntu 24.04|ubuntu:24.04|$deb"
+  "pr|run|Rocky Linux 9 custom prefix|rockylinux:9|$dnf||/srv/syedge-smoke"
   "pr|standalone|Rocky Linux 9|rockylinux:9|$sa_dnf|$sa_dnf_agent"
   "pr|standalone|Debian 12|debian:12|$sa_deb|$sa_deb_agent"
 )
@@ -121,12 +129,12 @@ echo "== 软件包冒烟（$ARCH，集合 $SET，并行 $JOBS，每个场景限�
 start=$SECONDS
 i=0; selected=()
 for sc in "${scenarios[@]}"; do
-  IFS='|' read -r set fn a1 a2 a3 a4 <<<"$sc"
+  IFS='|' read -r set fn a1 a2 a3 a4 a5 <<<"$sc"
   [[ "$SET" == pr && "$set" != pr ]] && continue
   i=$((i+1)); selected+=("$i")
   while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n; done
   ( t0=$SECONDS; SCENARIO=$i
-    if [[ $fn == run ]]; then run "$a1" "$a2" "$a3"; else standalone "$a1" "$a2" "$a3" "$a4"; fi > "$W/$i.out" 2>&1
+    if [[ $fn == run ]]; then run "$a1" "$a2" "$a3" "$a5"; else standalone "$a1" "$a2" "$a3" "$a4"; fi > "$W/$i.out" 2>&1
     echo $? > "$W/$i.rc"; echo $((SECONDS-t0)) > "$W/$i.sec" ) &
 done
 wait

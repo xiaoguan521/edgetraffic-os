@@ -29,7 +29,8 @@ const instanceLabel = computed(() => {
   const p = profile.value
   if (!p) return ''
   const e = p.effective || {}
-  return `${p.instance || '默认实例'} · ${p.mode === 'user' ? `user 模式（${p.root}）` : 'system 模式'} · HTTP ${e.http_port} / HTTPS ${e.https_port}`
+  const where = p.root ? `（${p.root}）` : ''
+  return `${p.instance || '默认实例'} · ${p.mode === 'user' ? 'user 模式' : 'system 模式'}${where} · HTTP ${e.http_port} / HTTPS ${e.https_port}`
 })
 function dataplaneVersion(n: any) {
   return (n.syapp_version || '').replace(brand.proc + ' version: ', '')
@@ -104,7 +105,7 @@ async function saveGroup() {
     await api.put(`/node-groups/${gid.value}`, { ...gform, name: gform.name.trim() })
     if (profileChanged()) {
       const body: any = { instance: pform.instance, http_port: pform.http_port, https_port: pform.https_port, status_port: pform.status_port }
-      if (pform.mode === 'user') Object.assign(body, { mode: 'user', root: pform.root })
+      if (pform.mode === 'user' || pform.root) Object.assign(body, { mode: pform.mode, root: pform.root })
       if (pform.nofile) body.nofile = pform.nofile
       await api.put(`/node-groups/${gid.value}/profile`, body)
     }
@@ -351,8 +352,8 @@ function mb(b: number) {
             <a-radio value="user">user（普通用户安装，不需要 root）</a-radio>
           </a-radio-group>
         </a-form-item>
-        <a-form-item v-if="pform.mode === 'user'" label="安装根目录" extra="节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。">
-          <a-input v-model:value="pform.root" class="code" :disabled="locked" placeholder="/home/ops/edge" />
+        <a-form-item label="安装根目录" :extra="pform.mode === 'user' ? '节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。' : 'system 模式默认使用 /opt/syedge；填写后，软件包会把程序与实例数据放在该绝对路径，并写入 /etc/syedge/prefix。'">
+          <a-input v-model:value="pform.root" class="code" :disabled="locked" :placeholder="pform.mode === 'user' ? '/home/ops/edge' : '/data/syedge'" />
         </a-form-item>
         <a-space wrap>
           <a-form-item label="HTTP 端口"><a-input-number v-model:value="pform.http_port" :min="1" :max="65535" /></a-form-item>

@@ -20,7 +20,11 @@ func CheckInstance(instance string) error {
 	if instance == "" {
 		return nil
 	}
-	return checkInstanceAt(layout.System(instance).Prefix(), instance, 0)
+	root, err := layout.LoadSystemRoot()
+	if err != nil {
+		return err
+	}
+	return checkInstanceAt(layout.SystemAt(root, instance).Prefix(), instance, 0)
 }
 
 // CheckInstanceUser 是 user 模式下的检查（设计 0001 第 6.2 节）：实例档案属于当前用户、他人不可写，

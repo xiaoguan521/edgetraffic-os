@@ -7,6 +7,7 @@
 #
 # 用法（普通用户 + 免密 sudo，CI 中运行）：
 #   LIC_TOOL=... LIC_KEY=... LIC_KID=... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
+#   SMOKE_PREFIX=/srv/syedge-smoke ... scripts/release/smoke-node.sh <节点包.tar.gz> <syedge-console>
 # 控制台须是注入了临时授权公钥的测试构建；它只用于本测试，不进入发布包。
 set -uo pipefail
 PKG=$(realpath "${1:?node package}"); CONSOLE=$(realpath "${2:?console binary}")
@@ -14,6 +15,14 @@ PKG=$(realpath "${1:?node package}"); CONSOLE=$(realpath "${2:?console binary}")
 export NO_PROXY='*' no_proxy='*'
 W=$(mktemp -d); JAR=$W/jar
 B=http://127.0.0.1:18443/api/v1
+ROOT=${SMOKE_PREFIX:-/opt/syedge}
+if [[ "$ROOT" == "/opt/syedge" ]]; then
+  LOG_DIR=/var/log/syedge
+else
+  LOG_DIR="$ROOT/logs"
+fi
+PREFIX_ARGS=()
+[[ -z "${SMOKE_PREFIX:-}" ]] || PREFIX_ARGS=(--prefix "$SMOKE_PREFIX")
 C=(curl -s -b "$JAR" -c "$JAR" -H 'X-Requested-With: etos' -H 'Content-Type: application/json')
 fail=0
 ok()  { echo "ok   $1"; }
@@ -33,7 +42,9 @@ diag() {
 echo "== 安装节点包"
 tar -C "$W" -xzf "$PKG"
 D=$(echo "$W"/syedge-node-*)
-if out=$(sudo "$D/install.sh" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
+if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
+expect "安装根目录" "$(sudo syedge-instance prefix 2>&1)" "$ROOT"
+if [[ -x "$ROOT/sbin/syedge" && -e "$ROOT/conf/current" ]]; then ok "自定义根目录文件与配置存在"; else bad "自定义根目录文件或配置缺失：$ROOT"; fi
 expect "systemd 单元 syedge.service 运行中" "$(systemctl is-active syedge.service)" "active"
 expect "syedge -v" "$(syedge -v 2>&1)" "SyEdge version: SyEdge/"
 expect "master 进程标题" "$(ps -eo args)" "SyEdge: master process"
@@ -60,7 +71,7 @@ expect "授权有效" "$("${C[@]}" "$B/license" | j "d['state']")" "VALID"
 echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
-if out=$(sudo "$D/install.sh" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
+if out=$(sudo "$D/install.sh" "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
 online=0
 for _ in $(seq 1 30); do
   online=$("${C[@]}" "$B/nodes" | j "sum(1 for n in d if n['status']=='online')")
@@ -88,7 +99,7 @@ expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /ru
 if [[ $fail -ne 0 ]]; then
   diag
   tail -15 "$W/console.log" | sed 's/^/::warning title=console::/'
-  sudo tail -5 /var/log/syedge/error.log | sed 's/^/::warning title=error.log::/'
+  sudo tail -5 "$LOG_DIR/error.log" | sed 's/^/::warning title=error.log::/'
 fi
 echo "---- $fail failed"
 [[ $fail -eq 0 ]] && echo "NODE PACKAGE SMOKE OK" || exit 1

@@ -19,7 +19,6 @@ import (
 	"text/template"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
-	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 //go:embed templates/*.tmpl
@@ -240,13 +239,10 @@ func GMFiles(g *GMPair) map[string]string {
 	return map[string]string{".sm2-sign.crt": g.SignCertPEM, ".sm2-sign.key": g.SignKeyPEM, ".sm2-enc.crt": g.EncCertPEM, ".sm2-enc.key": g.EncKeyPEM}
 }
 
-// ReleasesDir 是节点上版本目录的父目录。国密 ssl_conf_command 的文件路径不按配置目录解析，只能写本版本目录的绝对路径。
-var ReleasesDir = layout.System("").ReleasesDir() + "/"
-
 // RebaseRevision 把配置文件中指向默认实例 oldRev 版本目录的绝对路径改写为 newRev（证书续期在线上版本基础上重打包时使用）。
 // 只改写 .conf 文件；证书、私钥与静态文件原样保留。具名实例使用 RebaseRevisionFor。
 func RebaseRevision(files map[string][]byte, oldRev, newRev string) map[string][]byte {
-	return rebase(files, ReleasesDir, oldRev, newRev)
+	return RebaseRevisionFor(Profile{}, files, oldRev, newRev)
 }
 
 func manifestRevision(files map[string][]byte) string {
