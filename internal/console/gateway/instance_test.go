@@ -16,4 +16,8 @@ func TestReportedProfile(t *testing.T) {
 	if p == nil || *p != want {
 		t.Fatalf("got %+v", p)
 	}
+	p = ReportedProfile(&agentv1.InstanceInfo{Name: "blue", ResourceMode: "independent"})
+	if p == nil || p.ResourceMode != "independent" {
+		t.Fatalf("independent runtime lost: %+v", p)
+	}
 }

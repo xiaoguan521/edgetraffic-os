@@ -16,6 +16,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 // 数据面版本库与分批热升级（规格书 12.6）。
@@ -157,12 +158,20 @@ func shortHost(k string) string {
 	return k
 }
 
-// upgradeParticipants 返回升级节点组 groupID 时涉及的全部节点：组内节点，加上这些节点所在主机上其他节点组的实例。
+// upgradeParticipants 返回组内节点与同主机共享同一运行目录的实例；独立实例只升级自身。
 func (d *Service) upgradeParticipants(groupID uint) ([]*store.Node, error) {
 	q := d.q()
 	nodes, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(groupID), q.Node.Status.Neq("revoked")).Order(q.Node.ID).Find()
 	if err != nil {
 		return nil, err
+	}
+	target, err := d.Profile(groupID)
+	if err != nil {
+		return nil, err
+	}
+	target = target.Effective()
+	if target.ResourceMode == "independent" {
+		return nodes, nil
 	}
 	var keys []string
 	for _, n := range nodes {
@@ -177,7 +186,22 @@ func (d *Service) upgradeParticipants(groupID uint) ([]*store.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(nodes, sib...), nil
+	profiles := map[uint]render.Profile{}
+	for _, n := range sib {
+		p, ok := profiles[n.GroupID]
+		if !ok {
+			p, err = d.Profile(n.GroupID)
+			if err != nil {
+				return nil, err
+			}
+			p = p.Effective()
+			profiles[n.GroupID] = p
+		}
+		if p.ResourceMode == "shared" && p.Mode == target.Mode && p.Root == target.Root {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes, nil
 }
 
 // checkUpgradable 校验版本库中有每个节点需要的升级包，以及各节点组的变体约束。

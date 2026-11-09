@@ -13,6 +13,7 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 // user 模式（设计 0001 第 6 节）：普通用户在自己的安装根目录下运行全部实例，不需要 root，也不经过 sudo。
@@ -31,6 +32,15 @@ func (e Env) lay(name string) layout.Layout {
 		return l
 	}
 	return layout.SystemAt(e.systemRoot(), name)
+}
+
+// infoLayout 按已读取的实例档案确定该实例的数据面运行目录。
+func (e Env) infoLayout(in Info) layout.Layout {
+	l := e.lay(in.Name)
+	if in.Profile.ResourceMode == "independent" {
+		l = l.WithIndependentRuntime()
+	}
+	return l
 }
 
 // agentArgs 返回 agent 在 user 模式下的公共参数。
@@ -70,6 +80,12 @@ func (e Env) addUser(o AddOptions) error {
 		return errors.New("--console、--token、--ca-fingerprint 需同时提供")
 	}
 	l := e.lay(p.Instance)
+	if p.ResourceMode == "independent" {
+		l = l.WithIndependentRuntime()
+	}
+	if err := e.prepareInstancesDir(l); err != nil {
+		return err
+	}
 	if _, err := os.Stat(e.path(l.InstanceFile())); err == nil {
 		return fmt.Errorf("%w: %s（%s）", ErrExists, label(p.Instance), l.Prefix())
 	}
@@ -116,6 +132,9 @@ func (e Env) addUserSteps(o AddOptions, l layout.Layout) error {
 		if err := os.Chmod(e.path(d.dir), d.mode); err != nil {
 			return err
 		}
+	}
+	if err := e.prepareIndependentRuntime(l); err != nil {
+		return err
 	}
 	b, _ := json.MarshalIndent(o.Profile, "", "  ")
 	if err := writeFile(e.path(l.InstanceFile()), append(b, '\n'), 0o644); err != nil {
@@ -300,7 +319,7 @@ func (e Env) Ensure() error {
 	systemd := e.UserSystemd != nil && e.UserSystemd()
 	var errs []error
 	for _, in := range list {
-		l := e.lay(in.Name)
+		l := e.infoLayout(in)
 		dpUnit, agUnit := userUnits(l)
 		if !e.alive(l.PidFile(), dataplaneExe(l)) {
 			if systemd {
@@ -330,6 +349,18 @@ func (e Env) removeUser(name string, purge, yes bool) error {
 	l := e.lay(name)
 	if _, err := os.Stat(e.path(l.Prefix())); err != nil {
 		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if b, err := os.ReadFile(e.path(l.InstanceFile())); err == nil {
+		var p render.Profile
+		if err := json.Unmarshal(b, &p); err != nil {
+			return fmt.Errorf("invalid instance profile: %w", err)
+		}
+		if p.Instance != name || p.Mode != string(layout.ModeUser) || p.Root != e.UserRoot {
+			return errors.New("instance profile does not match the user installation")
+		}
+		l = e.infoLayout(Info{Name: name, Profile: p})
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	dpUnit, agUnit := userUnits(l)
 	keep := filepath.Join(e.UserRoot, "removed-logs", name+"-"+time.Now().Format("20060102-150405"))

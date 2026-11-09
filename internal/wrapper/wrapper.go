@@ -123,9 +123,13 @@ func layoutAt(root, instance string) (layout.Layout, error) {
 		if err != nil {
 			return layout.Layout{}, err
 		}
-		return layout.SystemAt(r, instance), nil
+		return runtimeLayout(layout.SystemAt(r, instance), "")
 	}
-	return layout.User(root, instance)
+	l, err := layout.User(root, instance)
+	if err != nil {
+		return layout.Layout{}, err
+	}
+	return runtimeLayout(l, root)
 }
 
 // RootFromExecutable 由 wrapper 自身的位置判定模式（设计 0001 第 6.2 节）：

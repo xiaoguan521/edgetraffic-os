@@ -109,6 +109,33 @@ func TestRenderCustomSystemProfile(t *testing.T) {
 	}
 }
 
+func TestRenderIndependentInstanceLuaPaths(t *testing.T) {
+	in := luaInput(t)
+	in.Profile = Profile{Instance: "blue", ResourceMode: "independent", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
+	b, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(b.Files["syedge.conf"])
+	for _, want := range []string{
+		"load_module  /opt/syedge/instances/blue/modules/lua/ndk_http_module.so;",
+		`lua_package_path   "/opt/syedge/instances/blue/modules/lua/lualib/?.lua";`,
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if in.Profile.SameInstance(Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}) {
+		t.Fatal("independent and shared instances must not compare equal")
+	}
+	if err := (Profile{ResourceMode: "independent"}).Validate(); err == nil {
+		t.Fatal("default instance cannot be assigned an independent runtime")
+	}
+	if err := (Profile{Instance: "blue", ResourceMode: "unknown"}).Validate(); err == nil {
+		t.Fatal("unknown runtime mode accepted")
+	}
+}
+
 func TestProfileValidation(t *testing.T) {
 	ok := []Profile{{}, instanceProfile(), {Root: "/data/edge"}, {Mode: "system", Root: "/data/edge"}, {Mode: "system", Root: "/home/atwasoft/node"}, {Mode: "user", Root: "/data/edge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 8082}}
 	for _, p := range ok {

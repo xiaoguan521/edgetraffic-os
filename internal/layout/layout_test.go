@@ -77,6 +77,25 @@ func TestSystemCustomRootPaths(t *testing.T) {
 	}
 }
 
+func TestIndependentInstanceRuntimePaths(t *testing.T) {
+	shared := SystemAt("/home/atwasoft/node", "blue")
+	independent := shared.WithIndependentRuntime()
+	for _, c := range []struct{ got, want string }{
+		{independent.Prefix(), "/home/atwasoft/node/instances/blue"},
+		{independent.Bin(), "/home/atwasoft/node/instances/blue/sbin/syedge"},
+		{independent.Versions(), "/home/atwasoft/node/instances/blue/versions"},
+		{independent.Modules(), "/home/atwasoft/node/instances/blue/modules"},
+		{shared.Bin(), "/home/atwasoft/node/sbin/syedge"},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	if independent.Root() != shared.Root() || independent.ConfRoot() != shared.ConfRoot() {
+		t.Fatal("independent runtime must not change the installation root or configuration path")
+	}
+}
+
 func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
 	for _, root := range []string{"/usr", "/usr/bin/x", "/usr/local", "/usr/local/sbin/x", "/etc/x", "/opt", "/var", "/var/lib", "/home", "/root/edge", "/opt/syedge/share/nested"} {
 		if err := ValidateSystemRoot(root); err == nil {

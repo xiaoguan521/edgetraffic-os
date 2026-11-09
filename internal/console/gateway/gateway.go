@@ -607,7 +607,7 @@ func ReportedProfile(i *agentv1.InstanceInfo) *render.Profile {
 		return nil
 	}
 	return &render.Profile{Instance: i.GetName(), Mode: i.GetMode(), Root: i.GetRoot(),
-		HTTPPort: int(i.GetHttpPort()), HTTPSPort: int(i.GetHttpsPort()), StatusPort: int(i.GetStatusPort())}
+		HTTPPort: int(i.GetHttpPort()), HTTPSPort: int(i.GetHttpsPort()), StatusPort: int(i.GetStatusPort()), ResourceMode: i.GetResourceMode()}
 }
 
 var runningVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)

@@ -458,7 +458,7 @@ ETOS_DB=postgres://edgetraffic:<密码>@127.0.0.1:5432/edgetraffic?sslmode=disab
 
 先安装标准节点并接入控制台。国密版是数据面变体，需要厂商签名的国密升级包；不是对标准节点包再执行一次安装脚本。厂商对 Release 的 `syedge-<数据面版本>-1-gmssl-<架构>.tar.gz` 签名，客户把包与签名导入控制台“数据面版本库”，在节点组选择 `gmssl` 并发起升级，详见 `docs/gm.md`。已安装 Lua 时，还需导入相同发行版本的 Lua 附加包。
 
-升级器自动使用节点安装时确定的根目录，无需重复输入 `--prefix`。同机实例共享二进制：选择一个节点组升级时，控制台会把同一主机的其他实例一并纳入升级，不能只替换其中一个实例的共享二进制。确认国密变体：
+升级器自动使用节点安装时确定的根目录，无需重复输入 `--prefix`。共享实例会和同目录的其他共享实例一起升级；独立实例只升级自己。确认默认或共享实例的国密变体：
 
 ```bash
 R="$(sudo /usr/sbin/syedge-instance prefix)"
@@ -467,6 +467,7 @@ R="$(sudo /usr/sbin/syedge-instance prefix)"
 ```
 
 确认输出包含 `(gmssl)` 和 `enable-ntls`。控制台根据节点上报自动识别“国密”标签。
+独立实例 `blue` 请检查 `"$R/instances/blue/sbin/syedge" -V`。
 
 ### 6.2 国密双证书配置
 
@@ -503,20 +504,21 @@ server {
 ### 7.1 安装
 
 Lua 附加包必须与当前运行中的 `syedge` 版本一致。一个附加包同时包含标准版和国密版模块，安装脚本会根据 `syedge -V` 自动选择正确模块。
-system 模式自动读取节点安装根目录（包括 `/home/atwasoft/node`），不需要再次输入安装位置；该目录下所有具名实例共用模块，实例各自决定是否在配置中使用 Lua。
+system 模式自动读取节点安装根目录（包括 `/home/atwasoft/node`），不需要再次输入安装位置。多个实例时安装脚本会让用户选择目标；非交互环境请加 `--instance <实例名>`，默认实例名为 `default`。
 
 ```bash
 mkdir -p /tmp/syedge-lua
 tar -C /tmp/syedge-lua -xzf syedge-lua-1.30.6-x86_64.tar.gz
 cd /tmp/syedge-lua
 sudo bash install.sh
+# 或明确指定实例：sudo bash install.sh --instance blue
 ```
 
 安装脚本会：
 
 - 校验附加包版本与运行中的 `syedge` 版本一致；
-- 把模块安装到 `R/modules/lua-<版本>/`（`R` 是自动识别的安装根目录）；
-- 原子切换 `R/modules/lua` 软链接；
+- 共享实例安装到 `R/modules/lua-<版本>/`，独立实例安装到 `R/instances/<实例>/modules/lua-<版本>/`；
+- 原子切换选定模块目录下的 `lua` 软链接；
 - 执行真实的 `syedge -t -q` 自检；
 - 失败时恢复原来的模块软链接。
 
@@ -626,12 +628,13 @@ sudo /opt/syedge/sbin/syedge \
 
 **前提**：节点已按 8.1 节安装了软件包（默认实例照常存在）。每个具名实例对应控制台中一个**节点组**，节点组的“实例档案”（实例名与端口）决定该组所有节点上的路径与监听端口；同一台服务器上的实例必须属于不同的节点组。
 
-**1. 在控制台设置节点组的实例档案**（`PUT /api/v1/node-groups/<id>/profile`），例如实例名 `blue`、HTTP 18080、HTTPS 18443、状态页 8082。组内已有节点后实例名不能再改，端口可以改。控制台会检查同一台服务器上的实例名与端口（含四层代理端口）是否冲突。
+**1. 在控制台设置节点组的实例档案**（`PUT /api/v1/node-groups/<id>/profile`），例如实例名 `blue`、HTTP 18080、HTTPS 18443、状态页 8082，并选择数据面与模块“共享”或“独立”。组内已有节点后实例名与共享方式不能再改，端口可以改。控制台会检查同一台服务器上的实例名与端口（含四层代理端口）是否冲突。已有实例保持共享；独立方式只用于新建具名实例。
 
 **2. 在节点上创建实例并注册**：在该节点组的“添加节点”中生成命令，形如：
 
 ```bash
 sudo syedge-instance add blue --http 18080 --https 18443 --status 8082 \
+  --resource-mode independent \
   --console <控制台>:9443 --token <令牌> --ca-fingerprint <指纹>
 ```
 
@@ -645,7 +648,7 @@ sudo syedge-instance add blue --http 18080 --https 18443 --status 8082 \
 | agent 状态 | `/var/lib/syedge-agent` | `/var/lib/syedge-agent-blue` |
 | 服务 | `syedge.service`、`syedge-agent.service` | `syedge@blue.service`、`syedge-agent@blue.service` |
 
-二进制 `/opt/syedge/sbin/syedge` 与版本库由同机实例共用。
+省略 `--resource-mode` 或指定 `shared` 时使用共享二进制和模块；指定 `independent` 时，程序、版本库和模块分别位于 `R/instances/blue/sbin/`、`versions/`、`modules/`，可独立选择 Lua 和国密变体。
 
 **3. 日常管理**
 

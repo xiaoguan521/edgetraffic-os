@@ -720,5 +720,5 @@ func newID() string {
 func instanceInfo(p render.Profile) *agentv1.InstanceInfo {
 	e := p.Effective()
 	return &agentv1.InstanceInfo{Name: e.Instance, Mode: e.Mode, Root: e.Root,
-		HttpPort: uint32(e.HTTPPort), HttpsPort: uint32(e.HTTPSPort), StatusPort: uint32(e.StatusPort)}
+		HttpPort: uint32(e.HTTPPort), HttpsPort: uint32(e.HTTPSPort), StatusPort: uint32(e.StatusPort), ResourceMode: e.ResourceMode}
 }

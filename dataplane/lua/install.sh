@@ -5,25 +5,87 @@
 # - 安装到安装根目录下的 modules/lua-<包版本>/，再原子切换软链 modules/lua；
 # - 用真实 syedge -t 自检，失败则恢复原状。不重启、不停止 syedge，也不改动任何已发布的配置。
 set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "syedge-lua: $*" >&2; exit 1; }
-if [[ -n "${SYEDGE_ROOT:-}" ]]; then
-  ROOT="$SYEDGE_ROOT"
-elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
-  ROOT="$(/usr/libexec/syedge/syedge-instance prefix)" || die "无法校验安装根目录"
-elif [[ ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix ]]; then
-  ROOT=/opt/syedge
-elif [[ -x /usr/sbin/syedge-instance ]]; then
-  ROOT="$(/usr/sbin/syedge-instance prefix)" || die "无法校验安装根目录"
-else
-  die "缺少安装根目录校验工具"
-fi
-[[ "$ROOT" == /* && "$ROOT" != / ]] || die "安装根目录无效"
+
+# 安装和卸载共用目标选择，供同包的 uninstall.sh source；不执行任何安装操作。
+resolve_target() {
+  local requested="${SYEDGE_INSTANCE:-}" result name mode dir i choice
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --instance) [[ $# -ge 2 ]] || die "--instance 需要实例名"; requested="$2"; shift 2 ;;
+      --instance=*) requested="${1#*=}"; shift ;;
+      -h|--help) echo "用法：bash $(basename "$0") [--instance <实例名或 default>]"; exit 0 ;;
+      *) die "未知参数：$1" ;;
+    esac
+  done
+  [[ -z "$requested" || "$requested" == default || "$requested" =~ ^[a-z][a-z0-9-]{0,15}$ ]] || die "实例名无效"
+  local -a helper=()
+  if [[ -n "${SYEDGE_ROOT:-}" ]]; then
+    BASE_ROOT="$SYEDGE_ROOT"
+    if [[ $(id -u) -ne 0 && -x "$BASE_ROOT/bin/syedge-instance" ]]; then
+      helper=("$BASE_ROOT/bin/syedge-instance" --root "$BASE_ROOT")
+    fi
+  elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
+    helper=(/usr/libexec/syedge/syedge-instance)
+    BASE_ROOT="$("${helper[@]}" prefix)" || die "无法校验安装根目录"
+  elif [[ -x /usr/sbin/syedge-instance ]]; then
+    helper=(/usr/sbin/syedge-instance)
+    BASE_ROOT="$("${helper[@]}" prefix)" || die "无法校验安装根目录"
+  elif [[ ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix ]]; then
+    BASE_ROOT=/opt/syedge
+  else
+    die "缺少安装根目录校验工具"
+  fi
+  [[ "$BASE_ROOT" == /* && "$BASE_ROOT" != / && "$BASE_ROOT" != */../* && "$BASE_ROOT" != */.. ]] || die "安装根目录无效"
+  TARGET_COUNT=0; TARGET_NAMES=(); TARGET_MODES=(); TARGET_ROOTS=()
+  if [[ ${#helper[@]} -gt 0 ]]; then
+    result="$("${helper[@]}" runtimes 2>&1)" || die "无法列出实例，请先升级 syedge-instance：$result"
+    while IFS=$'\t' read -r name mode dir; do
+      [[ -n "$name" ]] || continue
+      [[ ( "$name" == default || "$name" =~ ^[a-z][a-z0-9-]{0,15}$ ) && ( "$mode" == shared || "$mode" == independent ) ]] || die "实例列表无效"
+      if [[ "$mode" == shared ]]; then
+        [[ "$dir" == "$BASE_ROOT" ]] || die "共享实例目录无效"
+      else
+        [[ "$name" != default && "$dir" == "$BASE_ROOT/instances/$name" ]] || die "独立实例目录无效"
+      fi
+      TARGET_NAMES+=("$name"); TARGET_MODES+=("$mode"); TARGET_ROOTS+=("$dir"); TARGET_COUNT=$((TARGET_COUNT+1))
+    done <<< "$result"
+  fi
+  if [[ "$TARGET_COUNT" -eq 0 ]]; then
+    if [[ ${#helper[@]} -eq 0 ]] && compgen -G "$BASE_ROOT/instances/*/instance.json" >/dev/null; then
+      die "检测到具名实例，但缺少对应的 syedge-instance 工具，无法安全选择安装目标"
+    fi
+    [[ -z "$requested" || "$requested" == default ]] || die "无法识别实例 $requested，请先安装新版 syedge-instance"
+    TARGET_NAMES=(default); TARGET_MODES=(shared); TARGET_ROOTS=("$BASE_ROOT"); TARGET_COUNT=1
+  fi
+  if [[ -z "$requested" && "$TARGET_COUNT" -gt 1 ]]; then
+    [[ -t 0 ]] || die "检测到多个实例，请使用 --instance <实例名或 default> 选择"
+    echo "请选择 Lua 功能包的目标实例：" >&2
+    for ((i=0; i<TARGET_COUNT; i++)); do
+      printf '  %d) %s（%s，%s）\n' "$((i+1))" "${TARGET_NAMES[$i]}" "${TARGET_MODES[$i]}" "${TARGET_ROOTS[$i]}" >&2
+    done
+    printf '请输入编号：' >&2
+    IFS= read -r choice || die "未选择实例"
+    [[ "$choice" =~ ^[1-9][0-9]*$ && ${#choice} -le 6 && "$choice" -le "$TARGET_COUNT" ]] || die "实例编号无效"
+    requested="${TARGET_NAMES[$((choice-1))]}"
+  fi
+  SELECTED="${requested:-${TARGET_NAMES[0]}}"; ROOT=""; TARGET_MODE=""
+  for ((i=0; i<TARGET_COUNT; i++)); do
+    if [[ "${TARGET_NAMES[$i]}" == "$SELECTED" ]]; then ROOT="${TARGET_ROOTS[$i]}"; TARGET_MODE="${TARGET_MODES[$i]}"; break; fi
+  done
+  [[ -n "$ROOT" ]] || die "找不到实例 $SELECTED"
+  [[ ! -L "$ROOT" && ! -L "$ROOT/modules" && ! -L "$ROOT/sbin" ]] || die "程序或模块目录不能是符号链接"
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+resolve_target "$@"
 SY="$ROOT/sbin/syedge"
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
 [[ -x "$SY" ]] || die "没有找到 $SY：请先安装 syedge 基础包"
-echo "安装根目录：$ROOT；同一目录下所有实例共用 Lua 模块。"
+echo "已选择实例：$SELECTED；安装根目录：$ROOT。"
+[[ "$TARGET_MODE" != shared ]] || echo "该实例使用共享模块，会影响同一目录下的其他共享实例。"
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$HERE/addon/VERSION"; }
 pkg=$(field version); want=$(field syedge)
 [[ "$pkg" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || die "附加包版本无效"

@@ -102,6 +102,9 @@ func (e Env) Add(o AddOptions) error {
 		return errors.New("--console、--token、--ca-fingerprint 需同时提供")
 	}
 	l := e.lay(p.Instance)
+	if p.ResourceMode == "independent" {
+		l = l.WithIndependentRuntime()
+	}
 	if p.Root != "" && p.Root != l.Root() {
 		return fmt.Errorf("实例档案安装根目录 %q 与本机 system 根目录 %q 不一致", p.Root, l.Root())
 	}
@@ -113,6 +116,9 @@ func (e Env) Add(o AddOptions) error {
 			return err
 		}
 		o.Profile = p
+	}
+	if err := e.prepareInstancesDir(l); err != nil {
+		return err
 	}
 	if _, err := os.Stat(e.path(l.InstanceFile())); err == nil {
 		return fmt.Errorf("%w: %s（%s）", ErrExists, p.Instance, l.Prefix())
@@ -180,6 +186,9 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 			}
 		}
 	}
+	if err := e.prepareIndependentRuntime(l); err != nil {
+		return err
+	}
 	b, _ := json.MarshalIndent(o.Profile, "", "  ")
 	if err := writeFile(e.path(l.InstanceFile()), append(b, '\n'), 0o644); err != nil {
 		return err
@@ -187,6 +196,11 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 	// sudoers：写入临时文件，visudo 校验通过才生效
 	if err := e.writeSudoers(l); err != nil {
 		return err
+	}
+	if l.IndependentRuntime() {
+		if err := e.writeIndependentUnits(l); err != nil {
+			return err
+		}
 	}
 	if err := e.Run("systemctl", "daemon-reload"); err != nil {
 		return err
@@ -283,6 +297,9 @@ func (e Env) Remove(name string, purge, yes bool) error {
 	}
 	_ = e.Run("userdel", l.AgentUser())
 	_ = os.RemoveAll(e.path("/etc/systemd/system/" + l.DataplaneUnit() + ".d"))
+	agentDropIn := e.path("/etc/systemd/system/" + l.AgentUnit() + ".d")
+	_ = os.Remove(filepath.Join(agentDropIn, "runtime.conf"))
+	_ = os.Remove(agentDropIn) // 其他管理员配置仍保留
 	for _, d := range dirs {
 		if err := removeInstanceDir(e.path(d), name); err != nil {
 			return err
@@ -467,7 +484,7 @@ func (e Env) Check() []string {
 		if in.Name == "" {
 			continue
 		}
-		l := e.lay(in.Name)
+		l := e.infoLayout(in)
 		if in.Profile.Instance != in.Name {
 			probs = append(probs, fmt.Sprintf("实例 %s 的 %s 写的是 %q", in.Name, layout.InstanceFile, in.Profile.Instance))
 		}
@@ -477,6 +494,9 @@ func (e Env) Check() []string {
 		need := []struct{ path, what string }{
 			{l.CurrentConf(), "当前配置"},
 			{l.AgentState(), "agent 状态目录"},
+		}
+		if l.IndependentRuntime() {
+			need = append(need, struct{ path, what string }{l.Bin(), "独立数据面程序"})
 		}
 		if !e.user() {
 			need = append(need, struct{ path, what string }{l.SudoersFile(), "sudoers"})
@@ -630,7 +650,7 @@ func (e Env) ReopenAll() error {
 	}
 	var first error
 	for _, in := range list {
-		l := e.lay(in.Name)
+		l := e.infoLayout(in)
 		args := []string{"-s", "reopen"}
 		if e.user() || l.Root() != layout.DefaultSystemRoot() {
 			args = []string{"-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}

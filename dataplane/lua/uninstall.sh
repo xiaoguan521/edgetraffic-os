@@ -3,25 +3,28 @@
 # 当前生效的配置仍在加载附加包模块时拒绝卸载（否则下一次 reload 会失败）：
 # 先在控制台去掉 JWT 规则并发布，再卸载。卸载不重启、不停止 syedge。
 set -euo pipefail
-die() { echo "syedge-lua: $*" >&2; exit 1; }
-if [[ -n "${SYEDGE_ROOT:-}" ]]; then
-  ROOT="$SYEDGE_ROOT"
-elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
-  ROOT="$(/usr/libexec/syedge/syedge-instance prefix)" || die "无法校验安装根目录"
-elif [[ ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix ]]; then
-  ROOT=/opt/syedge
-elif [[ -x /usr/sbin/syedge-instance ]]; then
-  ROOT="$(/usr/sbin/syedge-instance prefix)" || die "无法校验安装根目录"
-else
-  die "缺少安装根目录校验工具"
-fi
-[[ "$ROOT" == /* && "$ROOT" != / ]] || die "安装根目录无效"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=install.sh
+source "$HERE/install.sh"
+resolve_target "$@"
 M="$ROOT/modules"
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
 [[ -e "$M/lua" ]] || { echo "syedge-lua 未安装"; exit 0; }
-echo "安装根目录：$ROOT；卸载会影响同一目录下的所有实例。"
-for conf in "$ROOT/conf/current/syedge.conf" "$ROOT"/instances/*/conf/current/syedge.conf; do
+echo "已选择实例：$SELECTED；安装根目录：$ROOT。"
+[[ "$TARGET_MODE" != shared ]] || echo "卸载会影响同一目录下的其他共享实例。"
+confs=()
+if [[ "$TARGET_MODE" == independent ]]; then
+  confs=("$ROOT/conf/current/syedge.conf")
+elif [[ "$TARGET_COUNT" -gt 1 ]]; then
+  for ((i=0; i<TARGET_COUNT; i++)); do
+    [[ "${TARGET_MODES[$i]}" == shared && "${TARGET_ROOTS[$i]}" == "$ROOT" ]] || continue
+    if [[ "${TARGET_NAMES[$i]}" == default ]]; then confs+=("$ROOT/conf/current/syedge.conf"); else confs+=("$BASE_ROOT/instances/${TARGET_NAMES[$i]}/conf/current/syedge.conf"); fi
+  done
+else
+  confs=("$ROOT/conf/current/syedge.conf" "$ROOT"/instances/*/conf/current/syedge.conf)
+fi
+for conf in "${confs[@]}"; do
   if grep -qs "modules/lua/" "$conf"; then
     die "当前配置正在使用 Lua 规则（${conf}）：先在控制台去掉 JWT 规则并发布到本节点，再卸载"
   fi

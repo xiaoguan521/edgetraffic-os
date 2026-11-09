@@ -45,9 +45,10 @@ func ValidInstance(name string) bool {
 
 // Layout 是一个实例的部署布局。零值不可用，请用 System、SystemAt 或 User 构造。
 type Layout struct {
-	mode     Mode
-	root     string // 安装根目录：system 模式为 /opt/<品牌>
-	instance string // 空串为默认实例
+	mode        Mode
+	root        string // 安装根目录：system 模式为 /opt/<品牌>
+	instance    string // 空串为默认实例
+	independent bool   // 具名实例拥有独立的数据面二进制、版本库和模块
 }
 
 // DefaultSystemRoot 返回未设置 /etc/syedge/prefix 时使用的安装根目录。
@@ -149,6 +150,22 @@ func (l Layout) Root() string { return l.root }
 // Instance 返回实例名，默认实例为空串。
 func (l Layout) Instance() string { return l.instance }
 
+// WithIndependentRuntime 仅改变数据面程序、版本库和模块的归属，实例前缀与配置目录不变。
+func (l Layout) WithIndependentRuntime() Layout {
+	l.independent = true
+	return l
+}
+
+// IndependentRuntime 报告实例是否有独立的数据面运行文件。
+func (l Layout) IndependentRuntime() bool { return l.independent }
+
+func (l Layout) runtimeRoot() string {
+	if l.independent {
+		return l.Prefix()
+	}
+	return l.root
+}
+
 // suffix 是具名实例在系统目录名后的后缀，例如 -blue。
 func (l Layout) suffix() string {
 	if l.instance == "" {
@@ -174,14 +191,14 @@ func (l Layout) ReleasesDir() string { return path.Join(l.ConfRoot(), "releases"
 // CurrentConf 返回当前生效的主配置文件。
 func (l Layout) CurrentConf() string { return path.Join(l.ConfRoot(), "current", brand.ConfName()) }
 
-// Bin 返回数据面二进制（同机共用，首次升级后为指向版本库的软链）。
-func (l Layout) Bin() string { return path.Join(l.root, "sbin", brand.ID()) }
+// Bin 返回数据面二进制（首次升级后为指向对应版本库的软链）。
+func (l Layout) Bin() string { return path.Join(l.runtimeRoot(), "sbin", brand.ID()) }
 
-// Versions 返回数据面版本库（同机共用）。
-func (l Layout) Versions() string { return path.Join(l.root, "versions") }
+// Versions 返回实例使用的共享或独立数据面版本库。
+func (l Layout) Versions() string { return path.Join(l.runtimeRoot(), "versions") }
 
-// Modules 返回动态模块目录（同机共用）。
-func (l Layout) Modules() string { return path.Join(l.root, "modules") }
+// Modules 返回实例使用的共享或独立动态模块目录。
+func (l Layout) Modules() string { return path.Join(l.runtimeRoot(), "modules") }
 
 // RunDir 返回实例的运行目录（pid、锁）。
 func (l Layout) RunDir() string {

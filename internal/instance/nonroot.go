@@ -35,6 +35,13 @@ func (e Env) Nonroot() error {
 	if err != nil {
 		return err
 	}
+	for _, in := range insts {
+		if l := e.infoLayout(in); l.IndependentRuntime() {
+			if err := e.writeIndependentUnits(l); err != nil {
+				return err
+			}
+		}
+	}
 	if err := e.writeRuntimeTmpfiles(); err != nil {
 		return err
 	}
@@ -76,7 +83,14 @@ func (e Env) Nonroot() error {
 		return err
 	}
 	for _, in := range insts {
-		l := e.lay(in.Name)
+		l := e.infoLayout(in)
+		if l.IndependentRuntime() {
+			for _, c := range [][]string{{"-R", owner, l.Versions()}, {owner, filepath.Dir(l.Bin())}, {owner, l.Modules()}} {
+				if err := e.Run("chown", c...); err != nil {
+					return err
+				}
+			}
+		}
 		for _, d := range []string{l.RunDir(), l.LogDir(), l.CacheDir()} {
 			if err := os.MkdirAll(e.path(d), 0o755); err != nil {
 				return err
@@ -109,6 +123,13 @@ func (e Env) Nonroot() error {
 	// 切换以 root 执行，会在版本库中留下 root 所有的文件（升级锁、首次收入的原二进制）：再交给数据面用户一次
 	if err := e.Run("chown", "-R", owner, def.Versions()); err != nil {
 		return err
+	}
+	for _, in := range insts {
+		if l := e.infoLayout(in); l.IndependentRuntime() {
+			if err := e.Run("chown", "-R", owner, l.Versions()); err != nil {
+				return err
+			}
+		}
 	}
 	// agent 以新的方式调用 wrapper：重启 agent 进程（数据面不受影响）；未启用的单元不会被启动
 	units := []string{def.AgentUnit()}

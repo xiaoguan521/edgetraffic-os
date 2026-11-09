@@ -41,6 +41,9 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 		if p.Root != root {
 			return render.Profile{}, lay, fmt.Errorf("%s names install root %q, not %q", lay.InstanceFile(), p.Root, root)
 		}
+		if p.ResourceMode == "independent" {
+			lay = lay.WithIndependentRuntime()
+		}
 		return p, lay, nil
 	}
 	systemRoot, err := layout.LoadSystemRoot()
@@ -69,6 +72,9 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 		if err := p.Validate(); err != nil {
 			return render.Profile{}, lay, fmt.Errorf("%s: %w", lay.InstanceFile(), err)
 		}
+	}
+	if p.ResourceMode == "independent" {
+		lay = lay.WithIndependentRuntime()
 	}
 	return p, lay, nil
 }

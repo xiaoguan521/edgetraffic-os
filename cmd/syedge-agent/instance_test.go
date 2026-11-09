@@ -71,3 +71,19 @@ func TestLoadInstanceUserMode(t *testing.T) {
 		t.Fatalf("system instance under a user root: %v", err)
 	}
 }
+
+func TestLoadIndependentInstanceLayout(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "edge")
+	dir := filepath.Join(root, "instances", "blue")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"instance":"blue","mode":"user","root":"` + root + `","resource_mode":"independent","http_port":18080,"https_port":18443,"status_port":8083}`
+	if err := os.WriteFile(filepath.Join(dir, "instance.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, lay, err := loadInstanceAt(root, "blue")
+	if err != nil || p.ResourceMode != "independent" || lay.Bin() != filepath.Join(dir, "sbin/syedge") || lay.Modules() != filepath.Join(dir, "modules") {
+		t.Fatalf("profile/layout = %+v %+v %v", p, lay, err)
+	}
+}

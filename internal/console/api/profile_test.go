@@ -81,6 +81,14 @@ func TestEnrollCommand(t *testing.T) {
 	if strings.Contains(ud+ui, "sudo") {
 		t.Fatal("user mode command uses sudo")
 	}
+	for _, p := range []render.Profile{
+		{Instance: "blue", ResourceMode: "independent", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082},
+		{Instance: "blue", ResourceMode: "independent", Mode: "user", Root: "/home/ops/edge", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082},
+	} {
+		if got := enrollCommand(p, "c:9443", "tok", "fp"); !strings.Contains(got, "--resource-mode independent") {
+			t.Fatalf("missing runtime selection: %s", got)
+		}
+	}
 }
 
 func TestBrandEndpoint(t *testing.T) {
