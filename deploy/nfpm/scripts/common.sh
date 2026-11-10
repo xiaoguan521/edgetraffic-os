@@ -74,6 +74,13 @@ restore_package_payload() {
       return 1
     fi
   fi
+  for restore_guide in share/defaults/standalone-example.conf share/doc/STANDALONE.txt; do
+    if [ ! -e "$restore_root/$restore_guide" ] && [ ! -L "$restore_root/$restore_guide" ] && [ -f "$PACKAGE_ROOT/$restore_guide" ]; then
+      mkdir -p "$(dirname "$restore_root/$restore_guide")"
+      sed "s|$PACKAGE_ROOT|$restore_root|g" "$PACKAGE_ROOT/$restore_guide" > "$restore_root/$restore_guide"
+      chmod 0644 "$restore_root/$restore_guide"
+    fi
+  done
   [ ! -d "$PACKAGE_ROOT/share" ] || cp -an "$PACKAGE_ROOT/share/." "$restore_root/share/"
   [ ! -d "$PACKAGE_ROOT/html" ] || cp -an "$PACKAGE_ROOT/html/." "$restore_root/html/"
   chown syedge:syedge "$restore_root/sbin"

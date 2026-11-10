@@ -52,8 +52,10 @@ if [ "$R" != "$PACKAGE_ROOT" ] && [ -f "$R/share/defaults/baseline/syedge.conf" 
     sed -i "/^[[:space:]]*client_header_timeout/i\\    client_body_temp_path  $CACHE_DIR/client_temp;\n    proxy_temp_path        $CACHE_DIR/proxy_temp;\n    fastcgi_temp_path      $CACHE_DIR/fastcgi_temp;\n    uwsgi_temp_path        $CACHE_DIR/uwsgi_temp;\n    scgi_temp_path         $CACHE_DIR/scgi_temp;" "$baseline"
   fi
 fi
-if [ "$R" != "$PACKAGE_ROOT" ] && [ -f "$R/share/defaults/standalone-example.conf" ]; then
-  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+if [ "$R" != "$PACKAGE_ROOT" ]; then
+  for guide in "$R/share/defaults/standalone-example.conf" "$R/share/doc/STANDALONE.txt"; do
+    [ ! -f "$guide" ] || sed -i "s|/opt/syedge|$R|g" "$guide"
+  done
 fi
 # 运行时不使用 root（设计 0001 D5）：master 与 worker 以 syedge 运行，运行时目录、日志与缓存归 syedge；
 # 二进制所在目录、版本库与模块目录由 wrapper（同样以 syedge 运行）在热升级时写入

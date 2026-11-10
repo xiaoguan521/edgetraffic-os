@@ -133,6 +133,13 @@ jobs:
           tar -C "$RUNNER_TEMP/smoke-pkg" -czf "$RUNNER_TEMP/smoke-node.tar.gz" .
           LIC_TOOL="$RUNNER_TEMP/lic" LIC_KEY="$RUNNER_TEMP/keys/etos-ci-ephemeral.key" LIC_KID=etos-ci-ephemeral \
             scripts/release/smoke-node.sh "$RUNNER_TEMP/smoke-node.tar.gz" "$RUNNER_TEMP/smoke-console"
+      - name: node install using compiled default prefix
+        if: matrix.arch == 'amd64'
+        env:
+          SMOKE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
+        run: |
+          LIC_TOOL="$RUNNER_TEMP/lic" LIC_KEY="$RUNNER_TEMP/keys/etos-ci-ephemeral.key" LIC_KID=etos-ci-ephemeral \
+            scripts/release/smoke-node.sh "$RUNNER_TEMP/smoke-node.tar.gz" "$RUNNER_TEMP/smoke-console"
       - name: node image entrypoint smoke
         run: |
           context=$(mktemp -d)

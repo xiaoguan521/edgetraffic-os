@@ -29,14 +29,15 @@ dockerrun() { # 场景编号 docker run 参数……
   return $rc
 }
 run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
-  local name=$1 image=$2 install=$3 prefix=${4:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: prefix_mode_check=:
+  local name=$1 image=$2 install=$3 prefix=${4:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: prefix_mode_check=: logdir
   local base_root=$DEFAULT_ROOT
   if [[ -n "$prefix" ]]; then
     root=$prefix
-    dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
     prefix_setup="mkdir -p /etc/syedge; install -d -m 0751 '$prefix'; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
     prefix_mode_check="test \"\$(stat -c %a '$prefix')\" = 751"
   fi
+  if [[ "$root" == /opt/syedge ]]; then logdir=/var/log/syedge; else logdir="$root/logs"; fi
+  dp_opts="-p $root -e $logdir/error.log -c $root/conf/current/syedge.conf"
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -e "SYEDGE_PREFIX=$base_root" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
     $prefix_setup
@@ -79,13 +80,14 @@ el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm 
 # 独立模式：只装 syedge 软件包，按说明加一个站点后能直接服务；之后装 syedge-agent，
 # 注册时因为有本机自定义配置而被拒绝（不会被控制台静默替换）。
 standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命令 [自定义根目录]
-  local name=$1 image=$2 install=$3 agent=$4 prefix=${5:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=:
+  local name=$1 image=$2 install=$3 agent=$4 prefix=${5:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: logdir
   local base_root=$DEFAULT_ROOT
   if [[ -n "$prefix" ]]; then
     root=$prefix
-    dp_opts="-e $root/logs/error.log -c $root/conf/current/syedge.conf"
     prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix; umask 077"
   fi
+  if [[ "$root" == /opt/syedge ]]; then logdir=/var/log/syedge; else logdir="$root/logs"; fi
+  dp_opts="-p $root -e $logdir/error.log -c $root/conf/current/syedge.conf"
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -e "SYEDGE_PREFIX=$base_root" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -ex
     $prefix_setup
@@ -93,6 +95,7 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
     umask 022
     test \"\$(readlink '$root/conf/current')\" = releases/r000000
     test -f '$root/share/doc/STANDALONE.txt'
+    grep -Fq '$root/sbin/syedge -p $root' '$root/share/doc/STANDALONE.txt'
     '$root/sbin/syedge' $dp_opts -t -q
     cp '$root/share/defaults/standalone-example.conf' '$root/conf/current/conf.d/www.conf'
     if [ '$root' != '$base_root' ]; then printf 'standalone-content-preserved\n' > '$root/html/index.html'; fi
@@ -170,6 +173,7 @@ upgrade() { # 发行版名 镜像 安装旧版命令 升级数据面命令 升�
     test -f /etc/logrotate.d/syedge
     test -L /opt/syedge/conf/current
     $agent
+    grep -Fq '/opt/syedge/sbin/syedge -p /opt/syedge' /opt/syedge/share/doc/STANDALONE.txt
     test -x /usr/sbin/syedge-instance
     test -f /etc/logrotate.d/syedge
     if [ -f /etc/syedge/root-master ]; then

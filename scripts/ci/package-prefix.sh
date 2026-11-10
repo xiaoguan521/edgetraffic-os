@@ -24,10 +24,11 @@ fi
 unset -f stat
 PACKAGE_ROOT="$scratch/package"
 target="$scratch/installed"
-mkdir -p "$PACKAGE_ROOT/sbin" "$PACKAGE_ROOT/share/defaults" "$PACKAGE_ROOT/html" "$target/html"
+mkdir -p "$PACKAGE_ROOT/sbin" "$PACKAGE_ROOT/share/defaults" "$PACKAGE_ROOT/share/doc" "$PACKAGE_ROOT/html" "$target/html"
 printf 'new binary\n' > "$PACKAGE_ROOT/sbin/syedge"
 chmod 0755 "$PACKAGE_ROOT/sbin/syedge"
 printf 'default\n' > "$PACKAGE_ROOT/share/defaults/mime.types"
+printf '%s/sbin/syedge -p %s\n' "$PACKAGE_ROOT" "$PACKAGE_ROOT" > "$PACKAGE_ROOT/share/doc/STANDALONE.txt"
 printf 'package page\n' > "$PACKAGE_ROOT/html/index.html"
 printf 'customer page\n' > "$target/html/index.html"
 # 测试用户不必拥有切换属主的权限；文件安装逻辑仍通过系统 install 执行。
@@ -47,6 +48,7 @@ fi
 restore_package_payload "$target"
 [[ -x "$target/sbin/syedge" && $(cat "$target/sbin/syedge") == 'new binary' ]]
 [[ $(cat "$target/share/defaults/mime.types") == default ]]
+[[ $(cat "$target/share/doc/STANDALONE.txt") == "$target/sbin/syedge -p $target" ]]
 [[ $(cat "$target/html/index.html") == 'customer page' ]]
 printf 'existing version\n' > "$target/sbin/syedge"
 restore_package_payload "$target"

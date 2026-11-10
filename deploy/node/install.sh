@@ -101,8 +101,10 @@ fi
   fi
   install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syedge/$f" "$R/$f"
 done
-if [[ "$R" != "/opt/syedge" && -f "$R/share/defaults/standalone-example.conf" ]]; then
-  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+if [[ "$R" != "/opt/syedge" ]]; then
+  for guide in "$R/share/defaults/standalone-example.conf" "$R/share/doc/STANDALONE.txt"; do
+    [[ ! -f "$guide" ]] || sed -i "s|/opt/syedge|$R|g" "$guide"
+  done
 fi
 mkdir -p "$R/conf/releases"
 # sbin 目录运行时由 syedge 拥有；在 root 所有的安装根目录中创建临时文件，
