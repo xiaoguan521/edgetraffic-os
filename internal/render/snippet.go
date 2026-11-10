@@ -43,6 +43,7 @@ type SnippetContext struct {
 
 // SnippetIssue 是一条不允许的指令。
 type SnippetIssue struct {
+	File      string `json:"file,omitempty"`
 	Line      int    `json:"line"`
 	Directive string `json:"directive"`
 	Message   string `json:"message"`
@@ -138,7 +139,7 @@ type checker struct {
 }
 
 func (c *checker) bad(d *conf.Directive, msg string) {
-	c.issues = append(c.issues, SnippetIssue{Line: d.Line, Directive: d.Name, Message: msg})
+	c.issues = append(c.issues, SnippetIssue{File: d.File, Line: d.Line, Directive: d.Name, Message: msg})
 }
 
 // ValidateSnippet 校验片段并返回规范化后的文本（按 Print 格式，无缩进）。

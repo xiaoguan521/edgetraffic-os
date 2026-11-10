@@ -121,7 +121,7 @@ watch(
         http2: s.http2,
         enabled: props.site.enabled,
         version: props.site.version,
-        routes: JSON.parse(JSON.stringify(s.routes)),
+        routes: JSON.parse(JSON.stringify(Array.isArray(s.routes) ? s.routes : [])),
         rules: JSON.parse(JSON.stringify(s.rules || [])).map((r: AccessRule) => ({ ...r, conditions: (r.conditions || []).map((c) => ({ ...c, negate: !!c.negate })) })),
       })
     }

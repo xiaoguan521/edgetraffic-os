@@ -30,13 +30,14 @@ onMounted(load)
 function pick() {
   const el = document.createElement('input')
   el.type = 'file'
-  el.accept = '.txt,.conf,.gz,.tgz'
+  el.multiple = true
+  el.accept = '.txt,.conf,.inc,.types,.gz,.tgz,.crt,.pem,.key'
   el.onchange = async () => {
-    const f = el.files?.[0]
-    if (!f) return
+    const files = Array.from(el.files || [])
+    if (!files.length) return
     const fd = new FormData()
     fd.append('group_id', String(gid.value))
-    fd.append('file', f)
+    for (const f of files) fd.append('file', f)
     uploading.value = true
     try {
       const r = (await http.post('/imports', fd)).data
@@ -87,7 +88,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
     <div class="page-head">
       <div>
         <h1>配置导入</h1>
-        <p>上传现有配置（<span class="code">{{ brand.id }} -T</span> 的输出，或配置目录打包的 tar.gz，可含证书）。自动转成站点、上游与证书；转不了的部分逐行列入报告。导入结果只进草稿，之后照常预览、审批、发布。</p>
+        <p>选择一份 <span class="code">{{ brand.id }} -T</span> 输出、配置目录 tar.gz，或同时选择主配置与它引用的多个文件。支持的内容会转为草稿；请先核对报告中需要人工处理的路由、脚本、静态文件和证书，再预览、审批和发布。</p>
       </div>
       <a-space>
         <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
@@ -113,6 +114,8 @@ const statusTag: Record<string, { t: string; c: string }> = {
           <div><b class="num">{{ rep.upstreams.length }}</b><span>上游组</span></div>
           <div><b class="num">{{ rep.summary.issues }}</b><span>未转换条目</span></div>
         </div>
+        <a-alert v-if="rep.summary.issues" type="warning" show-icon style="margin-top: 12px"
+          message="请逐项核对未转换内容；包含问题的站点可能处于停用状态，应用为草稿并不代表迁移完成。" />
         <a-alert v-if="!current.import.applied_at && rep.sites.some((s: any) => s.cert_found)" type="info" show-icon style="margin-top: 12px"
           message="上传内容中的证书与私钥只在内存中保留 30 分钟等待确认；应用时加密存入证书库，不会出现在报告里。" />
       </section>

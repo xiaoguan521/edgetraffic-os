@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/importer"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
 // 配置导入（规格书 12.4）：上传 → 生成报告（落库，可下载）→ 确认后应用为草稿。
@@ -56,7 +58,7 @@ func sweepCerts() {
 
 const maxImportUpload = 20 << 20
 
-// createImport：multipart 字段 group_id、file（-T 输出的文本或配置目录 tar.gz）。
+// createImport：file 可重复，支持完整输出、压缩包或多份配置文件。
 func (s *Server) createImport(c *gin.Context) {
 	sweepCerts()
 	gid := queryGroup(c)
@@ -68,25 +70,36 @@ func (s *Server) createImport(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	fh, err := c.FormFile("file")
-	if err != nil {
+	form, err := c.MultipartForm()
+	if err != nil || len(form.File["file"]) == 0 {
 		fail(c, http.StatusBadRequest, "NO_FILE", "请选择要导入的文件")
 		return
 	}
-	if fh.Size > maxImportUpload {
-		fail(c, http.StatusRequestEntityTooLarge, "TOO_LARGE", "文件超过 20 MiB")
+	headers := form.File["file"]
+	if len(headers) > 2000 {
+		fail(c, http.StatusBadRequest, "TOO_MANY_FILES", "文件数量超过 2000")
 		return
 	}
-	f, err := fh.Open()
-	if err != nil {
-		failErr(c, err)
-		return
-	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, maxImportUpload+1))
-	if err != nil {
-		failErr(c, err)
-		return
+	var files []conf.File
+	var total int64
+	for _, fh := range headers {
+		total += fh.Size
+		if total > maxImportUpload {
+			fail(c, http.StatusRequestEntityTooLarge, "TOO_LARGE", "文件总大小超过 20 MiB")
+			return
+		}
+		f, err := fh.Open()
+		if err != nil {
+			failErr(c, err)
+			return
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxImportUpload+1))
+		_ = f.Close()
+		if err != nil {
+			failErr(c, err)
+			return
+		}
+		files = append(files, conf.File{Name: fh.Filename, Body: data})
 	}
 	var allowed []netip.Prefix
 	for _, p := range strings.Split(g.AllowedCIDRs, ",") {
@@ -97,7 +110,11 @@ func (s *Server) createImport(c *gin.Context) {
 	opts := importer.Options{AllowedNet: allowed}
 	var rep *importer.Report
 	source := "dump"
-	if len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b {
+	data := files[0].Body
+	if len(files) > 1 || (strings.HasSuffix(strings.ToLower(files[0].Name), ".conf") && !bytes.Contains(data, []byte("# configuration file "))) {
+		source = "files"
+		rep, err = importer.FromFiles(files, opts)
+	} else if len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b {
 		source = "archive"
 		rep, err = importer.FromArchive(data, opts)
 	} else {
@@ -109,7 +126,11 @@ func (s *Server) createImport(c *gin.Context) {
 	}
 	rj, _ := json.Marshal(rep)
 	sum := sha256.Sum256(rj)
-	row := &store.ConfigImport{GroupID: gid, Source: source, FileName: fh.Filename, Report: string(rj), ReportSHA256: hex.EncodeToString(sum[:]),
+	fileName := headers[0].Filename
+	if len(headers) > 1 {
+		fileName = fmt.Sprintf("%s 等 %d 个文件", fileName, len(headers))
+	}
+	row := &store.ConfigImport{GroupID: gid, Source: source, FileName: fileName, Report: string(rj), ReportSHA256: hex.EncodeToString(sum[:]),
 		Sites: rep.Summary.Sites, Full: rep.Summary.Full, Partial: rep.Summary.Partial, Failed: rep.Summary.Failed, Issues: rep.Summary.Issues,
 		CreatedBy: c.GetString("user")}
 	if err := s.q().ConfigImport.WithContext(c.Request.Context()).Create(row); err != nil {
@@ -119,7 +140,7 @@ func (s *Server) createImport(c *gin.Context) {
 	if len(rep.Certificates) > 0 {
 		importCerts.Store(row.ID, &pendingCerts{certs: rep.Certificates, expires: time.Now().Add(importCertTTL)})
 	}
-	s.audit(c, "config.import_analyze", "config_import", fmt.Sprint(row.ID), map[string]any{"group": gid, "file": fh.Filename, "source": source,
+	s.audit(c, "config.import_analyze", "config_import", fmt.Sprint(row.ID), map[string]any{"group": gid, "file": fileName, "source": source,
 		"report_sha256": row.ReportSHA256, "summary": rep.Summary})
 	c.JSON(http.StatusOK, gin.H{"import": row, "report": rep})
 }
