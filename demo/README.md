@@ -60,7 +60,7 @@ mkdir -p keys && cp /path/to/etos-demo-2026.key keys/
 UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu ./demo.sh up
 ```
 
-该设置只影响镜像构建时的软件源，APT 仍会校验软件源签名；不指定时使用基础镜像的默认源。
+构建后的镜像也会保留指定的软件源，APT 仍会校验软件源签名；不指定时使用基础镜像的默认源。
 
 ### 方式 C：直接用二进制，不用 Docker
 
