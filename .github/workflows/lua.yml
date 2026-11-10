@@ -35,6 +35,12 @@ on:
       - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   workflow_dispatch:
+    inputs:
+      prefix:
+        description: "数据面及 console/node/agent/instance 组件的编译期默认安装前缀"
+        required: false
+        type: string
+        default: "/home/atwasoft/syedge"
 
 permissions:
   contents: read
@@ -49,6 +55,8 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
+    env:
+      SYEDGE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
     steps:
       - uses: actions/checkout@v5
       # C 部分（基础包与模块）按数据面输入缓存；etos 规则库与安装脚本由验收任务从源码刷新进附加包
@@ -57,7 +65,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist-lua
-          key: syedge-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+          key: syedge-lua-${{ matrix.arch }}-${{ inputs.prefix || 'home-atwasoft-syedge' }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'scripts/validate-prefix.sh', 'docs/NOTICE') }}
       - name: build syedge-lua (standard + Tongsuo bases, static)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -74,6 +82,8 @@ jobs:
         base: [standard, gmssl]
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    env:
+      SYEDGE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -83,7 +93,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: dist-lua
-          key: syedge-lua-${{ matrix.arch }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'docs/NOTICE') }}
+          key: syedge-lua-${{ matrix.arch }}-${{ inputs.prefix || 'home-atwasoft-syedge' }}-${{ hashFiles('dataplane/**', '!dataplane/lua/lualib/**', '!dataplane/lua/install.sh', '!dataplane/lua/uninstall.sh', 'scripts/rename-scan.sh', 'scripts/validate-prefix.sh', 'docs/NOTICE') }}
           fail-on-cache-miss: true
       - name: refresh etos library and install scripts from source
         run: |
@@ -98,7 +108,7 @@ jobs:
           go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
           /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
           pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub" ./cmd/syedge-wrapper
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$SYEDGE_PREFIX" ./cmd/syedge-wrapper
       - name: Lua custom system root and named instances (${{ matrix.base }})
         run: bash scripts/ci/lua-custom-prefix.sh dist-lua ${{ matrix.base }}
       - name: Lua shared and independent instance selection (${{ matrix.base }})
@@ -117,7 +127,7 @@ jobs:
           OUT="$work" SYEDGE_UPGRADE_VERSION="$ver" scripts/release/package.sh syedge-upgrade "$arch" "$gm" gmssl
           OUT="$work" scripts/release/package.sh lua-upgrade "$lua" "$ver" '${{ matrix.arch }}'
           sudo env "PATH=$PATH" \
-            SYEDGE_TEST_STANDARD_BIN="$work/opt/syedge/sbin/syedge" \
+            SYEDGE_TEST_STANDARD_BIN="$work$SYEDGE_PREFIX/sbin/syedge" \
             SYEDGE_GM_UPGRADE_PACKAGE="$work/syedge-$ver-gmssl-$arch.tar.gz" \
             SYEDGE_TEST_LUA_PACKAGE="$GITHUB_WORKSPACE/$lua" \
             SYEDGE_TEST_LUA_UPGRADE_PACKAGE="$work/syedge-lua-$ver-${{ matrix.arch }}.tar.gz" \

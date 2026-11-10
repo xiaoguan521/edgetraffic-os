@@ -128,7 +128,11 @@ func (p Profile) Layout() (layout.Layout, error) {
 				return layout.Layout{}, err
 			}
 		}
-		l = layout.SystemAt(p.Root, p.Instance)
+		root := p.Root
+		if root == "" {
+			root = layout.LegacySystemRoot()
+		}
+		l = layout.SystemAt(root, p.Instance)
 	}
 	if p.ResourceMode == "independent" {
 		l = l.WithIndependentRuntime()
@@ -183,7 +187,7 @@ func (p Profile) view() profileView {
 	return profileView{
 		NoFile:  p.Files(),
 		PidFile: l.PidFile(), ErrorLog: l.ErrorLog(), AccessLog: l.AccessLog(), StreamLog: l.LogDir() + "/stream.log",
-		CustomTemp: l.CacheDir() != layout.SystemAt("", "").CacheDir(), TempDir: l.CacheDir(),
+		CustomTemp: l.CacheDir() != layout.SystemAt(layout.LegacySystemRoot(), "").CacheDir(), TempDir: l.CacheDir(),
 		HTTP: p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
 		VersionPath: layout.VersionPath(), VersionVar: "$" + brand.ID() + "_version",
 		SitesDir: l.ConfRoot() + "/current/sites/", ReleasesDir: p.ReleasesDir(),
@@ -219,7 +223,7 @@ func (p Profile) Effective() Profile {
 	if p.ResourceMode == "" {
 		p.ResourceMode = "shared"
 	}
-	if p.Mode == string(layout.ModeSystem) && p.Root == layout.DefaultSystemRoot() {
+	if p.Mode == string(layout.ModeSystem) && p.Root == layout.LegacySystemRoot() {
 		p.Root = ""
 	}
 	p.HTTPPort, p.HTTPSPort, p.StatusPort, p.NoFile = p.HTTP(), p.HTTPS(), p.Status(), p.Files()

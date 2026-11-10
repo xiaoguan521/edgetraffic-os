@@ -6,11 +6,9 @@ if is_remove "$1"; then
     systemctl stop 'syedge@*.service' >/dev/null 2>&1 || true
   fi
   if [ -f /run/syedge/syedge.pid ] && [ -x "$r/sbin/syedge" ]; then
-    if [ "$r" = /opt/syedge ]; then
-      "$r/sbin/syedge" -s quit >/dev/null 2>&1 || true
-    else
-      "$r/sbin/syedge" -e "$r/logs/error.log" -c "$r/conf/current/syedge.conf" -s quit >/dev/null 2>&1 || true
-    fi
+    log="$r/logs/error.log"
+    [ "$r" != "$LEGACY_ROOT" ] || log=/var/log/syedge/error.log
+    "$r/sbin/syedge" -p "$r" -e "$log" -c "$r/conf/current/syedge.conf" -s quit >/dev/null 2>&1 || true
   fi
 fi
 exit 0

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 func selfSigned(t *testing.T, host string) *TLS {
@@ -152,13 +154,14 @@ func TestRenderRejects(t *testing.T) {
 func TestRenderSyedgeSyntax(t *testing.T) {
 	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syedge/sbin/syedge"
+		bin = filepath.Join(layout.DefaultSystemRoot(), "sbin", "syedge")
 	}
 	if _, err := os.Stat(bin); err != nil {
 		t.Skip("syedge binary not installed")
 	}
 	in := sampleInput(t)
-	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
+	in.Profile = Profile{Mode: "system", Root: layout.DefaultSystemRoot()}
+	if mt, err := os.ReadFile(filepath.Join(layout.DefaultSystemRoot(), "share/defaults/mime.types")); err == nil {
 		in.MimeTypes = mt
 	}
 	// 带一个进行中的 ACME 挑战，确认挑战 location 也能通过真实 syedge -t
@@ -200,7 +203,7 @@ if ($request_method = TRACE) { return 405; }`
 	if os.Geteuid() != 0 {
 		t.Skip("syedge -t needs root to check user and log paths")
 	}
-	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
+	out, err := exec.Command(bin, "-p", in.Profile.lay().RuntimeRoot(), "-e", in.Profile.lay().ErrorLog(), "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}

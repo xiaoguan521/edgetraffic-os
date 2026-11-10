@@ -15,8 +15,9 @@ PKG=$(realpath "${1:?node package}"); CONSOLE=$(realpath "${2:?console binary}")
 export NO_PROXY='*' no_proxy='*'
 W=$(mktemp -d); JAR=$W/jar
 B=http://127.0.0.1:18443/api/v1
-ROOT=${SMOKE_PREFIX:-/opt/syedge}
-if [[ "$ROOT" == "/opt/syedge" ]]; then
+ROOT=${SMOKE_PREFIX:-${SYEDGE_PREFIX:-/opt/syedge}}
+DEFAULT_ROOT=${SYEDGE_PREFIX:-/opt/syedge}
+if [[ "$ROOT" == /opt/syedge ]]; then
   LOG_DIR=/var/log/syedge
 else
   LOG_DIR="$ROOT/logs"
@@ -139,7 +140,7 @@ INST=$(sed -E 's/.*"installation_id":"([^"]+)".*/\1/' "$W/console/installation.j
   -customer smoke -days 365 > "$W/smoke.lic"
 python3 -c "import json,sys;print(json.dumps({'raw':open(sys.argv[1]).read()}))" "$W/smoke.lic" | "${C[@]}" -X POST "$B/license/import" -d @- >/dev/null
 expect "授权有效" "$("${C[@]}" "$B/license" | j "d['state']")" "VALID"
-if [[ "$ROOT" != /opt/syedge ]]; then
+if [[ "$ROOT" != "$DEFAULT_ROOT" ]]; then
   profile=$(python3 -c 'import json,sys; print(json.dumps({"mode":"system","root":sys.argv[1]}))' "$ROOT")
   result=$("${C[@]}" -X PUT "$B/node-groups/1/profile" -d "$profile")
   expect "节点组使用自定义根目录" "$result" "$ROOT"
@@ -232,6 +233,16 @@ if out=$(sudo systemctl reload syedge.service 2>&1); then
   fi
 else
   bad "优雅停止测试无法加载配置：$out"
+fi
+
+if [[ $fail -eq 0 ]]; then
+  sudo install -d "$ROOT/data"
+  printf 'console-data-preserved\n' | sudo tee "$ROOT/data/purge-smoke" >/dev/null
+  if sudo "$D/uninstall.sh" --purge && sudo test -f "$ROOT/data/purge-smoke" && ! sudo test -e "$ROOT/conf"; then
+    ok "卸载只删除节点数据，保留同目录下的控制台数据"
+  else
+    bad "节点卸载没有正确保护同目录下的其他数据"
+  fi
 fi
 
 if [[ $fail -ne 0 ]]; then

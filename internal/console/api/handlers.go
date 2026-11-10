@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/crypto"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
@@ -27,6 +28,15 @@ import (
 
 // bg 用于不依附单个请求的统计查询。
 var bg = context.Background()
+
+// 旧档案的空根目录始终表示历史安装；新建节点组显式保存当前发行包的默认目录。
+func defaultGroupProfile() string {
+	if layout.DefaultSystemRoot() == layout.LegacySystemRoot() {
+		return ""
+	}
+	b, _ := json.Marshal(render.Profile{Mode: string(layout.ModeSystem), Root: layout.DefaultSystemRoot()})
+	return string(b)
+}
 
 func (s *Server) q() *query.Query { return query.Use(s.Store.DB) }
 
@@ -118,7 +128,7 @@ func (s *Server) setup(c *gin.Context) {
 	// 初始化默认节点组
 	if n, err := q.NodeGroup.WithContext(ctx).Count(); err == nil && n == 0 {
 		if err := q.NodeGroup.WithContext(ctx).Create(&store.NodeGroup{Name: "default", Description: "默认节点组",
-			AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"}); err != nil {
+			AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", InstanceProfile: defaultGroupProfile()}); err != nil {
 			failErr(c, err)
 			return
 		}
@@ -342,7 +352,7 @@ func (s *Server) createGroup(c *gin.Context) {
 	if s.groupNameTaken(c, req.Name, 0) {
 		return
 	}
-	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom}
+	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom, InstanceProfile: defaultGroupProfile()}
 	if err := s.q().NodeGroup.WithContext(c.Request.Context()).Create(g); err != nil {
 		failErr(c, err)
 		return

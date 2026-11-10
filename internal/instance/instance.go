@@ -110,7 +110,7 @@ func (e Env) Add(o AddOptions) error {
 	}
 	// system 模式的实例档案需要把自定义根目录写入节点，供 agent 与控制台核对；
 	// 默认根目录继续使用零值，保持旧版 instance.json 兼容。
-	if l.Root() != layout.DefaultSystemRoot() {
+	if l.Root() != layout.LegacySystemRoot() {
 		p.Mode, p.Root = string(layout.ModeSystem), l.Root()
 		if err := p.Validate(); err != nil {
 			return err
@@ -276,7 +276,7 @@ func (e Env) Remove(name string, purge, yes bool) error {
 	if err := e.prepareInstancesDir(l); err != nil {
 		return err
 	}
-	custom := l.Root() != layout.DefaultSystemRoot()
+	custom := l.Root() != layout.LegacySystemRoot()
 	dirs := []string{l.Prefix()}
 	if !custom {
 		dirs = append(dirs, l.AgentState())
@@ -671,12 +671,7 @@ func (e Env) ReopenAll() error {
 	var first error
 	for _, in := range list {
 		l := e.infoLayout(in)
-		args := []string{"-s", "reopen"}
-		if e.user() || l.Root() != layout.DefaultSystemRoot() {
-			args = []string{"-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}
-		} else if in.Name != "" {
-			args = []string{"-c", l.CurrentConf(), "-s", "reopen"}
-		}
+		args := []string{"-p", l.RuntimeRoot(), "-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}
 		bin := l.Bin()
 		// 运行时不使用 root（D5）：`-s reopen` 会先以执行者身份打开错误日志，root 执行会留下 root 所有的日志文件，
 		// 之后以数据面用户运行的 master 与 `-t` 无法写入；以 root 执行时（logrotate）经 runuser 以数据面用户发送。

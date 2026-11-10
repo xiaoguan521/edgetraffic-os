@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // sampleRules 覆盖全部原生条件与动作；匹配值里故意放入引号、分号、花括号与 $ 等字符，必须被转义成字面量。
@@ -143,7 +145,7 @@ func TestRulesValidation(t *testing.T) {
 func TestRulesSyedgeSyntax(t *testing.T) {
 	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syedge/sbin/syedge"
+		bin = filepath.Join(layout.DefaultSystemRoot(), "sbin", "syedge")
 	}
 	if _, err := os.Stat(bin); err != nil {
 		t.Skip("syedge binary not installed")
@@ -152,7 +154,8 @@ func TestRulesSyedgeSyntax(t *testing.T) {
 		t.Skip("needs root")
 	}
 	in := rulesInput(t)
-	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
+	in.Profile = Profile{Mode: "system", Root: layout.DefaultSystemRoot()}
+	if mt, err := os.ReadFile(filepath.Join(layout.DefaultSystemRoot(), "share/defaults/mime.types")); err == nil {
 		in.MimeTypes = mt
 	}
 	out, _ := exec.Command(bin, "-V").CombinedOutput()
@@ -169,7 +172,7 @@ func TestRulesSyedgeSyntax(t *testing.T) {
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+	if out, err := exec.Command(bin, "-p", in.Profile.lay().RuntimeRoot(), "-e", in.Profile.lay().ErrorLog(), "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 }

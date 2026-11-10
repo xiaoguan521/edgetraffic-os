@@ -3,7 +3,7 @@
 
 只安装 @ID@ 软件包、不接入控制台时，@ID@ 以独立模式运行，配置文件由管理员手工维护。
 
-安装后已写入基线配置（/opt/@ID@/conf/current -> releases/r000000）：
+安装后已写入基线配置（@PREFIX@/conf/current -> releases/r000000）：
   - 基线安全设置、JSON 访问日志 /var/log/@ID@/access.json、限速区域、常用代理头
   - 未匹配任何域名的请求直接断开；本机状态页 127.0.0.1:8081/__@ID@_status
 
@@ -11,8 +11,8 @@
   systemctl enable @ID@ && systemctl start @ID@
 
 添加站点：
-  cp /opt/@ID@/share/defaults/standalone-example.conf /opt/@ID@/conf/current/conf.d/www.conf
-  vi /opt/@ID@/conf/current/conf.d/www.conf
+  cp @PREFIX@/share/defaults/standalone-example.conf @PREFIX@/conf/current/conf.d/www.conf
+  vi @PREFIX@/conf/current/conf.d/www.conf
   @ID@ -t && systemctl reload @ID@
 
 命令与参数与上游一致：@ID@ -t / -T / -s reload / -s reopen / -s quit / -v / -V。
@@ -30,4 +30,4 @@
          当前配置先备份到 /var/lib/@ID@-agent/backups/standalone-<时间>.tar.gz（0600），
          在控制台首次发布之前，@ID@ 继续使用本机配置运行。
 
-Based on NGINX Open Source (BSD-2-Clause)，详见 /opt/@ID@/share/doc/NOTICE。
+Based on NGINX Open Source (BSD-2-Clause)，详见 @PREFIX@/share/doc/NOTICE。

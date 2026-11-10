@@ -27,6 +27,14 @@ jobs:
           "$(go env GOPATH)/bin/golangci-lint" run ./...
       - name: vet and test
         run: make test
+      - name: compiled prefix compatibility
+        run: |
+          for prefix in /home/atwasoft/syedge /srv/syedge; do
+            ld="-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$prefix"
+            go test -mod=vendor -ldflags "$ld" ./internal/render -run '^TestHistoricalProfileDoesNotFollowCompiledDefault$'
+            go test -mod=vendor -ldflags "$ld" ./internal/instance -run '^TestCompiledNonLegacyRootUsesItsOwnDirectories$'
+            go test -mod=vendor -ldflags "$ld" ./internal/console/api -run '^TestNewGroupProfileUsesCompiledRoot$'
+          done
       - name: release-tag build (no demo signing key)
         run: |
           go vet -mod=vendor -tags release ./...

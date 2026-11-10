@@ -143,7 +143,7 @@ func (e Env) addUserSteps(o AddOptions, l layout.Layout) error {
 	if err := e.Run(l.AgentBin(), append([]string{"bootstrap"}, agentArgs(l)...)...); err != nil {
 		return fmt.Errorf("生成初始配置: %w", err)
 	}
-	if err := e.Run(l.Bin(), "-t", "-q", "-e", l.ErrorLog(), "-c", l.CurrentConf()); err != nil {
+	if err := e.Run(l.Bin(), "-p", l.RuntimeRoot(), "-t", "-q", "-e", l.ErrorLog(), "-c", l.CurrentConf()); err != nil {
 		return fmt.Errorf("初始配置校验失败: %w", err)
 	}
 	systemd := e.UserSystemd != nil && e.UserSystemd()
@@ -204,16 +204,16 @@ After=network-online.target
 [Service]
 Type=forking
 PIDFile=%[4]s
-ExecStartPre=%[5]s -t -q -e %[6]s -c %[7]s
-ExecStart=%[5]s -e %[6]s -c %[7]s
-ExecReload=%[5]s -e %[6]s -c %[7]s -s reload
-ExecStop=%[5]s -e %[6]s -c %[7]s -s quit
+ExecStartPre=%[5]s -p %[8]s -t -q -e %[6]s -c %[7]s
+ExecStart=%[5]s -p %[8]s -e %[6]s -c %[7]s
+ExecReload=%[5]s -p %[8]s -e %[6]s -c %[7]s -s reload
+ExecStop=%[5]s -p %[8]s -e %[6]s -c %[7]s -s quit
 KillMode=mixed
 KillSignal=SIGQUIT
 
 [Install]
 WantedBy=default.target
-`, brand.Product(), label(l.Instance()), l.Root(), l.PidFile(), l.Bin(), l.ErrorLog(), l.CurrentConf())
+`, brand.Product(), label(l.Instance()), l.Root(), l.PidFile(), l.Bin(), l.ErrorLog(), l.CurrentConf(), l.RuntimeRoot())
 	ag := fmt.Sprintf(`[Unit]
 Description=%[1]s agent (%[2]s, user mode, %[3]s)
 After=network-online.target %[4]s
@@ -243,7 +243,7 @@ func (e Env) agentPidFile(l layout.Layout) string { return filepath.Join(l.RunDi
 
 // startDataplane 直接启动数据面（master 自行转入后台）。
 func (e Env) startDataplane(l layout.Layout) error {
-	if err := e.Run(l.Bin(), "-e", l.ErrorLog(), "-c", l.CurrentConf()); err != nil {
+	if err := e.Run(l.Bin(), "-p", l.RuntimeRoot(), "-e", l.ErrorLog(), "-c", l.CurrentConf()); err != nil {
 		return fmt.Errorf("启动数据面: %w", err)
 	}
 	return nil
@@ -393,7 +393,7 @@ func (e Env) removeUser(name string, purge, yes bool) error {
 		_ = e.Run("systemctl", "--user", "disable", "--now", dpUnit)
 	}
 	if e.alive(l.PidFile(), dataplaneExe(l)) {
-		_ = e.Run(l.Bin(), "-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "quit")
+		_ = e.Run(l.Bin(), "-p", l.RuntimeRoot(), "-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "quit")
 	}
 	for _, u := range []string{dpUnit, agUnit} {
 		if err := os.Remove(filepath.Join(e.path(e.unitDir()), u)); err != nil && !os.IsNotExist(err) {

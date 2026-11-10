@@ -144,3 +144,18 @@ func TestSnippetHTTPAndValidationContext(t *testing.T) {
 		t.Fatalf("audit %s", j)
 	}
 }
+
+func TestSnippetValidationUsesGroupInstallRoot(t *testing.T) {
+	d, g := newTestService(t)
+	if err := d.SetProfile(g.ID, render.Profile{Mode: "system", Root: "/home/atwasoft/node"}, "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	site := addProxySite(t, d, g)
+	ctx, _, err := d.snippetContext(g.ID, site.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.SitesBase != "/home/atwasoft/node/conf/current/sites/" {
+		t.Fatalf("sites base = %q", ctx.SitesBase)
+	}
+}

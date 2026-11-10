@@ -38,6 +38,11 @@ on:
         type: choice
         options: [pr, full]
         default: pr
+      prefix:
+        description: "数据面及 console/node/agent/instance 组件的编译期默认安装前缀"
+        type: string
+        required: false
+        default: "/home/atwasoft/syedge"
 
 permissions:
   contents: read
@@ -55,6 +60,7 @@ jobs:
     env:
       VERSION: 0.0.0-pr.${{ github.run_number }}
       OUT: ${{ github.workspace }}/dist/release
+      SYEDGE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -73,13 +79,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist/syedge
-          key: syedge-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh') }}
+          key: syedge-static-${{ matrix.arch }}-${{ inputs.prefix || 'home-atwasoft-syedge' }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh', 'scripts/validate-prefix.sh') }}
       - name: static syedge (glibc 2.17)
         if: steps.syedge-cache.outputs.cache-hit != 'true'
         run: scripts/release/build-syedge-static.sh dist/syedge
       - name: static syedge from cache
         if: steps.syedge-cache.outputs.cache-hit == 'true'
-        run: ls -l dist/syedge && tar -tzf dist/syedge/syedge-*.tar.gz opt/syedge/sbin/syedge
+        run: ls -l dist/syedge && tar -tzf dist/syedge/syedge-*.tar.gz "${SYEDGE_PREFIX#/}/sbin/syedge"
       - name: GM and Lua upgrade package layout
         run: bash scripts/ci/addon-package.sh
       - name: build web
@@ -117,7 +123,7 @@ jobs:
           go build -mod=vendor -o "$RUNNER_TEMP/lic" ./cmd/syedge-license-server
           "$RUNNER_TEMP/lic" keygen -kid etos-ci-ephemeral -out "$RUNNER_TEMP/keys" > "$RUNNER_TEMP/keygen.txt"
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' "$RUNNER_TEMP/keygen.txt" | tail -1 | tr -d '"')
-          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
+          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$SYEDGE_PREFIX"
           CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o "$RUNNER_TEMP/smoke-console" ./cmd/syedge-console
           mkdir -p "$RUNNER_TEMP/smoke-pkg"
           tar -C "$RUNNER_TEMP/smoke-pkg" -xzf "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz"
@@ -125,3 +131,22 @@ jobs:
           tar -C "$RUNNER_TEMP/smoke-pkg" -czf "$RUNNER_TEMP/smoke-node.tar.gz" .
           LIC_TOOL="$RUNNER_TEMP/lic" LIC_KEY="$RUNNER_TEMP/keys/etos-ci-ephemeral.key" LIC_KID=etos-ci-ephemeral \
             scripts/release/smoke-node.sh "$RUNNER_TEMP/smoke-node.tar.gz" "$RUNNER_TEMP/smoke-console"
+      - name: node image entrypoint smoke
+        run: |
+          context=$(mktemp -d)
+          mkdir -p "$context/node"
+          tar -C "$context" -xzf "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz"
+          mv "$context/syedge-node-$VERSION-linux-${{ matrix.arch }}/rootfs" "$context/node/rootfs"
+          cp demo/node/entrypoint.sh demo/node/systemctl "$context/node/"
+          docker build -q --build-arg "SYEDGE_PREFIX=$SYEDGE_PREFIX" -f deploy/docker/node.Dockerfile -t syedge-node-prefix-smoke "$context"
+          container=$(docker run -d syedge-node-prefix-smoke)
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for i in $(seq 1 30); do
+            if docker logs "$container" 2>&1 | grep -q 'syedge started:'; then ready=1; break; fi
+            [[ $(docker inspect -f '{{.State.Running}}' "$container") == true ]] || break
+            sleep 1
+          done
+          docker logs "$container"
+          [[ "$ready" == 1 ]] || { echo 'node image entrypoint failed' >&2; exit 1; }
+          docker stop -t 15 "$container" >/dev/null

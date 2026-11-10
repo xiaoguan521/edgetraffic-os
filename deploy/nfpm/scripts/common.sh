@@ -10,6 +10,7 @@ nologin_shell() {
 }
 ensure_group() { getent group "$1" >/dev/null 2>&1 || groupadd -r "$1"; }
 ensure_user() { id "$1" >/dev/null 2>&1 || useradd -r -g "$2" -d /nonexistent -M -s "$(nologin_shell)" "$1"; }
+LEGACY_ROOT=/opt/"syedge"
 is_remove() { [ "$1" = "0" ] || [ "$1" = "remove" ] || [ "$1" = "purge" ]; }
 syedge_root() {
   # 数据面包自带当前版本的校验器；升级时 /usr/sbin 中的 agent 工具可能仍是旧版。

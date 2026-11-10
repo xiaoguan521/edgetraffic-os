@@ -30,11 +30,46 @@ func TestBuildAllowed(t *testing.T) {
 		if cmd.Path != DataplaneBin() {
 			t.Fatalf("%v: path = %q", c.argv, cmd.Path)
 		}
+		if len(c.want) > 1 && c.want[0] == "-t" {
+			c.want = append(c.want[:2], append([]string{"-p", "/opt/syedge"}, c.want[2:]...)...)
+		} else {
+			c.want = append([]string{"-p", "/opt/syedge"}, c.want...)
+		}
 		if !reflect.DeepEqual(cmd.Args, c.want) {
 			t.Fatalf("%v: args = %q, want %q", c.argv, cmd.Args, c.want)
 		}
 		if !reflect.DeepEqual(cmd.Env, SafeEnv) {
 			t.Fatalf("%v: env not sanitized", c.argv)
+		}
+	}
+}
+
+func TestUserCommandsUseTheirRuntimePrefix(t *testing.T) {
+	root := t.TempDir()
+	cmd, err := BuildAt(root, []string{"test", "r000123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, arg := range cmd.Args {
+		if arg == "-p" && i+1 < len(cmd.Args) && cmd.Args[i+1] == root {
+			return
+		}
+	}
+	t.Fatalf("configuration test has no trusted runtime prefix %q: %q", root, cmd.Args)
+}
+
+func TestUpgradeMasterPrefixCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		title, compiled, want string
+		ok                    bool
+	}{
+		{"SyEdge: master process /opt/syedge/sbin/syedge", "/home/atwasoft/syedge", "/opt/syedge", false},
+		{"SyEdge: master process /opt/syedge/sbin/syedge", "/opt/syedge", "/opt/syedge", true},
+		{"SyEdge: master process /opt/syedge/sbin/syedge -p /opt/syedge", "/home/atwasoft/syedge", "/opt/syedge", true},
+		{"SyEdge: master process /opt/syedge/sbin/syedge -p /wrong", "/opt/syedge", "/opt/syedge", false},
+	} {
+		if got := compatibleMasterPrefix(tc.title, tc.compiled, tc.want); got != tc.ok {
+			t.Errorf("title=%q compiled=%q: got %t, want %t", tc.title, tc.compiled, got, tc.ok)
 		}
 	}
 }

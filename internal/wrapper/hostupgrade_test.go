@@ -72,7 +72,7 @@ http {
 			instance = ""
 		}
 		p := Paths{Bin: binPath, Versions: filepath.Join(dir, "versions"), Incoming: filepath.Join(dir, "incoming"),
-			PidFile: filepath.Join(dir, "run", name+".pid"), Conf: conf, Arch: runtime.GOARCH, Timeout: 10 * time.Second,
+			PidFile: filepath.Join(dir, "run", name+".pid"), Conf: conf, Prefix: dir, Arch: runtime.GOARCH, Timeout: 10 * time.Second,
 			Instance: instance, Keys: map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}}
 		if out, err := exec.Command(binPath, "-p", dir, "-c", conf).CombinedOutput(); err != nil {
 			t.Fatalf("start %s: %v %s", name, err, out)

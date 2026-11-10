@@ -67,6 +67,7 @@ find "$A/lualib" -type f ! -name '*.lua' -delete
 cat > "$A/VERSION" <<EOF
 {"name":"syedge-lua","version":"$PKG_VERSION","syedge":"$UPSTREAM_VERSION","luajit":"$LUAJIT_TAG","ndk":"$NDK_TAG","lua_module":"$LUA_MODULE_TAG","resty_core":"$RESTY_CORE_TAG","lrucache":"$LRUCACHE_TAG"}
 EOF
+printf '%s\n' "${SYEDGE_PREFIX:-/opt/$B}" > "$A/PREFIX"
 {
   echo "syedge-lua $PKG_VERSION"
   echo

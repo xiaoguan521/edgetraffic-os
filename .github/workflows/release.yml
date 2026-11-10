@@ -20,6 +20,12 @@ on:
     branches: [main, mvp]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      prefix:
+        description: "数据面及 console/node/agent/instance 组件的编译期默认安装前缀"
+        required: false
+        type: string
+        default: "/home/atwasoft/syedge"
 
 permissions:
   contents: write
@@ -115,6 +121,7 @@ jobs:
       RELEASE: ${{ needs.meta.outputs.release }}
       GOTAGS: ${{ needs.meta.outputs.gotags }}
       OUT: ${{ github.workspace }}/dist/release
+      SYEDGE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -154,7 +161,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: dist/syedge
-          key: syedge-static-${{ matrix.arch }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh') }}
+          key: syedge-static-${{ matrix.arch }}-${{ inputs.prefix || 'home-atwasoft-syedge' }}-${{ hashFiles('dataplane/**', 'scripts/release/build-syedge-static.sh', 'scripts/validate-prefix.sh') }}
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: package
@@ -202,6 +209,8 @@ jobs:
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
 
       - name: smoke test node package (systemd install + enroll + publish)
+        env:
+          SMOKE_PREFIX: ${{ inputs.prefix || '/home/atwasoft/syedge' }}
         run: |
           trap 'echo "::error title=smoke::exit $? at: $BASH_COMMAND"' ERR
           go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
@@ -209,7 +218,7 @@ jobs:
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')
           # 仅本测试使用：控制台与 agent 注入临时公钥（agent 也会校验授权），不进入任何发布物。
           # 节点包其余内容（syedge、wrapper、systemd 单元、sudoers、install.sh）与发布包完全相同。
-          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub"
+          ld="-X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=$pub -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$SYEDGE_PREFIX"
           CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-console ./cmd/syedge-console
           mkdir -p /tmp/smoke-pkg && tar -C /tmp/smoke-pkg -xzf "$OUT"/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz   # 不能用 node-*：会同时匹配 node-user
           CGO_ENABLED=0 go build -mod=vendor -ldflags "$ld" -o /tmp/smoke-pkg/syedge-node-$VERSION-linux-${{ matrix.arch }}/rootfs/usr/bin/syedge-agent ./cmd/syedge-agent
@@ -288,10 +297,23 @@ jobs:
           for img in console node backend; do
             name=$img; [[ $img == backend ]] && name=demo-backend
             ref="$REGISTRY/$name:$TAG-${{ matrix.arch }}"
-            docker build -q -f deploy/docker/$img.Dockerfile "${labels[@]}" -t "$ref" "$S"
+            build_args=()
+            [[ $img == node ]] && build_args+=(--build-arg "SYEDGE_PREFIX=$SYEDGE_PREFIX")
+            docker build -q "${build_args[@]}" -f deploy/docker/$img.Dockerfile "${labels[@]}" -t "$ref" "$S"
             docker push -q "$ref"
           done
           docker run --rm --entrypoint syedge "$REGISTRY/node:$TAG-${{ matrix.arch }}" -v
+          node_container=$(docker run -d "$REGISTRY/node:$TAG-${{ matrix.arch }}")
+          trap 'docker rm -f "$node_container" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for i in $(seq 1 30); do
+            if docker logs "$node_container" 2>&1 | grep -q 'syedge started:'; then ready=1; break; fi
+            [[ $(docker inspect -f '{{.State.Running}}' "$node_container") == true ]] || break
+            sleep 1
+          done
+          docker logs "$node_container"
+          [[ "$ready" == 1 ]] || { echo 'node image failed to start through its entrypoint' >&2; exit 1; }
+          docker stop -t 15 "$node_container" >/dev/null
 
   publish:
     needs: [meta, build]

@@ -31,8 +31,8 @@ func (e Env) Prefix(root string) error {
 	}
 
 	// 标记缺失时，默认安装一旦已经有 current，就不能把已有数据解释成新根目录。
-	def := layout.SystemAt("", "")
-	if root != layout.DefaultSystemRoot() {
+	def := layout.SystemAt(current, "")
+	if root != current {
 		if _, err := os.Lstat(e.path(filepath.Join(def.ConfRoot(), "current"))); err == nil {
 			return fmt.Errorf("检测到已有默认安装 %s，不允许设置自定义根目录（不执行迁移）", def.Root())
 		} else if !errors.Is(err, os.ErrNotExist) {

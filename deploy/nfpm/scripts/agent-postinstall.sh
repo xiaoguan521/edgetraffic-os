@@ -10,7 +10,7 @@ if [ -e /etc/syedge/prefix ] && ! runuser -u syedge-agent -- test -r /etc/syedge
   echo "syedge-agent: 无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
   exit 1
 fi
-if [ "$r" = /opt/syedge ]; then
+if [ "$r" = "$LEGACY_ROOT" ]; then
   state=/var/lib/syedge-agent
 else
   state="$r/agent"

@@ -74,12 +74,12 @@ func BuildAt(root string, argv []string) (Command, error) {
 		return Command{}, ErrUsage
 	}
 	bin, releasesDir, currentConf := l.Bin(), l.ReleasesDir(), ""
-	var early []string
-	customSystem := l.Mode() == layout.ModeSystem && l.Root() != layout.DefaultSystemRoot()
+	early := []string{"-p", l.RuntimeRoot()}
+	customSystem := l.Mode() == layout.ModeSystem && l.Root() != layout.LegacySystemRoot()
 	if root != "" || customSystem {
 		currentConf = l.CurrentConf() // user / 自定义 system 根目录：总是显式指定配置与错误日志
-		early = []string{"-e", l.ErrorLog()}
-	} else if instance != "" {
+		early = append(early, "-e", l.ErrorLog())
+	} else if instance != "" || l.Root() != layout.DefaultSystemRoot() {
 		currentConf = l.CurrentConf()
 	}
 	c := Command{Root: root, Instance: instance, Path: bin, Env: SafeEnv}

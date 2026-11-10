@@ -18,10 +18,10 @@ NoNewPrivileges=yes
 PIDFile=/run/syedge-%i/syedge.pid
 RuntimeDirectory=syedge-%i
 RuntimeDirectoryPreserve=yes
-ExecStartPre=/opt/syedge/sbin/syedge -t -q -c /opt/syedge/instances/%i/conf/current/syedge.conf
-ExecStart=/opt/syedge/sbin/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf
-ExecReload=/opt/syedge/sbin/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s reload
-ExecStop=/opt/syedge/sbin/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s quit
+ExecStartPre=/opt/syedge/sbin/syedge -p /opt/syedge -t -q -c /opt/syedge/instances/%i/conf/current/syedge.conf
+ExecStart=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf
+ExecReload=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s reload
+ExecStop=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s quit
 # 与默认实例一致：让 master 等待现有连接结束，再由 systemd 完成停止。
 KillMode=mixed
 KillSignal=SIGQUIT
