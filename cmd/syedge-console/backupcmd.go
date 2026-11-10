@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/configfile"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/backup"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
@@ -23,6 +24,35 @@ func isBackupSubcommand(cmd string) bool {
 		return true
 	}
 	return false
+}
+
+// Allow the explicit config option on either side of a backup subcommand.
+func backupInvocation(args []string) ([]string, bool) {
+	if len(args) > 0 && isBackupSubcommand(args[0]) {
+		return args, true
+	}
+	if len(args) < 2 {
+		return nil, false
+	}
+	var config string
+	next := 1
+	switch args[0] {
+	case "--config", "-config", "-c", "--c":
+		if len(args) < 3 {
+			return nil, false
+		}
+		config, next = args[1], 2
+	default:
+		if !strings.HasPrefix(args[0], "--config=") && !strings.HasPrefix(args[0], "-config=") && !strings.HasPrefix(args[0], "-c=") && !strings.HasPrefix(args[0], "--c=") {
+			return nil, false
+		}
+		_, config, _ = strings.Cut(args[0], "=")
+	}
+	if !isBackupSubcommand(args[next]) {
+		return nil, false
+	}
+	rest := []string{args[next], "--config", config}
+	return append(rest, args[next+1:]...), true
 }
 
 // 子命令：syedge-console backup | restore | verify-backup | backup-prune（规格书 P6-6）。
@@ -55,15 +85,38 @@ func backupMain(args []string, stdout, stderr io.Writer) int {
 }
 
 type commonFlags struct {
-	dataDir, dsn, passFile *string
+	dataDir, dsn, passFile, config *string
 }
 
 func addCommon(fs *flag.FlagSet) commonFlags {
-	return commonFlags{
+	c := commonFlags{
 		dataDir:  fs.String("data", envOr("ETOS_DATA", "/var/lib/"+brand.Console()), "数据目录"),
 		dsn:      fs.String("db", envOr("ETOS_DB", ""), "数据库：SQLite 文件路径或 postgres:// DSN（默认 <data>/console.db）"),
 		passFile: fs.String("passphrase-file", "", "备份口令文件（也可用环境变量 ETOS_BACKUP_PASSPHRASE）"),
+		config:   fs.String("config", "", "控制台配置文件（也可用 -c）"),
 	}
+	fs.StringVar(c.config, "c", "", "控制台配置文件")
+	return c
+}
+
+func (c commonFlags) applyConfig(fs *flag.FlagSet) error {
+	if *c.config == "" {
+		if configfile.Specified(fs, "config") || configfile.Specified(fs, "c") {
+			return errors.New("配置文件路径不能为空")
+		}
+		return nil
+	}
+	f, err := configfile.Load(*c.config, consoleConfigKeys)
+	if err != nil {
+		return err
+	}
+	if v, ok := f.Path("ETOS_DATA"); ok && !configfile.Specified(fs, "data") {
+		*c.dataDir = v
+	}
+	if v, ok := f.Value("ETOS_DB"); ok && !configfile.Specified(fs, "db") {
+		*c.dsn = consoleConfigDB(f, v)
+	}
+	return nil
 }
 
 func (c commonFlags) open() (*store.Store, error) {
@@ -99,6 +152,9 @@ func cmdBackup(args []string, stdout io.Writer) error {
 	out := fs.String("out", "", "备份文件路径（必填）")
 	metrics := fs.Bool("metrics", false, "包含流量统计（体积较大）")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := c.applyConfig(fs); err != nil {
 		return err
 	}
 	if *out == "" {
@@ -145,6 +201,9 @@ func cmdRestore(args []string, stdout io.Writer) error {
 	force := fs.Bool("force", false, "覆盖数据目录中已有的 CA / 密钥文件")
 	dryRun := fs.Bool("dry-run", false, "仅校验备份完整性与解密口令，不写入数据库或数据目录")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := c.applyConfig(fs); err != nil {
 		return err
 	}
 	if *in == "" {
@@ -194,6 +253,9 @@ func cmdVerifyBackup(args []string, stdout io.Writer) error {
 	c := addCommon(fs)
 	in := fs.String("in", "", "备份文件路径（必填）")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := c.applyConfig(fs); err != nil {
 		return err
 	}
 	if *in == "" {

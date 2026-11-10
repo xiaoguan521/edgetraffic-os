@@ -9,6 +9,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,10 +17,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkgsig"
@@ -148,15 +151,36 @@ func Staged(state, running, arch string, keys map[string]ed25519.PublicKey) stri
 	return filepath.Join(d, brand.Agent())
 }
 
-// MaybeExec 在启动时切换到已安装的新版本（只执行一次，避免循环）。返回时表示继续运行当前二进制。
-func MaybeExec(state, running, arch string, keys map[string]ed25519.PublicKey) {
-	if os.Getenv(envGuard) != "" {
-		return
-	}
+// stagedCompatible refuses a signed binary that cannot accept the config argument
+// the current process would pass through on exec.
+func stagedCompatible(state, running, arch string, keys map[string]ed25519.PublicKey, requireConfig bool) (string, error) {
 	bin := Staged(state, running, arch, keys)
+	if bin == "" || !requireConfig {
+		return bin, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Both forms are supported by the public CLI and may appear in os.Args.
+	for _, args := range [][]string{{"run", "-c", "/dev/null", "-h"}, {"--config", "/dev/null", "run", "-h"}} {
+		if err := exec.CommandContext(ctx, bin, args...).Run(); err != nil {
+			return "", fmt.Errorf("staged agent does not support the specified config option: %w", err)
+		}
+	}
+	return bin, nil
+}
+
+// MaybeExec 在启动时切换到已安装的新版本（只执行一次，避免循环）。返回时表示继续运行当前二进制。
+func MaybeExec(state, running, arch string, keys map[string]ed25519.PublicKey, requireConfig bool) error {
+	if os.Getenv(envGuard) != "" {
+		return nil
+	}
+	bin, err := stagedCompatible(state, running, arch, keys, requireConfig)
+	if err != nil {
+		return err
+	}
 	if bin == "" {
-		return
+		return nil
 	}
 	env := append(os.Environ(), envGuard+"=1")
-	_ = syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), env)
+	return syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), env)
 }

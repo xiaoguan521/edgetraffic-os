@@ -79,3 +79,29 @@ func TestNewer(t *testing.T) {
 		}
 	}
 }
+
+func TestStagedConfigCompatibility(t *testing.T) {
+	state := t.TempDir()
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	keys := map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	install := func(script string) {
+		data := pkg(t, script)
+		sig, _ := pkgsig.Sign(priv, "etos-ci-pkg-test", "syedge-agent", "1.2.0", "amd64", "standard", data)
+		sb, _ := json.Marshal(sig)
+		if _, err := Install(state, data, sb, "amd64", keys); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Older agents reject the new argument; never replace a working process with one that cannot start.
+	install("#!/bin/sh\nexit 2\n")
+	if _, err := stagedCompatible(state, "1.1.0", "amd64", keys, true); err == nil {
+		t.Fatal("agent without config support was accepted")
+	}
+	if bin, err := stagedCompatible(state, "1.1.0", "amd64", keys, false); err != nil || bin == "" {
+		t.Fatalf("existing upgrade without config changed: %q, %v", bin, err)
+	}
+	install("#!/bin/sh\ncase \"$1 $2 $3 $4\" in 'run -c /dev/null -h'|'--config /dev/null run -h') exit 0;; *) exit 2;; esac\n")
+	if bin, err := stagedCompatible(state, "1.1.0", "amd64", keys, true); err != nil || bin == "" {
+		t.Fatalf("compatible agent was rejected: %q, %v", bin, err)
+	}
+}
