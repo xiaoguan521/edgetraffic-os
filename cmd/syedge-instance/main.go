@@ -75,6 +75,8 @@ func usage(w io.Writer) {
 user 模式（普通用户安装，不需要 root；端口须 ≥ 1024）：在以上命令前加 --root <安装根目录>，另有
   %[1]s --root <目录> init --http <端口> --https <端口> --status <端口> [注册参数]   创建该根目录的默认实例
   %[1]s --root <目录> ensure                     启动未运行的数据面与 agent（cron 每分钟调用）
+
+可加 --config <配置文件> 或 -c <配置文件>，为 --root 和实例端口提供默认值。
 `, n, layout.DefaultSystemRoot())
 }
 
@@ -128,19 +130,12 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		usage(stderr)
 		return 2
 	}
-	userRoot := ""
-	if args[0] == "--root" {
-		if len(args) < 3 {
-			usage(stderr)
-			return 2
-		}
-		userRoot, args = args[1], args[2:]
-		if _, err := layout.User(userRoot, ""); err != nil {
-			_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance: --root: "+err.Error())
-			return 2
-		}
+	inv, err := parseInvocation(args)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, brand.ID()+"-instance:", err)
+		return 2
 	}
-	cmd, rest := args[0], args[1:]
+	userRoot, cmd, rest := inv.root, inv.cmd, inv.rest
 	if cmd == "-h" || cmd == "--help" || cmd == "help" {
 		usage(stdout)
 		return 0
@@ -163,7 +158,7 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		}
 	}
 	e := env(stdout, userRoot)
-	var err error
+	err = nil
 	switch cmd {
 	case "prefix":
 		if len(rest) > 1 {
@@ -181,9 +176,9 @@ func run(args []string, stdout, stderr io.Writer, euid int) int {
 		}
 		err = e.Prefix(rest[0])
 	case "add":
-		err = add(e, rest)
+		err = add(e, rest, inv.defaults)
 	case "init":
-		err = add(e, append([]string{""}, rest...))
+		err = add(e, append([]string{""}, rest...), inv.defaults)
 	case "ensure":
 		err = e.Ensure()
 	case "remove":
@@ -248,32 +243,40 @@ func splitName(args []string) (string, []string, error) {
 	return args[0], args[1:], nil
 }
 
-func add(e instance.Env, args []string) error {
-	name, rest, err := splitName(args)
+func add(e instance.Env, args []string, defaults instanceDefaults) error {
+	o, err := parseAddOptions(args, defaults)
 	if err != nil {
 		return err
 	}
+	return e.Add(o)
+}
+
+func parseAddOptions(args []string, defaults instanceDefaults) (instance.AddOptions, error) {
+	name, rest, err := splitName(args)
+	if err != nil {
+		return instance.AddOptions{}, err
+	}
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	httpP := fs.Int("http", 0, "")
-	httpsP := fs.Int("https", 0, "")
-	status := fs.Int("status", 0, "")
-	nofile := fs.Int("nofile", 0, "")
-	resourceMode := fs.String("resource-mode", "", "")
-	console := fs.String("console", "", "")
+	httpP := fs.Int("http", defaults.http, "")
+	httpsP := fs.Int("https", defaults.https, "")
+	status := fs.Int("status", defaults.status, "")
+	nofile := fs.Int("nofile", defaults.nofile, "")
+	resourceMode := fs.String("resource-mode", defaults.resourceMode, "")
+	console := fs.String("console", defaults.console, "")
 	token := fs.String("token", "", "")
 	caFP := fs.String("ca-fingerprint", "", "")
 	if err := fs.Parse(rest); err != nil || fs.NArg() > 0 {
-		return fmt.Errorf("%w：%v", errUsage, err)
+		return instance.AddOptions{}, fmt.Errorf("%w：%v", errUsage, err)
 	}
 	// 具名实例的端口必须显式给出：默认值是默认实例的 80 / 443 / 8081，具名实例用默认值必然冲突
 	if *httpP == 0 || *httpsP == 0 || *status == 0 {
-		return fmt.Errorf("%w：--http、--https、--status 都必须指定", errUsage)
+		return instance.AddOptions{}, fmt.Errorf("%w：--http、--https、--status 都必须指定", errUsage)
 	}
-	return e.Add(instance.AddOptions{
+	return instance.AddOptions{
 		Profile: render.Profile{Instance: name, HTTPPort: *httpP, HTTPSPort: *httpsP, StatusPort: *status, NoFile: *nofile, ResourceMode: *resourceMode},
 		Console: *console, Token: *token, CAFingerprint: *caFP,
-	})
+	}, nil
 }
 
 func remove(e instance.Env, args []string) error {

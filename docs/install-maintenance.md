@@ -624,6 +624,65 @@ sudo /opt/syedge/sbin/syedge \
 
 `-p` 不会复制或重新安装二进制，只改变本次进程使用的运行前缀；`-c` 也不会自动修改配置中的 `pid`、日志和临时目录。多实例必须在各自配置中显式设置这些路径，不能只靠 `-p` 隔离。
 
+#### 控制台、Agent 和实例管理命令的配置文件
+
+控制台、Agent 和实例管理工具也支持用 `--config <文件>` 或 `-c <文件>` 显式选择配置。它们使用 `KEY=VALUE` 格式，一行一个配置；支持空行、以 `#` 开头的注释及成对的单引号或双引号。配置只作为文本读取，不执行 shell 命令或展开 `$变量`。未知键、重复键和格式错误会报错，程序不会按错误配置启动。文件必须能被运行程序的用户读取，包含数据库口令等敏感信息时应限制文件权限。
+
+同一项的优先级为**命令行参数 > 指定的配置文件 > 原有环境变量 > 程序默认值**。只在配置文件中出现的路径型字段支持以该文件所在目录为基准的相对路径；命令行与环境变量的路径保持原有行为。SQLite 的 `file:` DSN 和 PostgreSQL 连接串保留原样，其内部相对路径仍由数据库驱动处理。未指定 `--config` 时，原有启动命令和 systemd 的 `EnvironmentFile` 行为不变。
+
+例如，可以直接让控制台读取已有的配置文件：
+
+```bash
+syedge-console --config /etc/syedge-console/console.env
+syedge-console backup --config /etc/syedge-console/console.env -out /备份目录/console.tar.gz
+```
+
+备份仍需要通过 `-passphrase-file` 或环境变量 `ETOS_BACKUP_PASSPHRASE` 提供口令。控制台配置文件支持 `ETOS_LISTEN`、`ETOS_TLS_CERT`、`ETOS_TLS_KEY`、`ETOS_TLS_AUTO`、`ETOS_WEB_HOSTS`、`ETOS_GRPC_LISTEN`、`ETOS_GRPC_HOSTS`、`ETOS_GRPC_ADVERTISE`、`ETOS_DATA`、`ETOS_DB` 和 `ETOS_ACME_CA_FILE`。如果由 systemd 管理，并希望启动时使用另一个文件，可用 `systemctl edit syedge-console` 设置以下覆盖项，再按维护窗口重启控制台服务；自定义数据目录还需检查服务用户权限及 `ProtectHome`、`ProtectSystem` 等 systemd 限制：
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/syedge-console --config /etc/syedge-console/custom.env
+```
+
+默认节点的 Agent 可使用类似的文件，例如 `/etc/syedge-agent/custom.env`：
+
+```ini
+SYEDGE_CONSOLE=10.100.51.79:11443
+```
+
+```bash
+syedge-agent run --config /etc/syedge-agent/custom.env
+# 注册时也可以指定相同配置文件；令牌和指纹仍通过原有参数提供
+sudo syedge-agent enroll --config /etc/syedge-agent/custom.env -token <令牌> -ca-fingerprint <指纹>
+```
+
+Agent 可配置的键是 `SYEDGE_INSTANCE`、`SYEDGE_ROOT`、`SYEDGE_CONSOLE`、`SYEDGE_STATE_DIR`、`SYEDGE_CONF_ROOT`、`SYEDGE_WRAPPER`，分别对应原有的实例、普通用户安装根目录、控制台地址、状态目录、配置目录和 wrapper 参数。`SYEDGE_ROOT` 只用于普通用户安装模式；system 模式的数据面安装目录仍由 `/etc/syedge/prefix` 决定。实例和目录一般保持默认即可；自行修改目录时，还需保证服务用户权限和 systemd 的可读写范围匹配。若要让 systemd 的默认 Agent 服务使用文件，可用 `systemctl edit syedge-agent`：
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/syedge-agent run --config /etc/syedge-agent/custom.env
+```
+
+具名实例的服务为 `syedge-agent@<实例>.service`；原服务的 `-instance` 参数优先于文件中的 `SYEDGE_INSTANCE`，覆盖 `ExecStart` 时应保留该参数。手工运行控制台或 Agent 前，应确认没有启动会占用相同资源的现有进程；systemd 服务的修改只在重启对应服务后生效，不需要重启数据面。
+
+实例管理命令的配置文件用于提供创建实例时的默认参数。例如 `/etc/syedge/blue.env`：
+
+```ini
+SYEDGE_HTTP=18080
+SYEDGE_HTTPS=18443
+SYEDGE_STATUS=8082
+SYEDGE_RESOURCE_MODE=independent
+```
+
+```bash
+sudo syedge-instance --config /etc/syedge/blue.env add blue
+# 等价：sudo syedge-instance add blue --config /etc/syedge/blue.env
+```
+
+还可设置 `SYEDGE_NOFILE` 和 `SYEDGE_CONSOLE`；需要同时注册时仍通过 `--token`、`--ca-fingerprint` 提供令牌和指纹。`SYEDGE_ROOT` 等同于普通用户模式的 `--root`，不能用来更改 system 模式的安装根目录。创建后的实例档案仍保存在对应的 `instance.json`；修改这个默认参数文件不会自动修改已有实例或其 systemd 服务。Lua、国密是数据面的可选组件，沿用数据面的 `-p` 和 `-c`，不是另外启动的程序。
+
 ### 8.4 一台服务器运行多套 syedge（同机多实例）
 
 同一台服务器可以运行多个 syedge 实例，各用不同端口，并分别由控制台托管、发布、热升级和卸载。设计见 `docs/design/0001-deploy-layout.md`。

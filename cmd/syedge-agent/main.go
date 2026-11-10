@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -34,7 +35,11 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args, err := parseAgentInvocation(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, brand.Agent()+":", err)
+		os.Exit(2)
+	}
 	if cmd == "firewall" {
 		os.Exit(firewallMain(args, os.Stdout, os.Stderr))
 	}
@@ -49,42 +54,39 @@ func main() {
 		}
 		return
 	}
-	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	instance := fs.String("instance", envOr(brand.Env("INSTANCE"), ""), "托管的实例名（同机多实例；默认实例留空），路径与端口由实例档案决定")
-	root := fs.String("root", envOr(brand.Env("ROOT"), ""), "user 模式的安装根目录（普通用户安装，不需要 root；留空为 system 模式）")
-	server := fs.String("server", envOr(brand.Env("CONSOLE"), ""), "控制台 gRPC 地址 host:port")
-	stateDir := fs.String("state-dir", "", "身份与状态目录（默认按实例计算）")
-	confRoot := fs.String("conf-root", "", "数据面配置根目录（默认按实例计算）")
-	wrapper := fs.String("wrapper", envOr(brand.Env("WRAPPER"), ""), "提权入口（按空格切分，不经过 shell；默认按实例计算）")
-	token := fs.String("token", "", "一次性注册令牌（enroll）")
-	caFP := fs.String("ca-fingerprint", "", "控制台 CA 证书 sha256 指纹（enroll）")
-	replaceLocal := fs.Bool("replace-local-config", false, "本机有独立模式下的自定义配置时，备份后由控制台接管（enroll）")
-	_ = fs.Parse(args)
+	o, err := parseAgentOptionsTo(cmd, args, os.Stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, brand.Agent()+":", err)
+		os.Exit(2)
+	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	prof, lay, err := loadInstanceAt(*root, *instance)
+	prof, lay, err := loadInstanceAt(o.root, o.instance)
 	if err != nil {
 		fatal(log, cmd, err)
 	}
-	userMode := *root != ""
+	userMode := o.root != ""
 	if userMode && os.Geteuid() == 0 {
 		fatal(log, cmd, fmt.Errorf("user-mode agent (-root) must not run as root"))
 	}
-	if *stateDir == "" {
-		*stateDir = lay.AgentState()
+	if o.stateDir == "" {
+		o.stateDir = lay.AgentState()
 	}
-	if *confRoot == "" {
-		*confRoot = lay.ConfRoot()
+	if o.confRoot == "" {
+		o.confRoot = lay.ConfRoot()
 	}
-	if *wrapper == "" {
-		*wrapper = defaultWrapper(lay, userMode, !userMode && layout.RootMasterAt("/"))
+	if o.wrapper == "" {
+		o.wrapper = defaultWrapper(lay, userMode, !userMode && layout.RootMasterAt("/"))
 	}
 	cfg := conn.Config{
-		Server: *server, StateDir: *stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
+		Server: o.server, StateDir: o.stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
 		StatusURL: lay.StatusURL(prof.Status()), VersionURL: lay.VersionURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
-			ConfRoot: *confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
-			LockFile: lay.AgentLock(), Wrapper: strings.Fields(*wrapper),
+			ConfRoot: o.confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
+			LockFile: lay.AgentLock(), Wrapper: strings.Fields(o.wrapper),
 			HTTPPort: prof.HTTP(), HTTPSPort: prof.HTTPS(),
 		},
 	}
@@ -104,7 +106,7 @@ func main() {
 			fatal(log, cmd, err)
 		}
 	case "enroll":
-		if cfg.Server == "" || *token == "" || *caFP == "" {
+		if cfg.Server == "" || o.token == "" || o.caFP == "" {
 			fatal(log, "enroll", fmt.Errorf("-server, -token and -ca-fingerprint are required"))
 		}
 		// 每个令牌只能用一次，能拿到新令牌说明管理员要求（重新）注册本机：
@@ -112,7 +114,7 @@ func main() {
 		a := conn.New(cfg, log)
 		had := a.Enrolled()
 		if !had {
-			bk, err := localConfigCheck(&apply.Applier{C: cfg.Apply}, *replaceLocal, filepath.Join(*stateDir, "backups"), time.Now())
+			bk, err := localConfigCheck(&apply.Applier{C: cfg.Apply}, o.replaceLocal, filepath.Join(o.stateDir, "backups"), time.Now())
 			if err != nil {
 				fatal(log, "enroll", err)
 			}
@@ -120,7 +122,7 @@ func main() {
 				log.Warn("local standalone configuration backed up; it keeps running until the first publish from the console", "backup", bk)
 			}
 		}
-		if err := a.Enroll(ctx, *token, *caFP); err != nil {
+		if err := a.Enroll(ctx, o.token, o.caFP); err != nil {
 			if had {
 				log.Error("enroll failed; existing identity kept unchanged", "err", err)
 				os.Exit(1)
@@ -132,14 +134,16 @@ func main() {
 		}
 	case "run":
 		// agent 自升级：已安装且签名、哈希校验通过的新版本优先（只 exec 一次）
-		selfupdate.MaybeExec(*stateDir, version.Version, runtime.GOARCH, pkgsig.Keys())
+		if err := selfupdate.MaybeExec(o.stateDir, version.Version, runtime.GOARCH, pkgsig.Keys(), o.configSpecified); err != nil {
+			log.Warn("agent self-update skipped", "err", err)
+		}
 		a := conn.New(cfg, log)
 		if cfg.Server == "" {
-			cfg.Server = serverFromState(*stateDir)
+			cfg.Server = serverFromState(o.stateDir)
 			a = conn.New(cfg, log)
 		}
 		if userMode {
-			go rotateLogs(ctx, log, lay, strings.Fields(*wrapper))
+			go rotateLogs(ctx, log, lay, strings.Fields(o.wrapper))
 		}
 		if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 			fatal(log, "run", err)
@@ -192,7 +196,7 @@ func fatal(log *slog.Logger, what string, err error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run | version | firewall render|covers ...")
+	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run [-c <配置文件>] | version | firewall render|covers ...")
 	os.Exit(2)
 }
 
