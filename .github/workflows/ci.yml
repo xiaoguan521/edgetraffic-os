@@ -108,9 +108,10 @@ jobs:
       - name: firewall packet test
         run: |
           sudo chmod go-w /opt
+          sudo install -d -o root -g root -m 0755 /opt/syedge
           sudo apt-get install -y -qq nftables >/dev/null
           CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-agent ./cmd/syedge-agent
-          sudo scripts/ci/firewall-netns.sh /tmp/syedge-agent
+          sudo bash -c 'umask 022; exec "$@"' -- scripts/ci/firewall-netns.sh /tmp/syedge-agent
 
   brand:
     runs-on: ubuntu-latest

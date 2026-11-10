@@ -44,6 +44,7 @@
 # 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。定制品牌时 Go 程序以 -tags brand 注入品牌，
 #       暂存目录中的文件名与文本按品牌改写，打包前检查没有残留默认品牌名；默认品牌的产物与以前完全相同。
 set -euo pipefail
+umask 022
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 VERSION="${VERSION:-0.0.0-dev}"

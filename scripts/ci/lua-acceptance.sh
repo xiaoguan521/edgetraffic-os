@@ -52,6 +52,7 @@ echo "== 基础包 $(basename "$basepkg")，附加包 $(basename "$luapkg")"
 
 echo "== 安装基础包"
 sudo tar -C / -xzf "$basepkg"
+[[ $(stat -c '%u:%g' "$ROOT") == 0:0 ]] || die "基础包安装根目录必须由 root:root 拥有"
 sudo useradd -r -s /usr/sbin/nologin syedge 2>/dev/null || true
 sudo mkdir -p /run/syedge "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR/upgrade" "$ROOT/conf/releases" "$ROOT/versions" "$ROOT/modules"
 # 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行

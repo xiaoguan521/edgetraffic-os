@@ -18,6 +18,7 @@
 # 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。默认品牌使用已提交的改名 patch；
 #     其他品牌由 dataplane/gen-rename-patch 从模板生成 patch（需要 Go），并检查产物中没有残留默认品牌名。
 set -euo pipefail
+umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/UPSTREAM"
@@ -215,7 +216,7 @@ if [[ "$TLS_LIB" == "tongsuo" ]]; then
 fi
 
 PKG="$OUT/$B-$UPSTREAM_VERSION-$VARIANT$(uname -m).tar.gz"
-tar -C "$ROOT" -czf "$PKG" "${PREFIX#/}"
+tar -C "$ROOT" --owner=0 --group=0 -czf "$PKG" "${PREFIX#/}"
 echo "BUILD OK: $PKG"
 
 if [[ -n "${LUA_MODULES_OUT:-}" ]]; then

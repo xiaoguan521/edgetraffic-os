@@ -9,6 +9,7 @@
 #   <输出目录>/base/                              同一次构建产出的标准版与国密版基础包（CI 验收用）
 # 包版本默认等于 syedge 上游版本；附加包只能装在同一包版本的 syedge 上（模块与二进制版本强绑定）。
 set -euo pipefail
+umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/UPSTREAM"
