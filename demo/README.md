@@ -54,6 +54,14 @@ mkdir -p keys && cp /path/to/etos-demo-2026.key keys/
 ./demo.sh up
 ```
 
+如果构建时默认 Ubuntu 软件源不可用，可以用 `UBUNTU_MIRROR` 指定支持服务器架构的镜像地址。例如，在 amd64 上使用 Ubuntu 的 Azure 镜像：
+
+```bash
+UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu ./demo.sh up
+```
+
+该设置只影响镜像构建时的软件源，APT 仍会校验软件源签名；不指定时使用基础镜像的默认源。
+
 ### 方式 C：直接用二进制，不用 Docker
 
 到仓库 Releases 页下载（`dev-mvp` 是分支滚动构建，`v*` 是正式版），`SHA256SUMS` 可校验完整性：
