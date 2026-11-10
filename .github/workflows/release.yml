@@ -300,20 +300,24 @@ jobs:
             build_args=()
             [[ $img == node ]] && build_args+=(--build-arg "SYEDGE_PREFIX=$SYEDGE_PREFIX")
             docker build -q "${build_args[@]}" -f deploy/docker/$img.Dockerfile "${labels[@]}" -t "$ref" "$S"
+            if [[ $img == node ]]; then
+              docker run --rm --entrypoint syedge "$ref" -v
+              node_container=$(docker run -d "$ref")
+              trap 'docker rm -f "$node_container" >/dev/null 2>&1 || true' EXIT
+              ready=0
+              for i in $(seq 1 30); do
+                if docker logs "$node_container" 2>&1 | grep -q 'syedge started:'; then ready=1; break; fi
+                [[ $(docker inspect -f '{{.State.Running}}' "$node_container") == true ]] || break
+                sleep 1
+              done
+              docker logs "$node_container"
+              [[ "$ready" == 1 ]] || { echo 'node image failed to start through its entrypoint' >&2; exit 1; }
+              docker stop -t 15 "$node_container" >/dev/null
+              docker rm "$node_container" >/dev/null
+              trap - EXIT
+            fi
             docker push -q "$ref"
           done
-          docker run --rm --entrypoint syedge "$REGISTRY/node:$TAG-${{ matrix.arch }}" -v
-          node_container=$(docker run -d "$REGISTRY/node:$TAG-${{ matrix.arch }}")
-          trap 'docker rm -f "$node_container" >/dev/null 2>&1 || true' EXIT
-          ready=0
-          for i in $(seq 1 30); do
-            if docker logs "$node_container" 2>&1 | grep -q 'syedge started:'; then ready=1; break; fi
-            [[ $(docker inspect -f '{{.State.Running}}' "$node_container") == true ]] || break
-            sleep 1
-          done
-          docker logs "$node_container"
-          [[ "$ready" == 1 ]] || { echo 'node image failed to start through its entrypoint' >&2; exit 1; }
-          docker stop -t 15 "$node_container" >/dev/null
 
   publish:
     needs: [meta, build]

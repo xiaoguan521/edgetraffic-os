@@ -86,13 +86,18 @@ error_log $W/backend/error.log;
 events { worker_connections 4096; }
 http {
     access_log off;
+    client_body_temp_path $W/backend/body;
+    proxy_temp_path $W/backend/proxy;
+    fastcgi_temp_path $W/backend/fastcgi;
+    uwsgi_temp_path $W/backend/uwsgi;
+    scgi_temp_path $W/backend/scgi;
     server { listen 10.99.0.1:18080; location = /4k.bin { root $W/backend; } location / { return 200 "backend user=\$http_x_user\n"; } }
     server { listen 10.99.0.1:18081; location = /check { if (\$http_x_token = "good") { return 200; } return 401; } }
 }
 EOF
 head -c 4096 /dev/urandom > "$W/backend/4k.bin"   # 压测用的 4 KB 响应（代表性的动态接口 / 小静态文件）
 chmod 0644 "$W/backend/4k.bin"; chmod o+x "$W" "$W/backend"
-sudo $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
+sudo "$SY" -p "$W/backend" -e "$W/backend/error.log" -c "$W/backend/b.conf" || die "backend did not start"
 
 echo "== 安装 syedge-lua 附加包"
 mkdir -p "$W/lua" && tar -C "$W/lua" -xzf "$luapkg"
@@ -207,6 +212,11 @@ load_module $ROOT/modules/lua/ngx_http_lua_module.so;
 events { worker_connections 64; }
 http {
     access_log off;
+    client_body_temp_path $W/sb/body;
+    proxy_temp_path $W/sb/proxy;
+    fastcgi_temp_path $W/sb/fastcgi;
+    uwsgi_temp_path $W/sb/uwsgi;
+    scgi_temp_path $W/sb/scgi;
     lua_package_path  "$ROOT/modules/lua/lualib/?.lua";
     lua_package_cpath "$ROOT/modules/lua/lualib/?.disabled";
     init_by_lua_block { require("etos.init").setup({}) }
@@ -224,7 +234,7 @@ http {
     }
 }
 EOF
-sudo $SY -p "$W/sb" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
+sudo "$SY" -p "$W/sb" -e "$W/sb/error.log" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
 sleep 0.5
 check "沙箱：io / os.execute / load / loadstring / debug 不可用，require ffi 被拒绝" "$(curl -s http://127.0.0.1:18099/)" "nil nil nil nil nil false"
 JIT=$(curl -s http://127.0.0.1:18099/jit)

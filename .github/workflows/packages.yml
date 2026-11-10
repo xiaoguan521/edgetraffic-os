@@ -87,7 +87,9 @@ jobs:
         if: steps.syedge-cache.outputs.cache-hit == 'true'
         run: ls -l dist/syedge && tar -tzf dist/syedge/syedge-*.tar.gz "${SYEDGE_PREFIX#/}/sbin/syedge"
       - name: GM and Lua upgrade package layout
-        run: bash scripts/ci/addon-package.sh
+        run: |
+          bash scripts/ci/addon-package.sh
+          bash scripts/ci/package-prefix.sh
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
       - name: rpm / deb
