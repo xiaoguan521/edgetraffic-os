@@ -136,6 +136,10 @@ test('配置导入：浏览器、API、审批与业务响应', { timeout: 240000
       assert.ok(unsupported && unsupported.file === '/etc/web/web.conf' && unsupported.line > 0 && unsupported.blocking)
       await page.getByRole('heading', { name: new RegExp(`导入报告 #${uploaded.import.id} `) }).waitFor()
       await page.getByText('fastcgi_pass', { exact: true }).waitFor()
+      const blockingOnly = page.getByRole('checkbox', { name: '只看需人工处理的站点问题' })
+      await blockingOnly.check()
+      await page.getByText('fastcgi_pass', { exact: true }).waitFor()
+      await blockingOnly.uncheck()
       assert.ok(await button(page, '应用为草稿').isEnabled())
     })
     await t.test('IMP-04 下载报告内容与上传报告一致且无私钥', async () => {
@@ -179,6 +183,45 @@ test('配置导入：浏览器、API、审批与业务响应', { timeout: 240000
       const e = await json(await roles.operator.post(apiPath(`/imports/${uploaded.import.id}/apply`), { data: {} }), 409)
       assert.equal(e.code, 'ALREADY_APPLIED')
       assert.deepEqual(await json(await admin.get(apiPath(`/sites?group_id=${GROUP_ID}`))), before)
+    })
+    await t.test('无路由的导入草稿可以在站点编辑页添加并保存路由', async () => {
+      const name = `empty-${RUN}`
+      const emptyDump = `# configuration file /etc/web/web.conf:\nhttp { server { listen 80; server_name ${name}.example.com; client_max_body_size 8m; root /outside; } }\n`
+      const imp = await json(await roles.operator.post(apiPath('/imports'), { multipart: { group_id: String(GROUP_ID), file: { name: 'empty.conf', mimeType: 'text/plain', buffer: Buffer.from(emptyDump) } } }))
+      const result = await json(await roles.operator.post(apiPath(`/imports/${imp.import.id}/apply`), { data: {} }))
+      assert.equal(result.sites.length, 1)
+      assert.equal(result.sites[0].enabled, false)
+      const before = (await json(await roles.operator.get(apiPath(`/sites?group_id=${GROUP_ID}`)))).find((s) => s.name === name)
+      assert.equal(before.spec.routes, null)
+      await page.goto('/sites')
+      const row = page.getByRole('row').filter({ hasText: `${name}.example.com` })
+      await button(row, '编辑').click()
+      await button(page, '添加路由').click()
+      const input = page.locator('.route input.code').first()
+      await input.waitFor({ timeout: 5000 })
+      assert.equal(await input.inputValue(), '/new/')
+      await input.fill('/health')
+      const updated = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === apiPath(`/sites/${before.id}`))
+      await button(page, '保存').click()
+      const saved = await json(await updated)
+      assert.equal(saved.spec.routes[0].path, '/health')
+      assert.equal(saved.enabled, false)
+      await page.goto('/imports')
+      await page.getByRole('heading', { name: '配置导入', exact: true }).waitFor()
+    })
+    await t.test('可一次选择主配置及被引用的文件', async () => {
+      const chooser = page.waitForEvent('filechooser')
+      await button(page, '上传配置').click()
+      const response = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === apiPath('/imports'))
+      await (await chooser).setFiles([
+        { name: 'web.conf', mimeType: 'text/plain', buffer: Buffer.from(`http { server { listen 80; server_name multi-${DOMAIN}; include /old/conf/routes.conf; } }`) },
+        { name: 'routes.conf', mimeType: 'text/plain', buffer: Buffer.from('location /multi { deny all; }') },
+      ])
+      const result = await json(await response)
+      assert.equal(result.import.source, 'files')
+      assert.equal(result.report.sites.length, 1)
+      assert.equal(result.report.sites[0].spec.routes[0].path, '/multi')
+      await page.getByRole('heading', { name: new RegExp(`导入报告 #${result.import.id} `) }).waitFor()
     })
     await t.test('AUTH-01 / IMP-08 viewer/releaser 无上传按钮且接口拒绝读写导入', async () => {
       assert.ok(uploaded)

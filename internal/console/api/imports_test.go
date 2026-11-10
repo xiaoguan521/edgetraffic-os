@@ -29,6 +29,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/importer"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/licsvc"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
@@ -480,5 +481,41 @@ func TestImportHTTPBlockingReport(t *testing.T) {
 	}
 	if len(result.Sites) != 1 || result.Sites[0].Enabled || len(result.Errors) != 0 {
 		t.Fatalf("unsafe site should stay disabled: %+v", result)
+	}
+}
+
+func TestImportHTTPMultipleConfigurationFiles(t *testing.T) {
+	f := newImportHTTP(t)
+	var b bytes.Buffer
+	mw := multipart.NewWriter(&b)
+	if err := mw.WriteField("group_id", fmt.Sprint(f.group)); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct{ name, body string }{
+		{"web.conf", `http { server { listen 80; server_name multifile.example.com; include /srv/old/conf/routes.conf; } }`},
+		{"routes.conf", `location /api { deny all; }`},
+	} {
+		part, err := mw.CreateFormFile("file", entry.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w := f.request("operator", "POST", "/imports", b.Bytes(), mw.FormDataContentType(), true)
+	requireStatus(t, w, 200, "")
+	var result struct {
+		Import store.ConfigImport `json:"import"`
+		Report importer.Report    `json:"report"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Import.Source != "files" || len(result.Report.Sites) != 1 || len(result.Report.Sites[0].Spec.Routes) != 1 || result.Report.Sites[0].Spec.Routes[0].Path != "/api" {
+		t.Fatalf("separate uploaded files not imported: %+v", result.Report)
 	}
 }

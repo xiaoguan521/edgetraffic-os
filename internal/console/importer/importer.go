@@ -120,7 +120,42 @@ func FromDump(b []byte, o Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(files) > maxArchiveFiles {
+		return nil, fmt.Errorf("input has more than %d files", maxArchiveFiles)
+	}
 	return convert("dump", files, nil, o)
+}
+
+// FromFiles imports separately uploaded files without accessing the server's filesystem.
+func FromFiles(files []conf.File, o Options) (*Report, error) {
+	if len(files) == 0 || len(files) > maxArchiveFiles {
+		return nil, fmt.Errorf("请选择 1 到 %d 个文件", maxArchiveFiles)
+	}
+	all := map[string][]byte{}
+	var configs []conf.File
+	total := 0
+	for _, f := range files {
+		if f.Name == "" || strings.HasPrefix(f.Name, "/") || strings.Contains(f.Name, `\`) || strings.Contains(f.Name, "..") || len(f.Body) > maxFileSize {
+			return nil, fmt.Errorf("文件 %q 的路径或大小不合法", f.Name)
+		}
+		key := path.Clean("/" + f.Name)
+		if _, exists := all[key]; exists {
+			return nil, fmt.Errorf("文件名 %q 重复，请使用压缩包保留目录结构", f.Name)
+		}
+		total += len(f.Body)
+		if total > maxArchive {
+			return nil, fmt.Errorf("文件总大小超过 %d bytes", maxArchive)
+		}
+		all[key] = f.Body
+		if strings.HasSuffix(strings.ToLower(key), ".conf") {
+			configs = append(configs, conf.File{Name: key, Body: f.Body})
+		}
+	}
+	if len(configs) == 0 {
+		return nil, errors.New("请选择主配置 .conf 文件")
+	}
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	return convert("files", configs, all, o)
 }
 
 // FromArchive 转换配置目录的 tar.gz（可包含证书与私钥）。
@@ -192,14 +227,11 @@ type conv struct {
 func convert(source string, files []conf.File, archive map[string][]byte, o Options) (*Report, error) {
 	c := &conv{o: o, r: &Report{Source: source, Sites: []SiteResult{}, Upstreams: []UpstreamResult{}, Global: []Issue{}, Certificates: map[string]CertMaterial{}},
 		archive: archive, upstreams: map[string]string{}, autoUps: map[string]string{}}
-	var parsed [][]*conf.Directive
-	for _, f := range files {
-		ds, err := conf.Parse(f.Name, f.Body)
-		if err != nil {
-			return nil, err
-		}
-		parsed = append(parsed, ds)
+	parsed, issues, err := expandIncludes(source, files, archive)
+	if err != nil {
+		return nil, err
 	}
+	c.r.Global = append(c.r.Global, issues...)
 	// 先收集全部 upstream（站点可能引用其他文件中的上游）
 	for _, ds := range parsed {
 		c.walk(ds, true)
@@ -209,7 +241,13 @@ func convert(source string, files []conf.File, archive map[string][]byte, o Opti
 	}
 	c.buildSites()
 	if len(c.httpSnip) > 0 {
-		if out, issues, err := render.ValidateDirectives(render.ScopeHTTP, c.httpSnip, render.SnippetContext{}); err == nil && len(issues) == 0 {
+		out, issues, err := render.ValidateDirectives(render.ScopeHTTP, c.httpSnip, render.SnippetContext{})
+		switch {
+		case err != nil:
+			c.global(c.httpSnip[0], "http 片段未导入："+err.Error())
+		case len(issues) > 0:
+			c.global(c.httpSnip[0], "http 片段未导入："+issues[0].Message)
+		default:
 			c.r.HTTPSnippet = out
 		}
 	}
@@ -245,7 +283,7 @@ func (c *conv) walk(ds []*conf.Directive, upstreamsOnly bool) {
 			case "events", "mail":
 				c.global(d, "全局配置由平台管理，未导入")
 			case "include":
-				c.global(d, "include 已按展开后的内容处理")
+				c.global(d, "未找到 include 引用的文件或匹配项，请核对上传内容："+strings.Join(d.Args, " "))
 			default:
 				c.global(d, "全局指令由平台管理，未导入")
 			}
@@ -270,7 +308,7 @@ func (c *conv) walkHTTP(ds []*conf.Directive, upstreamsOnly bool) {
 			}
 			switch d.Name {
 			case "include":
-				c.global(d, "include 已按展开后的内容处理")
+				c.global(d, "未找到 include 引用的文件或匹配项，请核对上传内容："+strings.Join(d.Args, " "))
 			case "log_format", "access_log", "error_log", "sendfile", "tcp_nopush", "tcp_nodelay", "server_tokens", "types",
 				"default_type", "ssl_protocols", "ssl_ciphers", "ssl_prefer_server_ciphers", "ssl_session_cache", "ssl_session_timeout", "resolver":
 				c.global(d, "由平台基线配置统一管理，未导入")
@@ -465,7 +503,7 @@ func (c *conv) issue(sr *SiteResult, d *conf.Directive, reason string, blocking 
 	sr.Issues = append(sr.Issues, Issue{File: d.File, Line: d.Line, Directive: d.Name, Reason: reason, Blocking: blocking})
 }
 
-var baselineHeaders = map[string]bool{"host": true, "x-real-ip": true, "x-forwarded-for": true, "x-forwarded-proto": true, "x-request-id": true, "connection": true}
+var baselineHeaders = map[string]string{"host": "$host", "x-real-ip": "$remote_addr", "x-forwarded-for": "$proxy_add_x_forwarded_for", "x-forwarded-proto": "$scheme", "x-request-id": "$request_id", "connection": ""}
 
 func (c *conv) site(s *server, forceHTTPS bool, used map[string]bool) {
 	sr := SiteResult{File: s.file, Line: s.d.Line, LocationSnippets: map[string]string{}, Issues: []Issue{}}
@@ -521,6 +559,8 @@ func (c *conv) site(s *server, forceHTTPS bool, used map[string]bool) {
 			c.issue(&sr, x, "日志由平台统一管理，未导入", false)
 		case "index":
 			c.issue(&sr, x, "已忽略（静态文件需人工迁移）", false)
+		case "include":
+			c.issue(&sr, x, "未找到 include 引用的文件或匹配项，请核对上传内容："+strings.Join(x.Args, " "), true)
 		case "location":
 			c.location(&sr, x, ctx, &serverSnip)
 		case "return":
@@ -551,7 +591,13 @@ func (c *conv) site(s *server, forceHTTPS bool, used map[string]bool) {
 		c.issue(&sr, s.d, "只有 http 跳转、没有对应的 HTTPS server，未开启强制 HTTPS", true)
 	}
 	if len(serverSnip) > 0 {
-		if out, issues, err := render.ValidateDirectives(render.ScopeServer, serverSnip, ctx); err == nil && len(issues) == 0 {
+		out, issues, err := render.ValidateDirectives(render.ScopeServer, serverSnip, ctx)
+		switch {
+		case err != nil:
+			c.issue(&sr, s.d, "站点片段未导入："+err.Error(), true)
+		case len(issues) > 0:
+			c.issue(&sr, s.d, "站点片段未导入："+issues[0].Message, true)
+		default:
 			sr.ServerSnippet = out
 		}
 	}
@@ -610,7 +656,11 @@ func (c *conv) toServerSnippet(sr *SiteResult, x *conf.Directive, ctx render.Sni
 		return
 	}
 	for _, i := range issues {
-		sr.Issues = append(sr.Issues, Issue{File: x.File, Line: i.Line, Directive: i.Directive, Reason: i.Message + "，需人工处理", Blocking: true})
+		file := i.File
+		if file == "" {
+			file = x.File
+		}
+		sr.Issues = append(sr.Issues, Issue{File: file, Line: i.Line, Directive: i.Directive, Reason: i.Message + "，需人工处理", Blocking: true})
 	}
 	if err != nil {
 		c.issue(sr, x, err.Error(), true)
@@ -635,7 +685,11 @@ func (c *conv) location(sr *SiteResult, x *conf.Directive, ctx render.SnippetCon
 		}
 		delete(sr.LocationSnippets, r.Path)
 	}
+	before := len(*acc)
 	c.toServerSnippet(sr, x, ctx, acc)
+	if len(*acc) > before {
+		c.issue(sr, x, "该路由转为站点片段，请审批片段并核对后启用站点", true)
+	}
 }
 
 // route 尝试把 location 映射为路由，返回路由与需要放进 location 片段的其余指令。
@@ -646,10 +700,8 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 		r.Path, r.Match = x.Args[0], "prefix"
 	case len(x.Args) == 2 && x.Args[0] == "=":
 		r.Path, r.Match = x.Args[1], "exact"
-	case len(x.Args) == 2 && x.Args[0] == "^~":
-		r.Path, r.Match = x.Args[1], "prefix"
 	default:
-		return r, nil, false // 正则 location
+		return r, nil, false // 正则及 ^~ 优先级无法表示为普通路由
 	}
 	if render.ValidatePath(r.Path) != nil {
 		return r, nil, false
@@ -688,8 +740,13 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 			}
 			r.Mode = "deny"
 		case "proxy_set_header":
-			if len(d.Args) >= 1 && baselineHeaders[strings.ToLower(d.Args[0])] {
-				continue // 基线代理头由模板统一下发
+			if len(d.Args) >= 1 {
+				if expected, ok := baselineHeaders[strings.ToLower(d.Args[0])]; ok {
+					if len(d.Args) != 2 || d.Args[1] != expected {
+						return r, nil, false // 不得静默改变原有代理头（例如 WebSocket）
+					}
+					continue
+				}
 			}
 			rest = append(rest, d)
 		default:
@@ -709,10 +766,10 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 	return r, rest, true
 }
 
-// proxyUpstream：http://<已导入上游>[/] 或允许网段内的 http://IP:端口[/]（自动生成上游组）。带 URI 的不映射（语义不同）。
+// proxyUpstream：只映射不带 URI 的 HTTP 上游；末尾斜杠也可能改变转发路径。
 func (c *conv) proxyUpstream(target, site string) (string, bool) {
 	u, err := url.Parse(target)
-	if err != nil || u.Scheme != "http" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || strings.Contains(target, "$") {
+	if err != nil || u.Scheme != "http" || u.Path != "" || u.RawQuery != "" || strings.Contains(target, "$") {
 		return "", false
 	}
 	if n, ok := c.upstreams[u.Host]; ok {
@@ -751,7 +808,7 @@ func (c *conv) findFile(ref string) []byte {
 			ties++
 		}
 	}
-	if bestN >= 2 || (bestN == 1 && ties == 1) {
+	if bestN > 0 && ties == 1 {
 		return c.archive[best]
 	}
 	return nil
