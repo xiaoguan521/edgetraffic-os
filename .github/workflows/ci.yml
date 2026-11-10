@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
+      - name: secure legacy install parent on disposable runner
+        run: sudo chmod go-w /opt
       - name: generated queries up to date (gorm/gen)
         run: make gen-check
       - name: gofmt and golangci-lint
@@ -27,6 +29,14 @@ jobs:
           "$(go env GOPATH)/bin/golangci-lint" run ./...
       - name: vet and test
         run: make test
+      - name: compiled prefix compatibility
+        run: |
+          for prefix in /home/atwasoft/syedge /srv/syedge; do
+            ld="-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$prefix"
+            go test -mod=vendor -ldflags "$ld" ./internal/render -run '^TestHistoricalProfileDoesNotFollowCompiledDefault$|^TestPackageDefaults$'
+            go test -mod=vendor -ldflags "$ld" ./internal/instance -run '^TestCompiledNonLegacyRootUsesItsOwnDirectories$'
+            go test -mod=vendor -ldflags "$ld" ./internal/console/api -run '^TestNewGroupProfileUsesCompiledRoot$'
+          done
       - name: release-tag build (no demo signing key)
         run: |
           go vet -mod=vendor -tags release ./...
@@ -97,9 +107,11 @@ jobs:
           go-version: "1.27"
       - name: firewall packet test
         run: |
+          sudo chmod go-w /opt
+          sudo install -d -o root -g root -m 0755 /opt/syedge
           sudo apt-get install -y -qq nftables >/dev/null
           CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-agent ./cmd/syedge-agent
-          sudo scripts/ci/firewall-netns.sh /tmp/syedge-agent
+          sudo bash -c 'umask 022; exec "$@"' -- scripts/ci/firewall-netns.sh /tmp/syedge-agent
 
   brand:
     runs-on: ubuntu-latest
@@ -135,6 +147,7 @@ jobs:
       - name: install and run golden acceptance
         run: |
           trap 'echo "::error title=dataplane step::exit $? at: $BASH_COMMAND"' ERR
+          sudo chmod go-w /opt
           sudo tar -C / -xzf dist/syedge-*.tar.gz
           sudo useradd -r -s /usr/sbin/nologin syedge || true
           R=/opt/syedge/conf/releases/r000001

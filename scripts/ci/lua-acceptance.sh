@@ -11,6 +11,13 @@
 set -uo pipefail
 DIST=$(realpath "$1"); BASE=$2
 : "${PKG_KEY:?}" "${PKG_KID:?}" "${WRAPPER:?}" "${LIC:?}"
+ROOT=${SYEDGE_PREFIX:-/opt/syedge}
+if [[ "$ROOT" == /opt/syedge ]]; then
+  LOG_DIR=/var/log/syedge; CACHE_DIR=/var/cache/syedge; STATE_DIR=/var/lib/syedge-agent
+else
+  LOG_DIR="$ROOT/logs"; CACHE_DIR="$ROOT/cache"; STATE_DIR="$ROOT/agent"
+fi
+LAYOUT_LD="-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$ROOT"
 # wrapper 按自身的安装位置确定运行方式（system 模式只接受固定路径）：装到正式位置后调用
 sudo install -D -m 0755 "$WRAPPER" /usr/libexec/syedge/syedge-wrapper
 WRAPPER=/usr/libexec/syedge/syedge-wrapper
@@ -36,7 +43,7 @@ req() {
 }
 body() { cat "$W/body"; }
 
-SY=/opt/syedge/sbin/syedge
+SY="$ROOT/sbin/syedge"
 basepkg=$(ls "$DIST"/base/syedge-*-"$ARCH".tar.gz | grep -v gmssl | head -1)
 [[ $BASE == gmssl ]] && basepkg=$(ls "$DIST"/base/syedge-*-gmssl-"$ARCH".tar.gz | head -1)
 luapkg=$(ls "$DIST"/syedge-lua-*-"$ARCH".tar.gz | head -1)
@@ -45,11 +52,12 @@ echo "== 基础包 $(basename "$basepkg")，附加包 $(basename "$luapkg")"
 
 echo "== 安装基础包"
 sudo tar -C / -xzf "$basepkg"
+[[ $(stat -c '%u:%g' "$ROOT") == 0:0 ]] || die "基础包安装根目录必须由 root:root 拥有"
 sudo useradd -r -s /usr/sbin/nologin syedge 2>/dev/null || true
-sudo mkdir -p /run/syedge /var/log/syedge /var/cache/syedge /var/lib/syedge-agent/upgrade /opt/syedge/conf/releases /opt/syedge/versions /opt/syedge/modules
+sudo mkdir -p /run/syedge "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR/upgrade" "$ROOT/conf/releases" "$ROOT/versions" "$ROOT/modules"
 # 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行
-sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge /opt/syedge/versions
-sudo chown syedge:syedge /opt/syedge/sbin /opt/syedge/modules
+sudo chown -R syedge:syedge /run/syedge "$LOG_DIR" "$CACHE_DIR" "$ROOT/versions"
+sudo chown syedge:syedge "$ROOT/sbin" "$ROOT/modules"
 sudo ip addr add 10.99.0.1/32 dev lo 2>/dev/null || true
 VER=$($SY -v 2>&1 | sed -n 's|.* version: [^/]*/\([0-9][0-9.]*\).*|\1|p')   # 与显示名无关
 bin_sha=$(sha256sum "$SY" | cut -c1-64)
@@ -64,7 +72,7 @@ done
 # 渲染器黄金用例（含规则积木、外部鉴权；国密版另跑国密双证书）过真实基础包的 syedge -t
 golden='TestRenderSyedgeSyntax$|TestRulesSyedgeSyntax$'
 gmenv0=(); [[ $BASE == gmssl ]] && { golden+='|TestRenderGMSyedgeSyntax$'; gmenv0=(SYEDGE_GM_BIN=$SY); }
-if out=$(sudo env "PATH=$PATH" CI=1 GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" "${gmenv0[@]}" go test -count=1 -run "$golden" ./internal/render/ 2>&1); then
+if out=$(sudo env "PATH=$PATH" CI=1 SYEDGE_BIN="$SY" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" "${gmenv0[@]}" go test -ldflags "$LAYOUT_LD" -count=1 -run "$golden" ./internal/render/ 2>&1); then
   ok "渲染器黄金用例（基线、规则积木、外部鉴权$([[ $BASE == gmssl ]] && echo '、国密')）通过真实 syedge -t"
 else
   bad "golden syedge -t: $(grep -E 'emerg|FAIL|failed' <<<"$out" | head -3 | tr '\n' ' ')"
@@ -79,19 +87,24 @@ error_log $W/backend/error.log;
 events { worker_connections 4096; }
 http {
     access_log off;
+    client_body_temp_path $W/backend/body;
+    proxy_temp_path $W/backend/proxy;
+    fastcgi_temp_path $W/backend/fastcgi;
+    uwsgi_temp_path $W/backend/uwsgi;
+    scgi_temp_path $W/backend/scgi;
     server { listen 10.99.0.1:18080; location = /4k.bin { root $W/backend; } location / { return 200 "backend user=\$http_x_user\n"; } }
     server { listen 10.99.0.1:18081; location = /check { if (\$http_x_token = "good") { return 200; } return 401; } }
 }
 EOF
 head -c 4096 /dev/urandom > "$W/backend/4k.bin"   # 压测用的 4 KB 响应（代表性的动态接口 / 小静态文件）
 chmod 0644 "$W/backend/4k.bin"; chmod o+x "$W" "$W/backend"
-sudo $SY -p "$W/backend" -c "$W/backend/b.conf" || die "backend did not start"
+sudo "$SY" -p "$W/backend" -e "$W/backend/error.log" -c "$W/backend/b.conf" || die "backend did not start"
 
 echo "== 安装 syedge-lua 附加包"
 mkdir -p "$W/lua" && tar -C "$W/lua" -xzf "$luapkg"
 out=$(sudo bash "$W/lua/install.sh" 2>&1) || die "install.sh failed: $out"
 check "附加包安装（自检通过）" "$out" "已安装（$BASE）"
-check "模块软链指向本版本" "$(readlink /opt/syedge/modules/lua)" "lua-$VER"
+check "模块软链指向本版本" "$(readlink "$ROOT/modules/lua")" "lua-$VER"
 [[ "$(sha256sum "$SY" | cut -c1-64)" == "$bin_sha" ]] && ok "安装附加包不改动基础包二进制" || bad "基础包二进制被改动"
 
 echo "== 生成验收配置（真实渲染器 + 真实 syedge -t）"
@@ -109,20 +122,20 @@ if [[ $BASE == gmssl ]]; then
   gmenv=(ACCEPT_GM="$W/gm")
 fi
 render() { # <版本> <是否含 Lua>
-  sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV="$1" ACCEPT_LUA="$2" \
+  sudo env "PATH=$PATH" SYEDGE_BIN="$SY" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV="$1" ACCEPT_LUA="$2" \
     ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" \
-    go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1 || return 1
+    go test -ldflags "$LAYOUT_LD" -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-$1.log" 2>&1 || return 1
   # 与 agent 写出的版本一致：数据面用户所在组可读（私钥 0640）
-  sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf
+  sudo chgrp -R syedge "$ROOT/conf" && sudo chmod -R g+rX "$ROOT/conf"
 }
 render r900100 1 || die "render/syedge -t with Lua rules failed: $(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-r900100.log" | head -6 | tr '\n' ' ')"
 ok "含 Lua 规则的版本通过真实 syedge -t（加载 ndk / lua 模块）"
-sudo ln -sfn releases/r900100 /opt/syedge/conf/current
+sudo ln -sfn releases/r900100 "$ROOT/conf/current"
 # 前面以 root 执行的 syedge -t（渲染器黄金用例）可能创建了属于 root 的日志：交还给 syedge
-sudo chown -R syedge:syedge /var/log/syedge /var/cache/syedge /run/syedge
+sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge
 # 与 syedge.service 相同的身份：syedge 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
-sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- $SY \
-  || die "syedge did not start: $(sudo tail -5 /var/log/syedge/error.log)"
+sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" \
+  || die "syedge did not start: $(sudo tail -5 "$LOG_DIR/error.log")"
 m=$(cat /run/syedge/syedge.pid); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syedge)" ]] && ok "master 以 syedge 运行（不是 root）" || bad "master 以 root 运行"
 sleep 1
 
@@ -170,24 +183,24 @@ check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / strin
   "$(req -H "$H" http://127.0.0.1/lua-sb)$(body)" "200nil nil nil nil nil nil nil nil nil nil nil nil false false false false false false 7"
 check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500"
 sleep 0.3
-check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 /var/log/syedge/error.log)" "lua-script-boom"
+check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 "$LOG_DIR/error.log")" "lua-script-boom"
 check "脚本之外的路由不受影响" "$(req -H "$H" http://127.0.0.1/)$(body)" "200backend"
 # 语法错误：syedge -t 不执行 init 阶段，错误在 reload 时出现。master 不加载新配置、继续以当前配置服务，
 # error.log 中的 init_by_lua error 指出脚本与行号（agent 据此立即回滚，见 internal/agent/apply 的 badLog）
-sudo env "PATH=$PATH" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV=r900199 ACCEPT_LUA=1 ACCEPT_BAD_LUA=1 \
-  ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" go test -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-bad.log" 2>&1 \
+sudo env "PATH=$PATH" SYEDGE_BIN="$SY" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" HOME="$W" ACCEPT_REV=r900199 ACCEPT_LUA=1 ACCEPT_BAD_LUA=1 \
+  ACCEPT_HS_SECRET="$HS" ACCEPT_RS_PUB="$W/rs.pub" "${gmenv[@]}" go test -ldflags "$LAYOUT_LD" -count=1 -run 'TestAcceptanceConfig$' ./internal/render/ > "$W/render-bad.log" 2>&1 \
   || bad "渲染语法错误的版本：$(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-bad.log" | head -4 | tr '\n' ' ')"
-sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf
-off=$(sudo stat -c %s /var/log/syedge/error.log)
+sudo chgrp -R syedge "$ROOT/conf" && sudo chmod -R g+rX "$ROOT/conf"
+off=$(sudo stat -c %s "$LOG_DIR/error.log")
 w0=$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')
-sudo ln -sfn releases/r900199 /opt/syedge/conf/current
-sudo -u syedge $SY -s reload; sleep 1.5
-errlog=$(sudo tail -c +"$((off + 1))" /var/log/syedge/error.log)
+sudo ln -sfn releases/r900199 "$ROOT/conf/current"
+sudo -u syedge "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" -s reload; sleep 1.5
+errlog=$(sudo tail -c +"$((off + 1))" "$LOG_DIR/error.log")
 check "语法错误的脚本在 reload 时被拒绝，error.log 指出脚本与行号" "$errlog" "lua script syntax error: api:"
 [[ "$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')" == "$w0" ]] && ok "reload 失败时 worker 未更换（继续以当前配置服务）" || bad "语法错误的版本替换了 worker"
 check "语法错误的版本没有生效，原脚本继续响应" "$(req -H "$H" http://127.0.0.1/lua)$(body)" "200<h1>Hello from Lua</h1>"
-sudo ln -sfn releases/r900100 /opt/syedge/conf/current
-sudo -u syedge $SY -s reload; sleep 1
+sudo ln -sfn releases/r900100 "$ROOT/conf/current"
+sudo -u syedge "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" -s reload; sleep 1
 check "切回原版本后 reload 正常" "$(req -H "$H" http://127.0.0.1/lua)$(body)" "200<h1>Hello from Lua</h1>"
 
 echo "== Lua 沙箱（初始化后不能读写文件、执行命令、加载代码或拿到 FFI）"
@@ -195,13 +208,18 @@ mkdir -p "$W/sb"
 cat > "$W/sb/sb.conf" <<EOF
 pid $W/sb/pid;
 error_log $W/sb/error.log;
-load_module /opt/syedge/modules/lua/ndk_http_module.so;
-load_module /opt/syedge/modules/lua/ngx_http_lua_module.so;
+load_module $ROOT/modules/lua/ndk_http_module.so;
+load_module $ROOT/modules/lua/ngx_http_lua_module.so;
 events { worker_connections 64; }
 http {
     access_log off;
-    lua_package_path  "/opt/syedge/modules/lua/lualib/?.lua";
-    lua_package_cpath "/opt/syedge/modules/lua/lualib/?.disabled";
+    client_body_temp_path $W/sb/body;
+    proxy_temp_path $W/sb/proxy;
+    fastcgi_temp_path $W/sb/fastcgi;
+    uwsgi_temp_path $W/sb/uwsgi;
+    scgi_temp_path $W/sb/scgi;
+    lua_package_path  "$ROOT/modules/lua/lualib/?.lua";
+    lua_package_cpath "$ROOT/modules/lua/lualib/?.disabled";
     init_by_lua_block { require("etos.init").setup({}) }
     server {
         listen 127.0.0.1:18099;
@@ -217,7 +235,7 @@ http {
     }
 }
 EOF
-sudo $SY -p "$W/sb" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
+sudo "$SY" -p "$W/sb" -e "$W/sb/error.log" -c "$W/sb/sb.conf" || bad "sandbox instance did not start"
 sleep 0.5
 check "沙箱：io / os.execute / load / loadstring / debug 不可用，require ffi 被拒绝" "$(curl -s http://127.0.0.1:18099/)" "nil nil nil nil nil false"
 JIT=$(curl -s http://127.0.0.1:18099/jit)
@@ -252,17 +270,17 @@ mkpkgs() { # <版本>
   tar -C "$d/l" --owner=0 --group=0 -czf "$d/syedge-lua-$v.tar.gz" install.sh uninstall.sh addon
   "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syedge-$v.tar.gz" -name syedge -version "$v" -arch "$GOARCH" -variant "$variant" >/dev/null
   "$LIC" sign-package -key "$PKG_KEY" -kid "$PKG_KID" -in "$d/syedge-lua-$v.tar.gz" -name syedge-lua -version "$v" -arch "$GOARCH" -variant lua >/dev/null
-  sudo cp "$d"/syedge-*"$v".tar.gz* /var/lib/syedge-agent/upgrade/
+  sudo cp "$d"/syedge-*"$v".tar.gz* "$STATE_DIR/upgrade/"
 }
 up2="$VER-2"; up3="$VER-3"
 mkpkgs "$up2"
-sudo rm -f "/var/lib/syedge-agent/upgrade/syedge-lua-$up2.tar.gz"
+sudo rm -f "$STATE_DIR/upgrade/syedge-lua-$up2.tar.gz"
 out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up2" 2>&1)
 check "缺少附加包时拒绝升级（未改动任何东西）" "$out" "add-on"
-check "拒绝后模块软链不变" "$(readlink /opt/syedge/modules/lua)" "lua-$VER"
+check "拒绝后模块软链不变" "$(readlink "$ROOT/modules/lua")" "lua-$VER"
 mkpkgs "$up2"
 out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up2" 2>&1) || bad "upgrade-start $up2 failed: $out"
-check "升级后模块软链指向新版本" "$(readlink /opt/syedge/modules/lua)" "lua-$up2"
+check "升级后模块软链指向新版本" "$(readlink "$ROOT/modules/lua")" "lua-$up2"
 sleep 1
 check "升级中（新 worker）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/a)$(body)" "200backend user=alice"
 out=$(sudo -n -u syedge "$WRAPPER" upgrade-commit 2>&1) || bad "upgrade-commit failed: $out"
@@ -271,7 +289,7 @@ check "提交后 JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http:/
 mkpkgs "$up3"
 out=$(sudo -n -u syedge "$WRAPPER" upgrade-start "$up3" 2>&1) || bad "upgrade-start $up3 failed: $out"
 out=$(sudo -n -u syedge "$WRAPPER" upgrade-abort 2>&1) || bad "upgrade-abort failed: $out"
-check "中止后模块软链切回" "$(readlink /opt/syedge/modules/lua)" "lua-$up2"
+check "中止后模块软链切回" "$(readlink "$ROOT/modules/lua")" "lua-$up2"
 sleep 1
 check "中止后（旧 master 重载配置）JWT 生效" "$(req -H "$H" -H "Authorization: Bearer $t" http://127.0.0.1/hs/y)$(body)" "200backend user=alice"
 out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload after abort failed: $out"
@@ -340,7 +358,7 @@ fi
 echo "== 附加包卸载"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) && bad "配置仍使用 Lua 时卸载被允许" || check "配置仍使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
 render r900101 0 || bad "render without Lua failed"
-sudo ln -sfn releases/r900101 /opt/syedge/conf/current
+sudo ln -sfn releases/r900101 "$ROOT/conf/current"
 out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload to the no-Lua config failed: $out"
 sleep 1
 check "切换到不含 Lua 的配置后原生规则仍生效" "$(req -H "$H" -A BadBot http://127.0.0.1/)" "403"
@@ -350,26 +368,26 @@ mkdir -p "$W/lua-guard/modules" "$W/lua-guard/instances/blue/conf/current"
 printf 'load_module modules/lua/ndk_http_module.so;\n' > "$W/lua-guard/instances/blue/conf/current/syedge.conf"
 out=$(SYEDGE_ROOT="$W/lua-guard" bash "$W/lua/uninstall.sh" 2>&1) && bad "具名实例仍使用 Lua 时卸载被允许" || check "具名实例使用 Lua 时拒绝卸载" "$out" "当前配置正在使用 Lua 规则"
 out=$(sudo bash "$W/lua/uninstall.sh" 2>&1) || bad "uninstall failed: $out"
-[[ ! -e /opt/syedge/modules/lua ]] && ! ls -d /opt/syedge/modules/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
+[[ ! -e "$ROOT/modules/lua" ]] && ! ls -d "$ROOT/modules"/lua-* >/dev/null 2>&1 && ok "卸载后模块全部移除" || bad "modules left after uninstall"
 out=$(sudo -n -u syedge "$WRAPPER" reload 2>&1) || bad "reload after uninstall failed: $out"
 sleep 1
 check "卸载后 syedge 正常服务" "$(req -H "$H" http://127.0.0.1/)" "200"
-check "卸载后（未装附加包）含 Lua 的版本被 syedge -t 拒绝（agent 会回滚）" "$(sudo $SY -t -q -c /opt/syedge/conf/releases/r900100/syedge.conf 2>&1)" "modules/lua"
+check "卸载后（未装附加包）含 Lua 的版本被 syedge -t 拒绝（agent 会回滚）" "$(sudo "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -t -q -c "$ROOT/conf/releases/r900100/syedge.conf" 2>&1)" "modules/lua"
 
-echo "== 品牌：上游名只允许出现在 /opt/syedge/modules/lua-*/（附加包模块与其 Lua 库）"
+echo "== 品牌：上游名只允许出现在 $ROOT/modules/lua-*/（附加包模块与其 Lua 库）"
 out=$(sudo bash "$W/lua/install.sh" 2>&1) || bad "re-install failed: $out"
 # NOTICE 等文件中 BSD 许可要求保留的归因句 “Based on NGINX Open Source (BSD-2-Clause)” 不算泄漏
 leaks=""
 # NOTICE 文件保留 BSD 许可要求的上游版权与归因，属于允许范围
-for f in $(sudo grep -rlai 'ngi''nx' /opt/syedge /var/log/syedge 2>/dev/null | grep -v '^/opt/syedge/modules/lua-[^/]*/' | grep -v '/NOTICE$'); do
+for f in $(sudo grep -rlai 'ngi''nx' "$ROOT" "$LOG_DIR" 2>/dev/null | grep -v "^$ROOT/modules/lua-[^/]*/" | grep -v '/NOTICE$'); do
   sudo grep -ai 'ngi''nx' "$f" | grep -vq 'NGINX Open Source (BSD-2-Clause)' && leaks+=" $f"
 done
 [[ -z "$leaks" ]] && ok "模块目录之外没有上游名（二进制、配置、日志、脚本）" || bad "上游名出现在：$(echo $leaks)"
-leaks=$(sudo grep -rlai 'ngi''nx' /opt/syedge/modules/lua/lualib/etos /opt/syedge/modules/lua/VERSION /opt/syedge/modules/lua/BASE 2>/dev/null || true)
+leaks=$(sudo grep -rlai 'ngi''nx' "$ROOT/modules/lua/lualib/etos" "$ROOT/modules/lua/VERSION" "$ROOT/modules/lua/BASE" 2>/dev/null || true)
 [[ -z "$leaks" ]] && ok "etos 规则库与附加包元数据没有上游名" || bad "上游名出现在：$(echo $leaks)"
 [[ "$(sha256sum "$(readlink -f "$SY")" | cut -c1-64)" == "$bin_sha" ]] && ok "基础包二进制自始至终未改变" || bad "base binary changed"
 
-sudo "$SY" -s quit 2>/dev/null; sudo kill "$(cat "$W/backend/pid")" 2>/dev/null
+sudo "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" -s quit 2>/dev/null; sudo kill "$(cat "$W/backend/pid")" 2>/dev/null
 echo "---- $fail failed"
 DONE=1
 [[ $fail -eq 0 ]] && echo "LUA ACCEPTANCE OK ($BASE/$ARCH)" || exit 1

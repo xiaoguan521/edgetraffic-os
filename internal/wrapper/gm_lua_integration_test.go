@@ -93,8 +93,8 @@ func TestGMWithLuaMultiInstanceRollback(t *testing.T) {
 worker_processes 1;
 pid %[1]s/syedge.pid;
 error_log %[1]s/error.log notice;
-load_module %[2]s/modules/lua/ndk_http_module.so;
-load_module %[2]s/modules/lua/ngx_http_lua_module.so;
+load_module modules/lua/ndk_http_module.so;
+load_module modules/lua/ngx_http_lua_module.so;
 events { worker_connections 32; }
 http {
     access_log off;
@@ -113,14 +113,14 @@ http {
 			t.Fatal(err)
 		}
 		p := Paths{Bin: sharedBin, Modules: filepath.Join(dir, "modules"), Versions: filepath.Join(dir, "versions"),
-			Incoming: filepath.Join(dir, "incoming-"+name), PidFile: filepath.Join(inst, "syedge.pid"), Conf: conf,
+			Incoming: filepath.Join(dir, "incoming-"+name), PidFile: filepath.Join(inst, "syedge.pid"), Conf: conf, Prefix: dir,
 			Keys: map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}, Arch: runtime.GOARCH, Timeout: 8 * time.Second}
 		if name != "default" {
 			p.Instance = name
 		}
 		put(p.Incoming, "syedge", "gmssl", gmData)
 		put(p.Incoming, "syedge-lua", "lua", luaData)
-		if out, err := exec.Command(sharedBin, "-p", inst, "-c", conf).CombinedOutput(); err != nil {
+		if out, err := exec.Command(sharedBin, "-p", dir, "-c", conf).CombinedOutput(); err != nil {
 			t.Fatalf("start %s: %v %s", name, err, out)
 		}
 		t.Cleanup(func() {

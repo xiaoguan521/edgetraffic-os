@@ -14,10 +14,11 @@
 # -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
 #     在 glibc 2.17 的构建环境（manylinux2014）中执行，即可覆盖 CentOS 7、麒麟 V10、统信 UOS、openEuler 与较新的发行版。
 #     DEPS_CACHE 指向已下载源码包的目录时优先使用缓存；MAX_GLIBC 设置后校验二进制不依赖更高版本的 glibc 符号。
-# 产物：<输出目录>/<品牌>-<版本>-<架构>.tar.gz（国密变体为 <品牌>-<版本>-gmssl-<架构>.tar.gz），解压到 / 即得到 /opt/<品牌> 目录树。
+# 产物：<输出目录>/<品牌>-<版本>-<架构>.tar.gz（国密变体为 <品牌>-<版本>-gmssl-<架构>.tar.gz），解压到 / 即得到编译期前缀目录树。
 # 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。默认品牌使用已提交的改名 patch；
 #     其他品牌由 dataplane/gen-rename-patch 从模板生成 patch（需要 Go），并检查产物中没有残留默认品牌名。
 set -euo pipefail
+umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/UPSTREAM"
@@ -26,6 +27,10 @@ source "${BRAND_ENV:-$HERE/../brand.env}"
 B="${BRAND_ID:?brand.env: BRAND_ID required}"; P="${BRAND_PROC:-$B}"
 [[ "$B" =~ ^[a-z][a-z0-9]{2,6}$ ]] || { echo "BRAND_ID must match ^[a-z][a-z0-9]{2,6}\$" >&2; exit 2; }
 DEFAULT_BRAND=syedge DEFAULT_PROC=SyEdge
+PREFIX="${SYEDGE_PREFIX:-/opt/$B}"
+# shellcheck source=../scripts/validate-prefix.sh
+source "$HERE/../scripts/validate-prefix.sh"
+validate_system_prefix "$PREFIX" "/opt/$B" || { echo "SYEDGE_PREFIX must be a safe dedicated absolute directory" >&2; exit 2; }
 
 SRC=""; OUT="$PWD/dist"; TLS_LIB="openssl"; STATIC=0
 while getopts "s:o:t:S" opt; do
@@ -113,9 +118,9 @@ ci_fail() { # <日志> <行数>：在 GitHub Actions 中把失败日志的末尾
 # 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
 # auth_request：规则积木的外部鉴权（P10）
 CONF=(\
-  --prefix=/opt/$B \
-  --sbin-path=/opt/$B/sbin/$B \
-  --conf-path=/opt/$B/conf/current/$B.conf \
+  --prefix="$PREFIX" \
+  --sbin-path="$PREFIX/sbin/$B" \
+  --conf-path="$PREFIX/conf/current/$B.conf" \
   --pid-path=/run/$B/$B.pid \
   --lock-path=/run/$B/$B.lock \
   --error-log-path=/var/log/$B/error.log \
@@ -141,7 +146,7 @@ ROOT="$WORK/rootfs"
 make install DESTDIR="$ROOT" > /dev/null
 
 # 打包整形：默认配置移到 share/defaults，去掉上游示例文件，conf/current 由 agent 维护为软链
-O="$ROOT/opt/$B"
+O="$ROOT$PREFIX"
 mkdir -p "$O/share/defaults" "$O/share/doc" "$O/conf/releases"
 for f in mime.types fastcgi_params scgi_params uwsgi_params koi-utf koi-win win-utf; do
   [[ -f "$O/conf/current/$f" ]] && mv "$O/conf/current/$f" "$O/share/defaults/$f"
@@ -211,7 +216,7 @@ if [[ "$TLS_LIB" == "tongsuo" ]]; then
 fi
 
 PKG="$OUT/$B-$UPSTREAM_VERSION-$VARIANT$(uname -m).tar.gz"
-tar -C "$ROOT" -czf "$PKG" opt
+tar -C "$ROOT" --owner=0 --group=0 -czf "$PKG" "${PREFIX#/}"
 echo "BUILD OK: $PKG"
 
 if [[ -n "${LUA_MODULES_OUT:-}" ]]; then

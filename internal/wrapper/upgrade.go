@@ -43,6 +43,7 @@ type Paths struct {
 	Incoming string // 升级包投放目录（agent 可写）
 	PidFile  string
 	Conf     string
+	Prefix   string // 由可信实例布局计算，不接收调用方路径
 	Keys     map[string]ed25519.PublicKey
 	Arch     string
 	Timeout  time.Duration
@@ -79,8 +80,8 @@ func DefaultPathsAt(root, instance string) (Paths, error) {
 func pathsFor(l layout.Layout) Paths {
 	instance := l.Instance()
 	p := Paths{Bin: l.Bin(), Modules: l.Modules(), Versions: l.Versions(), Incoming: l.UpgradeIncoming(),
-		PidFile: l.PidFile(), Conf: l.CurrentConf(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second, Instance: instance}
-	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() {
+		PidFile: l.PidFile(), Conf: l.CurrentConf(), Prefix: l.RuntimeRoot(), Keys: pkgsig.Keys(), Arch: runtime.GOARCH, Timeout: 15 * time.Second, Instance: instance}
+	if l.Mode() == layout.ModeUser || l.Root() != layout.LegacySystemRoot() {
 		p.ErrorLog = l.ErrorLog()
 	}
 	return p
@@ -337,6 +338,51 @@ func masterExe(pid int) string {
 	return strings.TrimSuffix(s, " (deleted)")
 }
 
+// USR2 使用旧 master 保存的启动参数；没有 -p 时新程序会采用自己的编译前缀。
+func compatibleMasterPrefix(title, compiled, want string) bool {
+	args := strings.Fields(strings.ReplaceAll(title, "\x00", " "))
+	explicit := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-p" {
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
+			explicit = args[i]
+		} else if strings.HasPrefix(args[i], "-p/") {
+			explicit = strings.TrimPrefix(args[i], "-p")
+		}
+	}
+	if explicit != "" {
+		return filepath.Clean(explicit) == filepath.Clean(want)
+	}
+	return compiled != "" && filepath.Clean(compiled) == filepath.Clean(want)
+}
+
+func checkUpgradePrefix(pid int, bin, prefix string) error {
+	if prefix == "" {
+		return nil
+	} // 测试专用 Paths 未指定前缀
+	title, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return fail("cannot verify running master prefix: %v", err)
+	}
+	out, err := exec.Command(bin, "-V").CombinedOutput()
+	if err != nil {
+		return fail("cannot read new binary build prefix: %v", err)
+	}
+	compiled := ""
+	for _, arg := range strings.Fields(string(out)) {
+		if strings.HasPrefix(arg, "--prefix=") {
+			compiled = strings.Trim(strings.TrimPrefix(arg, "--prefix="), "'\"")
+		}
+	}
+	if !compatibleMasterPrefix(string(title), compiled, prefix) {
+		return fail("running master does not carry the installation prefix %s; update the service and restart it in a maintenance window before this binary upgrade (existing traffic is still served)", prefix)
+	}
+	return nil
+}
+
 // workers 统计某个 master 正在服务的 worker 子进程数。
 func workers(master int) int { return len(workerPids(master)) }
 
@@ -522,6 +568,9 @@ func UpgradeStart(p Paths, ver string) error {
 	if masterExe(oldPid) == newBin {
 		return fail("version %s is already running", ver)
 	}
+	if err := checkUpgradePrefix(oldPid, newBin, p.Prefix); err != nil {
+		return err
+	}
 	// 装有 syedge-lua 时，先把模块软链切到目标版本（新二进制 -t 与新 master 都会加载它）；后续任一步失败都切回
 	prevLua, err := p.prepareLua(ver, newBin)
 	if err != nil {
@@ -532,10 +581,14 @@ func UpgradeStart(p Paths, ver string) error {
 			_ = p.swapLua(prevLua)
 		}
 	}
-	args := []string{"-t", "-q", "-c", p.Conf}
-	if p.ErrorLog != "" {
-		args = []string{"-t", "-q", "-e", p.ErrorLog, "-c", p.Conf} // user 模式：启动早期日志写到实例目录
+	args := []string{"-t", "-q"}
+	if p.Prefix != "" {
+		args = append(args, "-p", p.Prefix)
 	}
+	if p.ErrorLog != "" {
+		args = append(args, "-e", p.ErrorLog)
+	}
+	args = append(args, "-c", p.Conf)
 	if out, err := exec.Command(newBin, args...).CombinedOutput(); err != nil {
 		restoreLua()
 		return fail("new binary rejects the current configuration: %s", strings.TrimSpace(string(out)))

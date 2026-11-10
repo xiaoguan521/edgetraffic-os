@@ -8,6 +8,15 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "syedge-lua: $*" >&2; exit 1; }
 
+packaged_default_root() {
+  local root=/opt/syedge
+  if [[ -f "$HERE/addon/PREFIX" ]]; then
+    IFS= read -r root < "$HERE/addon/PREFIX" || die "无法读取附加包默认目录"
+  fi
+  [[ "$root" =~ ^(/[A-Za-z0-9._@+-]+)+$ && "$root" != */../* && "$root" != */.. && "$root" != */./* && "$root" != */. ]] || die "附加包默认目录无效"
+  printf '%s\n' "$root"
+}
+
 # 安装和卸载共用目标选择，供同包的 uninstall.sh source；不执行任何安装操作。
 resolve_target() {
   local requested="${SYEDGE_INSTANCE:-}" result name mode dir i choice
@@ -33,11 +42,17 @@ resolve_target() {
     helper=(/usr/sbin/syedge-instance)
     BASE_ROOT="$("${helper[@]}" prefix)" || die "无法校验安装根目录"
   elif [[ ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix ]]; then
-    BASE_ROOT=/opt/syedge
+    # 发布包携带构建时前缀；sudo 默认不会保留构建环境变量。
+    BASE_ROOT=${SYEDGE_PREFIX:-}
+    if [[ -z "$BASE_ROOT" ]]; then BASE_ROOT=$(packaged_default_root) || die "无法识别附加包默认目录"; fi
+    if [[ "$BASE_ROOT" != /opt/syedge && -x /opt/syedge/sbin/syedge ]]; then
+      [[ ! -x "$BASE_ROOT/sbin/syedge" ]] || die "检测到多个安装目录，请安装 syedge-instance 或指定 SYEDGE_ROOT"
+      BASE_ROOT=/opt/syedge
+    fi
   else
     die "缺少安装根目录校验工具"
   fi
-  [[ "$BASE_ROOT" == /* && "$BASE_ROOT" != / && "$BASE_ROOT" != */../* && "$BASE_ROOT" != */.. ]] || die "安装根目录无效"
+  [[ "$BASE_ROOT" =~ ^(/[A-Za-z0-9._@+-]+)+$ && "$BASE_ROOT" != */../* && "$BASE_ROOT" != */.. && "$BASE_ROOT" != */./* && "$BASE_ROOT" != */. ]] || die "安装根目录无效"
   TARGET_COUNT=0; TARGET_NAMES=(); TARGET_MODES=(); TARGET_ROOTS=()
   if [[ ${#helper[@]} -gt 0 ]]; then
     result="$("${helper[@]}" runtimes 2>&1)" || die "无法列出实例，请先升级 syedge-instance：$result"

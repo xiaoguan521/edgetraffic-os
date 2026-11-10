@@ -66,7 +66,7 @@ func usage(w io.Writer) {
   %[1]s runtimes                              列出实例、共享方式和功能包安装目录
   %[1]s check
   %[1]s reopen-all                            所有实例重新打开日志（logrotate 使用，可由数据面用户执行）
-  %[1]s prefix [<安装根目录>]                  首次设置 system 模式安装根目录（默认 /opt/%[1]s）
+  %[1]s prefix [<安装根目录>]                  首次设置 system 模式安装根目录（默认 %[2]s）
   %[1]s nonroot [--root-master]               运行时不使用 root：交出运行时目录、仍以 root 运行的 master
                                               无中断切换为数据面用户（安装与升级软件包时自动执行）。
                                               内核或 systemd 不支持 ambient 能力（如 CentOS 7）时，或加 --root-master，
@@ -75,7 +75,7 @@ func usage(w io.Writer) {
 user 模式（普通用户安装，不需要 root；端口须 ≥ 1024）：在以上命令前加 --root <安装根目录>，另有
   %[1]s --root <目录> init --http <端口> --https <端口> --status <端口> [注册参数]   创建该根目录的默认实例
   %[1]s --root <目录> ensure                     启动未运行的数据面与 agent（cron 每分钟调用）
-`, n)
+`, n, layout.DefaultSystemRoot())
 }
 
 func env(out io.Writer, userRoot string) instance.Env {

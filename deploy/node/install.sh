@@ -16,6 +16,7 @@ set -euo pipefail
 # 配置需要供 syedge 组读取；密钥等敏感文件仍按各自显式权限创建。
 umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
+LEGACY_ROOT=/opt/"syedge" # 不随编译前缀模板替换；旧版本使用 /var 下的运行目录
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,7 +84,7 @@ put "$HERE/rootfs/usr/libexec/syedge/syedge-wrapper" /usr/libexec/syedge/syedge-
 put "$HERE/rootfs/usr/sbin/syedge-firewall" /usr/sbin/syedge-firewall
 put "$HERE/rootfs/usr/sbin/syedge-instance" /usr/sbin/syedge-instance
 
-if [[ "$R" == "/opt/syedge" ]]; then
+if [[ "$R" == "$LEGACY_ROOT" ]]; then
   LOG_DIR=/var/log/syedge
   CACHE_DIR=/var/cache/syedge
   STATE_DIR=/var/lib/syedge-agent
@@ -100,8 +101,10 @@ fi
   fi
   install -o root -g root -m 0644 -D "$HERE/rootfs/opt/syedge/$f" "$R/$f"
 done
-if [[ "$R" != "/opt/syedge" && -f "$R/share/defaults/standalone-example.conf" ]]; then
-  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+if [[ "$R" != "/opt/syedge" ]]; then
+  for guide in "$R/share/defaults/standalone-example.conf" "$R/share/doc/STANDALONE.txt"; do
+    [[ ! -f "$guide" ]] || sed -i "s|/opt/syedge|$R|g" "$guide"
+  done
 fi
 mkdir -p "$R/conf/releases"
 # sbin 目录运行时由 syedge 拥有；在 root 所有的安装根目录中创建临时文件，

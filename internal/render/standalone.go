@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // 独立模式（未接入控制台）随 syedge 软件包分发的文件。内容是固定文本，不含任何用户输入。
@@ -41,7 +42,7 @@ func StandaloneFiles() map[string][]byte {
 // WritePackageDefaults 在 root（打包时的 /opt/syedge 暂存目录）下写入：
 // share/defaults/baseline/（初始版本，含 MANIFEST.json）与独立模式的示例和说明。
 func WritePackageDefaults(root string) error {
-	b, err := Baseline()
+	b, err := BaselineFor(Profile{Mode: string(layout.ModeSystem), Root: layout.DefaultSystemRoot()})
 	if err != nil {
 		return err
 	}
@@ -63,5 +64,6 @@ func WritePackageDefaults(root string) error {
 // branded 把随包文档中的 @ID@ 占位符替换为构建时的品牌标识（命令、路径与服务名）。
 // 文档以占位符嵌入，定制品牌的二进制中不残留默认品牌名。
 func branded(b []byte) []byte {
-	return []byte(strings.ReplaceAll(string(b), "@ID@", brand.ID()))
+	s := strings.ReplaceAll(string(b), "@ID@", brand.ID())
+	return []byte(strings.ReplaceAll(s, "@PREFIX@", layout.DefaultSystemRoot()))
 }

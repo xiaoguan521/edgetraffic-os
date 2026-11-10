@@ -6,10 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 // TestAcceptanceConfig 为 CI 的 P10 验收（scripts/ci/lua-acceptance.sh）生成版本目录：用真实渲染器产出配置，
-// 写到 /opt/syedge/conf/releases/<ACCEPT_REV> 并通过真实 syedge -t。只在设置 ACCEPT_REV 时运行（需要 root）。
+// 写到默认安装根目录的 conf/releases/<ACCEPT_REV> 并通过真实 syedge -t。只在设置 ACCEPT_REV 时运行（需要 root）。
 //
 //	ACCEPT_LUA=1        包含 JWT（Lua）规则；=0 生成不含 Lua 的版本（卸载附加包前切换用）
 //	ACCEPT_HS_SECRET    HS256 密钥；ACCEPT_RS_PUB  RS256 公钥 PEM 文件
@@ -85,6 +87,7 @@ ngx.say(table.concat(r, " "))`}},
 	}
 	in := Input{
 		Revision:   rev,
+		Profile:    Profile{Mode: "system", Root: layout.DefaultSystemRoot()},
 		AllowedNet: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 		RealIPFrom: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
 		MimeTypes:  DefaultMimeTypes(),
@@ -98,17 +101,17 @@ ngx.say(table.concat(r, " "))`}},
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(Profile{}.ReleasesDir(), rev)
+	dir := filepath.Join(in.Profile.ReleasesDir(), rev)
 	_ = os.RemoveAll(dir)
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
 	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syedge/sbin/syedge"
+		bin = filepath.Join(layout.DefaultSystemRoot(), "sbin", "syedge")
 	}
 	// ACCEPT_BAD_LUA=1：脚本有语法错误。syedge -t 不执行 init 阶段，照常通过；错误在 reload 时出现（lua-acceptance.sh 验证）
-	out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
+	out, err := exec.Command(bin, "-p", in.Profile.lay().RuntimeRoot(), "-e", in.Profile.lay().ErrorLog(), "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}

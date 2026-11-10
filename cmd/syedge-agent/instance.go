@@ -52,7 +52,7 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 	}
 	lay := layout.SystemAt(systemRoot, name)
 	if name == "" {
-		if systemRoot == layout.DefaultSystemRoot() {
+		if systemRoot == layout.LegacySystemRoot() {
 			return render.Profile{}, lay, nil
 		}
 		return render.Profile{Mode: string(layout.ModeSystem), Root: systemRoot}, lay, nil
@@ -67,7 +67,7 @@ func loadInstanceAt(root, name string) (render.Profile, layout.Layout, error) {
 	}
 	// 旧版实例档案没有 root 字段；自定义 system 根目录下将其补成节点实际根，
 	// 使上报档案与控制台的 system + root 档案一致。
-	if p.Root == "" && systemRoot != layout.DefaultSystemRoot() {
+	if p.Root == "" && systemRoot != layout.LegacySystemRoot() {
 		p.Mode, p.Root = string(layout.ModeSystem), systemRoot
 		if err := p.Validate(); err != nil {
 			return render.Profile{}, lay, fmt.Errorf("%s: %w", lay.InstanceFile(), err)

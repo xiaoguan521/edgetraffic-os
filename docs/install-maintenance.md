@@ -97,7 +97,7 @@ dataplane/build-syedge.sh -S -t openssl -o dist/syedge-standard
 dist/syedge-standard/syedge-1.30.6-x86_64.tar.gz
 ```
 
-`-S` 会根据 `dataplane/DEPS` 下载并校验 OpenSSL、PCRE2 和 zlib 源码，并把它们静态链接到 `syedge` 中。构建产物解压到 `/` 后包含 `/opt/syedge` 目录树，但完整的节点安装还需要 Agent、wrapper 和 systemd 单元，生产环境应继续制作节点发布包。
+`-S` 会根据 `dataplane/DEPS` 下载并校验 OpenSSL、PCRE2 和 zlib 源码，并把它们静态链接到 `syedge` 中。未设置 `SYEDGE_PREFIX` 时，构建产物解压到 `/` 后包含 `/opt/syedge` 目录树；生产 Action 默认将该变量设为 `/home/atwasoft/syedge`，也可在手动触发时通过 `prefix` 入参调整。完整的节点安装还需要 Agent、wrapper 和 systemd 单元，生产环境应继续制作节点发布包。
 
 如果必须使用系统库，可以省略 `-S`：
 
@@ -207,7 +207,7 @@ cd syedge-node-<版本>-linux-<架构>
 sudo ./install.sh
 ```
 
-默认 system 安装根目录为 `/opt/syedge`。如果需要把程序和运行数据放到其他目录，可在首次安装时指定一个由 root 控制的绝对路径：
+默认 system 安装根目录由发布包的编译期前缀决定：本地脚本未设置 `SYEDGE_PREFIX` 时为 `/opt/syedge`，GitHub Actions 发布包默认是 `/home/atwasoft/syedge`。如果需要把程序和运行数据放到其他目录，可在首次安装时指定一个由 root 控制的绝对路径：
 
 ```bash
 sudo ./install.sh --prefix /data/syedge
@@ -231,16 +231,18 @@ sudo ./install.sh --prefix /home/atwasoft/node
 
 ```bash
 R=$(sudo syedge-instance prefix)
-sudo "$R/sbin/syedge" -t -c "$R/conf/current/syedge.conf" -e "$R/logs/error.log"
+sudo "$R/sbin/syedge" -p "$R" -t -c "$R/conf/current/syedge.conf" -e "$R/logs/error.log"
 sudo systemctl reload syedge
 ```
 
-数据面二进制的编译期前缀仍是 `/opt/syedge`，独立站点引用静态文件时应使用绝对路径，例如 `root /data/syedge/html;`；安装后的示例会自动使用所选根目录。重复安装会保留自定义目录 `html/` 中已有的静态文件。
+数据面服务、wrapper 和实例管理工具会显式传入实际运行前缀。Nginx 语义下使用前缀解析的相对路径，例如 `root html;`、`include conf/example.conf;`，按该前缀查找；手工运行时也应像上例一样带 `-p`。共享实例使用共同运行目录，独立实例使用自己的运行目录。重复安装会保留自定义目录 `html/` 中已有的静态文件。
+
+历史默认安装没有标记文件时会继续使用 `/opt/syedge` 与原来的 `/var` 目录；已有节点组的空根目录同样仍表示 `/opt/syedge`。新建节点组记录发行包默认目录。新旧默认目录均存在配置但没有标记时，程序会拒绝自动猜测，须由管理员确认实际安装。
 
 安装脚本会：
 
 - 创建 `syedge` 和 `syedge-agent` 系统用户；
-- 安装 `/opt/syedge`、Agent、wrapper 和 systemd 单元；
+- 安装编译期默认的数据面根目录、Agent、wrapper 和 systemd 单元；
 - 初始化基线配置 `r000000`；
 - 执行 `syedge -t -q`；
 - 启动或平滑 reload `syedge.service`。
@@ -314,7 +316,7 @@ sudo systemctl enable syedge && sudo systemctl start syedge
 
 首次安装后，按照“4.2 安装后注册到控制台”注册 Agent。`syedge-agent` 软件包依赖 `syedge` 和 `sudo`；可选的 `syedge-firewall` 需要额外安装 `nftables`。
 
-不需要自定义目录时不要创建该标记文件，软件包行为与历史版本相同。RPM/DEB 的 payload 仍会保留一份 `/opt/syedge` 静态文件，这是包管理器升级所需；postinstall 会把 `sbin`、`share`、`html` 和 `modules` 同步到标记的根目录，配置、日志、缓存、版本库和 agent 状态不会写入默认目录。安装后不要手工修改标记：`syedge-instance prefix` 不支持迁移，直接修改文件也不会迁移已有数据，可能使服务找不到原配置。
+不需要自定义目录时无需创建该标记文件。RPM/DEB 的 payload 保留一份编译期默认目录中的静态文件；postinstall 会将所需程序和默认文件同步到实际安装根目录。安装后不要手工修改标记：`syedge-instance prefix` 不支持迁移，直接修改文件也不会迁移已有数据，可能使服务找不到原配置。
 
 ### 4.4 裸数据面二进制安装
 
@@ -662,7 +664,7 @@ sudo syedge-instance remove blue --yes     # 优雅停止并删除实例（保�
 
 删除实例后，请在控制台“节点”页吊销对应节点；不再使用的节点组可随后删除（见下）。日志轮转（logrotate）会对所有实例执行 `syedge-instance reopen-all`。
 
-**卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syedge-instance remove`，或执行 `uninstall.sh --all`。自定义 system 根目录下删除单个实例时，日志和缓存默认移到 `R/removed-instances/<实例>-*/`，加 `--purge` 才一并删除。软件包升级不会停止任何实例。
+**卸载**：本机还有具名实例时，卸载软件包（`rpm -e` / `apt remove`）与 `uninstall.sh` 会被拒绝；请先逐个 `syedge-instance remove`，或执行 `uninstall.sh --all`。自定义 system 根目录下删除单个实例时，日志和缓存默认移到 `R/removed-instances/<实例>-*/`，加 `--purge` 才一并删除。节点包的 `uninstall.sh --purge` 只清理节点使用的目录，保留根目录下其他文件，例如控制台的 `data/`。软件包升级不会停止任何实例。
 
 **控制台中的同机多实例**：
 
@@ -885,6 +887,8 @@ sudo apt install ./syedge_<新版本>*.deb ./syedge-agent_<新版本>*.deb
 6. 异常时在版本历史中回滚。
 
 该流程通过 wrapper 校验签名、校验配置并执行二进制热升级；失败时会恢复旧模块软链接和旧 master，避免业务中断。
+
+旧 master 若启动时没有显式指定 `-p`，而新二进制的编译前缀又与当前安装目录不同，程序会拒绝热升级并保留现有服务。请先确认生成的服务单元使用正确的 `-p`，在维护窗口按正常服务流程重启一次；随后才可热升级到不同编译前缀的版本。
 
 ### 9.3 控制台备份与恢复
 

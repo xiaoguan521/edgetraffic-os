@@ -3,14 +3,16 @@
 set -euo pipefail
 trap 'rc=$?; echo "lua-instance-targets: line $LINENO failed (exit $rc): $BASH_COMMAND" >&2' ERR
 DIST=$(realpath "$1"); BASE=$2; ARCH=$(uname -m)
+PREFIX=${SYEDGE_PREFIX:-/opt/syedge}
 ROOT=/home/atwasoft/node
+[[ "$PREFIX" != "$ROOT" ]] || ROOT=/home/atwasoft/node-ci
 [[ ! -e /home/atwasoft && ! -L /home/atwasoft && ! -e /etc/syedge/prefix && ! -L /etc/syedge/prefix && ! -e /usr/sbin/syedge-instance && ! -L /usr/sbin/syedge-instance ]] || { echo '需要干净的 CI 主机' >&2; exit 1; }
 W=$(mktemp -d); chmod 0755 "$W"
 cleanup() { sudo rm -rf /home/atwasoft /etc/syedge/prefix /usr/sbin/syedge-instance; rm -rf "$W"; }
 trap cleanup EXIT
 getent group syedge >/dev/null || sudo groupadd -r syedge
 id syedge >/dev/null 2>&1 || sudo useradd -r -g syedge -s /usr/sbin/nologin syedge
-go build -mod=vendor -o "$W/syedge-instance" ./cmd/syedge-instance
+go build -mod=vendor -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$PREFIX" -o "$W/syedge-instance" ./cmd/syedge-instance
 sudo install -m 0755 "$W/syedge-instance" /usr/sbin/syedge-instance
 sudo install -d -m 0755 "$ROOT/sbin" "$ROOT/instances/blue/conf/current" "$ROOT/instances/green/sbin" "$ROOT/instances/green/conf/current"
 sudo /usr/sbin/syedge-instance prefix "$ROOT"
@@ -21,8 +23,8 @@ if [[ "$BASE" == gmssl ]]; then sharedpkg=$gmpkg; independentpkg=$stdpkg; indepe
 mkdir "$W/shared" "$W/independent"
 tar -C "$W/shared" -xzf "$sharedpkg"
 tar -C "$W/independent" -xzf "$independentpkg"
-sudo install -m 0755 "$W/shared/opt/syedge/sbin/syedge" "$ROOT/sbin/syedge"
-sudo install -m 0755 "$W/independent/opt/syedge/sbin/syedge" "$ROOT/instances/green/sbin/syedge"
+sudo install -m 0755 "$W/shared$PREFIX/sbin/syedge" "$ROOT/sbin/syedge"
+sudo install -m 0755 "$W/independent$PREFIX/sbin/syedge" "$ROOT/instances/green/sbin/syedge"
 printf '{"instance":"blue","mode":"system","root":"%s","http_port":18080,"https_port":18443,"status_port":8082}\n' "$ROOT" | sudo tee "$ROOT/instances/blue/instance.json" >/dev/null
 printf '{"instance":"green","mode":"system","root":"%s","resource_mode":"independent","http_port":28080,"https_port":28443,"status_port":8088}\n' "$ROOT" | sudo tee "$ROOT/instances/green/instance.json" >/dev/null
 sudo chmod 0644 "$ROOT/instances/blue/instance.json" "$ROOT/instances/green/instance.json"

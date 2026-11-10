@@ -72,7 +72,7 @@ func TestIndependentUserEnsureAndRemove(t *testing.T) {
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(l.Bin() + " -e " + l.ErrorLog()) {
+	if !f.ran(l.Bin() + " -p " + l.RuntimeRoot() + " -e " + l.ErrorLog()) {
 		t.Fatalf("ensure did not start independent binary: %v", f.cmds)
 	}
 	if err := os.WriteFile(f.path(l.PidFile()), []byte("5150\n"), 0o644); err != nil {
@@ -88,7 +88,7 @@ func TestIndependentUserEnsureAndRemove(t *testing.T) {
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(l.Bin() + " -e " + l.ErrorLog() + " -c " + l.CurrentConf() + " -s quit") {
+	if !f.ran(l.Bin() + " -p " + l.RuntimeRoot() + " -e " + l.ErrorLog() + " -c " + l.CurrentConf() + " -s quit") {
 		t.Fatalf("independent master not stopped: %v", f.cmds)
 	}
 }
@@ -123,8 +123,8 @@ func TestUserAddDefaultWithoutSystemd(t *testing.T) {
 	}
 	for _, want := range []string{
 		uroot + "/bin/syedge-agent bootstrap -root " + uroot,
-		uroot + "/sbin/syedge -t -q -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
-		uroot + "/sbin/syedge -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
+		uroot + "/sbin/syedge -p " + uroot + " -t -q -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
+		uroot + "/sbin/syedge -p " + uroot + " -e " + uroot + "/logs/error.log -c " + uroot + "/conf/current/syedge.conf",
 	} {
 		if !f.ran(want) {
 			t.Errorf("missing command %q in:\n%s", want, strings.Join(f.cmds, "\n"))
@@ -158,7 +158,7 @@ func TestUserAddNamedWithSystemdAndEnroll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(unit), "ExecStart="+uroot+"/sbin/syedge -e "+uroot+"/instances/blue/logs/error.log -c "+uroot+"/instances/blue/conf/current/syedge.conf") {
+	if !strings.Contains(string(unit), "ExecStart="+uroot+"/sbin/syedge -p "+uroot+" -e "+uroot+"/instances/blue/logs/error.log -c "+uroot+"/instances/blue/conf/current/syedge.conf") {
 		t.Fatalf("unit:\n%s", unit)
 	}
 	if !strings.Contains(string(unit), "KillMode=mixed\nKillSignal=SIGQUIT\n") {
@@ -195,7 +195,7 @@ func TestEnsure(t *testing.T) {
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot+"/sbin/syedge -e") || len(*sp) != 1 || (*sp)[0].name != uroot+"/bin/syedge-agent" {
+	if !f.ran(uroot+"/sbin/syedge -p "+uroot+" -e") || len(*sp) != 1 || (*sp)[0].name != uroot+"/bin/syedge-agent" {
 		t.Fatalf("ensure did not start both: cmds=%v spawned=%v", f.cmds, *sp)
 	}
 	// 两者都在运行：什么都不做
@@ -238,7 +238,7 @@ func TestEnsure(t *testing.T) {
 	if err := f.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot+"/sbin/syedge -e") || len(*sp) != 0 {
+	if !f.ran(uroot+"/sbin/syedge -p "+uroot+" -e") || len(*sp) != 0 {
 		t.Fatalf("reused pid treated as running: cmds=%v spawned=%v", f.cmds, *sp)
 	}
 	// system 模式下不可用
@@ -267,7 +267,7 @@ func TestUserRemove(t *testing.T) {
 	if err := f.Remove("blue", false, true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(uroot + "/sbin/syedge -e " + b.ErrorLog() + " -c " + b.CurrentConf() + " -s quit") {
+	if !f.ran(uroot + "/sbin/syedge -p " + b.RuntimeRoot() + " -e " + b.ErrorLog() + " -c " + b.CurrentConf() + " -s quit") {
 		t.Fatalf("upgraded master not asked to quit: %v", f.cmds)
 	}
 	if _, err := os.Stat(f.path(b.Prefix())); err == nil {

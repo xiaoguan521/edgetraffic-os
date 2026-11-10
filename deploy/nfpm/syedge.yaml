@@ -42,3 +42,6 @@ scripts:
   preinstall: ${STAGE}/scripts/syedge-preinstall.sh
   postinstall: ${STAGE}/scripts/syedge-postinstall.sh
   preremove: ${STAGE}/scripts/syedge-preremove.sh
+rpm:
+  scripts:
+    posttrans: ${STAGE}/scripts/syedge-posttrans.sh

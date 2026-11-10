@@ -6,10 +6,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 func instanceProfile() Profile {
 	return Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
+}
+
+func TestHistoricalProfileDoesNotFollowCompiledDefault(t *testing.T) {
+	l, err := (Profile{}).Layout()
+	if err != nil || l.Root() != "/opt/syedge" {
+		t.Fatalf("historical empty profile root = %q, %v", l.Root(), err)
+	}
+	if !(Profile{}).SameInstance(Profile{Mode: "system", Root: "/opt/syedge"}) {
+		t.Fatal("historical and explicit legacy profiles differ")
+	}
+	if layout.DefaultSystemRoot() != "/opt/syedge" && (Profile{}).SameInstance(Profile{Mode: "system", Root: layout.DefaultSystemRoot()}) {
+		t.Fatal("new compiled root was mistaken for a legacy profile")
+	}
 }
 
 // 具名实例：所有路径与端口都来自档案，渲染结果中不残留默认实例的路径或端口（设计 0001 第 3、5.3 节）。
@@ -192,7 +207,7 @@ func TestRebaseRevisionUsesProfile(t *testing.T) {
 func TestRenderProfileSyedgeSyntax(t *testing.T) {
 	bin := os.Getenv("SYEDGE_BIN")
 	if bin == "" {
-		bin = "/opt/syedge/sbin/syedge"
+		bin = filepath.Join(layout.DefaultSystemRoot(), "sbin", "syedge")
 	}
 	if _, err := os.Stat(bin); err != nil {
 		t.Skip("syedge binary not installed")
@@ -208,7 +223,7 @@ func TestRenderProfileSyedgeSyntax(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := sampleInput(t)
 			in.Profile = p
-			if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
+			if mt, err := os.ReadFile(filepath.Join(layout.DefaultSystemRoot(), "share/defaults/mime.types")); err == nil {
 				in.MimeTypes = mt
 			}
 			in.Sites[1].Routes[0].Static.Files = map[string][]byte{"index.html": []byte("<h1>x</h1>")}

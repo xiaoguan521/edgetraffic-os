@@ -2,6 +2,7 @@ set -e
 # 基线配置需要供运行用户读取，不继承调用包管理器时的严格 umask。
 umask 022
 R=$(syedge_root) || exit 1
+PACKAGE_ROOT=/opt/syedge
 [ -n "$R" ] && [ "$R" != / ] || { echo "syedge: 安装根目录无效" >&2; exit 1; }
 for d in "$R" "$R/sbin" "$R/share" "$R/html" "$R/modules" "$R/versions"; do
   [ ! -L "$d" ] || { echo "syedge: 安装目录不能是符号链接：$d" >&2; exit 1; }
@@ -15,7 +16,7 @@ if [ -e /etc/syedge/prefix ] && ! runuser -u syedge -- test -r /etc/syedge/prefi
   echo "syedge: 数据面用户无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
   exit 1
 fi
-if [ "$R" != /opt/syedge ]; then
+if [ "$R" != "$PACKAGE_ROOT" ]; then
   mkdir -p "$R/sbin" "$R/share" "$R/html" "$R/modules"
   # 运行中的二进制不能原地覆盖。临时文件放在仅 root 可写的 R，再原子替换。
   tmp=$(mktemp "$R/.syedge-bin.XXXXXX") || exit 1
@@ -29,7 +30,7 @@ if [ "$R" != /opt/syedge ]; then
   cp -an /opt/syedge/html/. "$R/html/"
   if [ -d /opt/syedge/modules ]; then cp -a /opt/syedge/modules/. "$R/modules/"; fi
 fi
-if [ "$R" = /opt/syedge ]; then
+if [ "$R" = "$LEGACY_ROOT" ]; then
   LOG_DIR=/var/log/syedge
   CACHE_DIR=/var/cache/syedge
 else
@@ -44,26 +45,31 @@ chown root:root "$R/html"
 # 包管理器在 syedge-agent 包之前执行本脚本，custom root 的首次基线不能直接
 # 复用按 /opt 编译的静态配置：日志和临时目录必须先改到 R 下。后续升级不改
 # current，因此只在真正写入 r000000 前处理这份随包的模板。
-if [ "$R" != /opt/syedge ] && [ -f "$R/share/defaults/baseline/syedge.conf" ]; then
-  sed -i "s|/var/log/syedge|$R/logs|g" "$R/share/defaults/baseline/syedge.conf"
-  sed -i "/^[[:space:]]*client_header_timeout/i\\    client_body_temp_path  $R/cache/client_temp;\n    proxy_temp_path        $R/cache/proxy_temp;\n    fastcgi_temp_path      $R/cache/fastcgi_temp;\n    uwsgi_temp_path        $R/cache/uwsgi_temp;\n    scgi_temp_path         $R/cache/scgi_temp;" "$R/share/defaults/baseline/syedge.conf"
+if [ "$R" != "$PACKAGE_ROOT" ] && [ -f "$R/share/defaults/baseline/syedge.conf" ]; then
+  baseline="$R/share/defaults/baseline/syedge.conf"
+  sed -i "s|$PACKAGE_ROOT/logs|$LOG_DIR|g; s|$PACKAGE_ROOT/cache|$CACHE_DIR|g; s|$PACKAGE_ROOT|$R|g; s|/var/log/syedge|$LOG_DIR|g" "$baseline"
+  if [ "$R" != "$LEGACY_ROOT" ] && ! grep -q 'client_body_temp_path' "$baseline"; then
+    sed -i "/^[[:space:]]*client_header_timeout/i\\    client_body_temp_path  $CACHE_DIR/client_temp;\n    proxy_temp_path        $CACHE_DIR/proxy_temp;\n    fastcgi_temp_path      $CACHE_DIR/fastcgi_temp;\n    uwsgi_temp_path        $CACHE_DIR/uwsgi_temp;\n    scgi_temp_path         $CACHE_DIR/scgi_temp;" "$baseline"
+  fi
 fi
-if [ "$R" != /opt/syedge ] && [ -f "$R/share/defaults/standalone-example.conf" ]; then
-  sed -i "s|/opt/syedge|$R|g; s|root   html;|root   $R/html;|g" "$R/share/defaults/standalone-example.conf"
+if [ "$R" != "$PACKAGE_ROOT" ]; then
+  for guide in "$R/share/defaults/standalone-example.conf" "$R/share/doc/STANDALONE.txt"; do
+    [ ! -f "$guide" ] || sed -i "s|/opt/syedge|$R|g" "$guide"
+  done
 fi
 # 运行时不使用 root（设计 0001 D5）：master 与 worker 以 syedge 运行，运行时目录、日志与缓存归 syedge；
 # 二进制所在目录、版本库与模块目录由 wrapper（同样以 syedge 运行）在热升级时写入
 chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge "$R/versions"
 chown syedge:syedge "$R/sbin" "$R/modules"
 instance_tool=""
-if [ "$R" != /opt/syedge ] || [ -x /usr/sbin/syedge-instance ]; then
+if [ "$R" != "$LEGACY_ROOT" ] || [ -x /usr/sbin/syedge-instance ]; then
   instance_tool=/usr/libexec/syedge/syedge-instance
   [ -x "$instance_tool" ] || instance_tool=/usr/sbin/syedge-instance
 fi
 if [ -n "$instance_tool" ] && [ -x "$instance_tool" ]; then
   # 与 syedge-agent 同时升级：升级前以 root 启动的 master 无中断切换为 syedge 运行（旧版 agent 包没有该命令时忽略）
   if ! "$instance_tool" nonroot >/dev/null 2>&1; then
-    if [ "$R" != /opt/syedge ] && has_systemd; then
+    if [ "$R" != "$LEGACY_ROOT" ] && has_systemd; then
       echo "syedge: 无法生成自定义根目录的服务单元" >&2
       exit 1
     fi
@@ -88,7 +94,7 @@ if [ ! -e "$R/conf/current" ] && [ -f "$R/share/defaults/baseline/syedge.conf" ]
   fi
   mkdir -p "$R/conf/releases/r000000/conf.d"
   ln -sfn releases/r000000 "$R/conf/current"
-  if [ "$R" != /opt/syedge ]; then
+  if [ "$R" != "$PACKAGE_ROOT" ]; then
     # syedge-agent 包随后会用带 Profile.Root 的渲染器重建 r000000，修正 MANIFEST
     # 并保留 custom root 的完整路径；没有 agent 包时这份基线也能独立启动。
     : > "$R/conf/.syedge-custom-baseline"

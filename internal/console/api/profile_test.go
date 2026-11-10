@@ -10,8 +10,22 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
+
+func TestNewGroupProfileUsesCompiledRoot(t *testing.T) {
+	var p render.Profile
+	if raw := defaultGroupProfile(); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := p.Layout()
+	if err != nil || l.Root() != layout.DefaultSystemRoot() {
+		t.Fatalf("new group root = %q, %v", l.Root(), err)
+	}
+}
 
 // 实例档案接口：经真实路由、角色与授权中间件和数据库（设计 0001 第 5.2 节）。
 func TestProfileHTTP(t *testing.T) {

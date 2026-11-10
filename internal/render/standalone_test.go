@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
 func TestPackageDefaults(t *testing.T) {
@@ -22,7 +23,7 @@ func TestPackageDefaults(t *testing.T) {
 		}
 	}
 	// 与 agent bootstrap 写入的初始版本完全一致：后装 syedge-agent 时不算漂移
-	b, _ := Baseline()
+	b, _ := BaselineFor(Profile{Mode: "system", Root: layout.DefaultSystemRoot()})
 	m, _ := os.ReadFile(filepath.Join(root, "share/defaults/baseline", ManifestName))
 	if string(m) != string(b.Files[ManifestName]) {
 		t.Fatal("packaged baseline differs from bootstrap baseline")

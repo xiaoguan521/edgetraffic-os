@@ -51,6 +51,15 @@ func (d *Service) snippetContext(groupID, siteID uint) (render.SnippetContext, *
 	if ctx.AllowedNet, err = prefixes(g.AllowedCIDRs); err != nil {
 		return ctx, nil, err
 	}
+	profile, err := groupProfile(g)
+	if err != nil {
+		return ctx, nil, err
+	}
+	lay, err := profile.Layout()
+	if err != nil {
+		return ctx, nil, err
+	}
+	ctx.SitesBase = lay.ConfRoot() + "/current/sites/"
 	q := d.q()
 	ups, err := q.Upstream.WithContext(bg).Where(q.Upstream.GroupID.Eq(groupID)).Find()
 	if err != nil {

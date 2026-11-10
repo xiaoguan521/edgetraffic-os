@@ -4,7 +4,26 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
+
+func TestCompiledNonLegacyRootUsesItsOwnDirectories(t *testing.T) {
+	root := layout.DefaultSystemRoot()
+	if root == layout.LegacySystemRoot() {
+		t.Skip("requires a non-legacy compiled prefix")
+	}
+	src := "[Service]\nStateDirectory=syedge-agent\nReadWritePaths=/var/lib/syedge-agent /var/log/syedge /var/cache/syedge\n"
+	got := prefixUnit(src, root, true)
+	for _, want := range []string{root + "/agent", root + "/logs", root + "/cache"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "StateDirectory=") {
+		t.Error("legacy state directory remained")
+	}
+}
 
 func TestPrefixUnitCustomRootIsIdempotent(t *testing.T) {
 	src := `[Unit]
@@ -27,10 +46,10 @@ ExecReload=/opt/syedge/sbin/syedge -s reload
 	if strings.Contains(got, "StateDirectory=") {
 		t.Error("StateDirectory must be removed for a custom root")
 	}
-	if !strings.Contains(got, "ExecStartPre=/data/syedge/sbin/syedge -t -q -c /data/syedge/instances/%i/conf/current/syedge.conf -e /data/syedge/instances/%i/logs/error.log") {
+	if !strings.Contains(got, "ExecStartPre=/data/syedge/sbin/syedge -t -q -c /data/syedge/instances/%i/conf/current/syedge.conf -e /data/syedge/instances/%i/logs/error.log -p /data/syedge") {
 		t.Error("custom ExecStartPre was not completed")
 	}
-	if !strings.Contains(got, "ExecReload=/data/syedge/sbin/syedge -s reload -c /data/syedge/conf/current/syedge.conf -e /data/syedge/logs/error.log") {
+	if !strings.Contains(got, "ExecReload=/data/syedge/sbin/syedge -s reload -c /data/syedge/conf/current/syedge.conf -e /data/syedge/logs/error.log -p /data/syedge") {
 		t.Error("custom ExecReload was not completed")
 	}
 	if again := prefixUnit(got, "/data/syedge", true); again != got {

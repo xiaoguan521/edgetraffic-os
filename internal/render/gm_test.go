@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/sm2cert/sm2certtest"
 )
 
@@ -122,7 +123,7 @@ func TestGMCertOnlyChange(t *testing.T) {
 }
 
 // 国密变体（铜锁构建）的 syedge -t：SYEDGE_GM_BIN 指向国密版 syedge 时执行（CI 的 dataplane-gm 任务）。
-// ssl_conf_command 的文件路径是绝对路径，因此版本必须写到 /opt/syedge/conf/releases/<版本> 下。
+// ssl_conf_command 的文件路径是绝对路径，因此版本必须写到默认安装根目录的 conf/releases/<版本> 下。
 func TestRenderGMSyedgeSyntax(t *testing.T) {
 	bin := os.Getenv("SYEDGE_GM_BIN")
 	if bin == "" {
@@ -133,7 +134,8 @@ func TestRenderGMSyedgeSyntax(t *testing.T) {
 	}
 	in := gmInput(t)
 	in.Revision = "r900001"
-	if mt, err := os.ReadFile("/opt/syedge/share/defaults/mime.types"); err == nil {
+	in.Profile = Profile{Mode: "system", Root: layout.DefaultSystemRoot()}
+	if mt, err := os.ReadFile(filepath.Join(layout.DefaultSystemRoot(), "share/defaults/mime.types")); err == nil {
 		in.MimeTypes = mt
 	}
 	// 两个国密站点共用 443：SNI 切换后各自的双证书都要加载
@@ -147,12 +149,12 @@ func TestRenderGMSyedgeSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join("/opt/syedge/conf/releases", in.Revision)
+	dir := filepath.Join(layout.DefaultSystemRoot(), "conf/releases", in.Revision)
 	_ = os.RemoveAll(dir)
 	if err := b.WriteDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
+	if out, err := exec.Command(bin, "-p", in.Profile.lay().RuntimeRoot(), "-e", in.Profile.lay().ErrorLog(), "-t", "-q", "-c", filepath.Join(dir, "syedge.conf")).CombinedOutput(); err != nil {
 		t.Fatalf("syedge -t failed: %v\n%s", err, out)
 	}
 	if os.Getenv("GM_KEEP") == "" {

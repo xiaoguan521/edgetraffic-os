@@ -94,6 +94,9 @@ func Handover(p Paths, launcher string, uid, gid int) error {
 	if err != nil {
 		return err
 	}
+	if err := checkUpgradePrefix(oldPid, real, p.Prefix); err != nil {
+		return err
+	}
 	hf := filepath.Join(p.Versions, handoverFile)
 	b, _ := json.Marshal(handover{Target: real, UID: uid, GID: gid})
 	_ = os.Remove(hf)

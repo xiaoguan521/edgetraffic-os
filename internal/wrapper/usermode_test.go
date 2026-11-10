@@ -24,6 +24,11 @@ func TestBuildUserMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", c.argv, err)
 		}
+		if len(c.args) > 1 && c.args[0] == "-t" {
+			c.args = append(c.args[:2], append([]string{"-p", root}, c.args[2:]...)...)
+		} else {
+			c.args = append([]string{"-p", root}, c.args...)
+		}
 		if cmd.Path != c.path || strings.Join(cmd.Args, " ") != strings.Join(c.args, " ") || cmd.Root != root {
 			t.Errorf("%q: %s %q (root %q)", c.argv, cmd.Path, cmd.Args, cmd.Root)
 		}
@@ -35,7 +40,7 @@ func TestBuildUserMode(t *testing.T) {
 		}
 	}
 	// system 模式不变
-	if cmd, _ := Build([]string{"reload"}); strings.Join(cmd.Args, " ") != "-s reload" || cmd.Root != "" {
+	if cmd, _ := Build([]string{"reload"}); strings.Join(cmd.Args, " ") != "-p /opt/syedge -s reload" || cmd.Root != "" {
 		t.Errorf("system reload = %q", cmd.Args)
 	}
 	p, err := DefaultPathsAt(root, "blue")

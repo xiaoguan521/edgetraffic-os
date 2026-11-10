@@ -38,11 +38,13 @@
 #       演示后端（只用于构建演示镜像，不作为发布资产）
 #
 # 环境变量：VERSION（默认 0.0.0-dev）、COMMIT、BUILD_DATE、OUT（默认 dist/release）、
+#           SYEDGE_PREFIX（编译期与默认 system 安装根目录，默认 /opt/<品牌>）、
 #           GOTAGS（v* 正式版本为 release：不含演示签名密钥，也不带演示用的 syedge-license-server）
 # 正式与演示构建绝不注入 CI 临时授权公钥（license.ciKey）。
 # 品牌：读取 BRAND_ENV（默认仓库根目录的 brand.env，设计 0001 第 4 节）。定制品牌时 Go 程序以 -tags brand 注入品牌，
 #       暂存目录中的文件名与文本按品牌改写，打包前检查没有残留默认品牌名；默认品牌的产物与以前完全相同。
 set -euo pipefail
+umask 022
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 VERSION="${VERSION:-0.0.0-dev}"
@@ -58,12 +60,17 @@ source "${BRAND_ENV:-$ROOT/brand.env}"
 DEFAULT_BRAND=syedge DEFAULT_PROC=SyEdge DEFAULT_PRODUCT=SyEdge DEFAULT_FULLNAME="神玥企业级动态网关与负载均衡引擎"
 B="${BRAND_ID:?brand.env: BRAND_ID required}"; P="${BRAND_PROC:-$B}"; PRODUCT="${BRAND_PRODUCT:-$B}"; FULLNAME="${BRAND_FULLNAME:-$PRODUCT}"
 [[ "$B" =~ ^[a-z][a-z0-9]{2,6}$ ]] || { echo "BRAND_ID must match ^[a-z][a-z0-9]{2,6}\$" >&2; exit 2; }
+PREFIX="${SYEDGE_PREFIX:-/opt/$B}"
+# shellcheck source=../validate-prefix.sh
+source "$ROOT/scripts/validate-prefix.sh"
+validate_system_prefix "$PREFIX" "/opt/$B" || { echo "SYEDGE_PREFIX must be a safe dedicated absolute directory" >&2; exit 2; }
 SLUG="$B"   # 发布包文件名前缀
 if [[ "$B" != "$DEFAULT_BRAND" || "$P" != "$DEFAULT_PROC" || "$PRODUCT" != "$DEFAULT_PRODUCT" || "$FULLNAME" != "$DEFAULT_FULLNAME" ]]; then
   BP=github.com/xiaoguan521/edgetraffic-os/internal/brand
   LDFLAGS+=" -X $BP.id=$B -X $BP.proc=$P -X '$BP.product=$PRODUCT' -X '$BP.fullName=$FULLNAME'"
   GOTAGS="${GOTAGS:+$GOTAGS,}brand"
 fi
+LDFLAGS+=" -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$PREFIX"
 export CGO_ENABLED=0 GOFLAGS=-mod=vendor
 
 gobuild() { # goos goarch outdir pkgs...
@@ -84,6 +91,13 @@ rebrand() {
   find "$1" -depth -name "*$DEFAULT_BRAND*" -print0 | while IFS= read -r -d '' p; do
     mv "$p" "$(dirname "$p")/$(basename "$p" | sed "s/$DEFAULT_BRAND/$B/g")"
   done
+}
+
+# prefix_template：把构建期默认根目录从模板中的 /opt/syedge 替换为 Action 入参。
+# 只处理 shell / systemd / nfpm / 文档模板，不触碰已编译的数据面二进制。
+prefix_template() {
+  local src=$1 dst=$2
+  sed "s|/opt/$DEFAULT_BRAND|$PREFIX|g" "$src" > "$dst"
 }
 
 # brand_scan <目录>：定制品牌的产物中不得残留默认品牌名。二进制中只允许 Go 模块路径与协议 / 数据库字段名
@@ -168,8 +182,12 @@ case "${1:-}" in
     [[ -f "$WORK/lua/addon/VERSION" && -f "$WORK/lua/install.sh" && -f "$WORK/lua/uninstall.sh" ]] || { echo "invalid Lua package" >&2; exit 2; }
     base_ver=$(sed -n 's/.*"syedge":"\([^"]*\)".*/\1/p' "$WORK/lua/addon/VERSION")
     [[ "$base_ver" == "${up_ver%-*}" ]] || { echo "Lua base version $base_ver does not match $up_ver" >&2; exit 2; }
-    sed -i -E "s/\"version\":\"[^\"]+\"/\"version\":\"$up_ver\"/" "$WORK/lua/addon/VERSION"
-    [[ ! -f "$WORK/lua/addon/NOTICE" ]] || sed -i "1s/.*/$B-lua $up_ver/" "$WORK/lua/addon/NOTICE"
+    sed -E "s/\"version\":\"[^\"]+\"/\"version\":\"$up_ver\"/" "$WORK/lua/addon/VERSION" > "$WORK/lua/addon/VERSION.new"
+    mv "$WORK/lua/addon/VERSION.new" "$WORK/lua/addon/VERSION"
+    if [[ -f "$WORK/lua/addon/NOTICE" ]]; then
+      sed "1s/.*/$B-lua $up_ver/" "$WORK/lua/addon/NOTICE" > "$WORK/lua/addon/NOTICE.new"
+      mv "$WORK/lua/addon/NOTICE.new" "$WORK/lua/addon/NOTICE"
+    fi
     rebrand "$WORK/lua"; brand_scan "$WORK/lua"
     tar -C "$WORK/lua" --owner=0 --group=0 -czf "$OUT/$B-lua-$up_ver-$arch.tar.gz" install.sh uninstall.sh addon
     echo "$OUT/$B-lua-$up_ver-$arch.tar.gz"
@@ -203,23 +221,24 @@ case "${1:-}" in
     d="$WORK/$name"; r="$d/rootfs"
     mkdir -p "$r/usr/bin" "$r/usr/sbin" "$r/usr/libexec/syedge" "$r/etc/sudoers.d" "$r/etc/systemd/system" "$r/etc/logrotate.d"
     tar -C "$r" -xzf "$syedge_tgz"
-    [[ -x "$r/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
-    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$r/opt/$B"   # 初始版本与独立模式示例
+    data_root="$r$PREFIX"
+    [[ -x "$data_root/sbin/$B" ]] || { echo "$syedge_tgz 中没有 $PREFIX/sbin/$B" >&2; exit 2; }
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$data_root"   # 初始版本与独立模式示例
     gobuild linux "$arch" "$r/usr/bin" ./cmd/syedge-agent
     gobuild linux "$arch" "$r/usr/libexec/syedge" ./cmd/syedge-wrapper
     gobuild linux "$arch" "$r/usr/sbin" ./cmd/syedge-instance
     cp dataplane/packaging/sudoers/syedge-agent "$r/etc/sudoers.d/syedge-agent"
-    cp dataplane/packaging/systemd/syedge.service dataplane/packaging/systemd/syedge@.service \
-       dataplane/packaging/systemd/syedge-agent.service dataplane/packaging/systemd/syedge-agent@.service \
-       dataplane/packaging/systemd/syedge-firewall.service dataplane/packaging/systemd/syedge-firewall-refresh.service \
-       dataplane/packaging/systemd/syedge-firewall-refresh.path "$r/etc/systemd/system/"
+    for unit in syedge.service syedge@.service syedge-agent.service syedge-agent@.service \
+      syedge-firewall.service syedge-firewall-refresh.service syedge-firewall-refresh.path; do
+      prefix_template "dataplane/packaging/systemd/$unit" "$r/etc/systemd/system/$unit"
+    done
     install -m 0755 dataplane/packaging/firewall/syedge-firewall "$r/usr/sbin/syedge-firewall"
-    cp dataplane/packaging/logrotate/syedge "$r/etc/logrotate.d/syedge"
-    mkdir -p "$r/etc/tmpfiles.d" && cp dataplane/packaging/tmpfiles/syedge.conf "$r/etc/tmpfiles.d/syedge.conf"
-    cp deploy/node/install.sh "$d/install.sh"
-    cp deploy/node/uninstall.sh "$d/uninstall.sh"
+    prefix_template dataplane/packaging/logrotate/syedge "$r/etc/logrotate.d/syedge"
+    mkdir -p "$r/etc/tmpfiles.d" && prefix_template dataplane/packaging/tmpfiles/syedge.conf "$r/etc/tmpfiles.d/syedge.conf"
+    prefix_template deploy/node/install.sh "$d/install.sh"
+    prefix_template deploy/node/uninstall.sh "$d/uninstall.sh"
     cp docs/NOTICE "$d/NOTICE"
-    cp scripts/release/README-node.txt "$d/README.txt"
+    prefix_template scripts/release/README-node.txt "$d/README.txt"
     chmod 0755 "$d/install.sh" "$d/uninstall.sh"
     rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
@@ -231,9 +250,10 @@ case "${1:-}" in
     d="$WORK/$name"; x="$WORK/node-user-src"
     mkdir -p "$d/bin" "$d/sbin" "$d/modules" "$x"
     tar -C "$x" -xzf "$syedge_tgz"
-    [[ -x "$x/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
-    cp -p "$x/opt/$B/sbin/$B" "$d/sbin/$B"
-    if compgen -G "$x/opt/$B/modules/*" >/dev/null; then cp -p "$x/opt/$B/modules/"* "$d/modules/"; fi
+    data_root="$x$PREFIX"
+    [[ -x "$data_root/sbin/$B" ]] || { echo "$syedge_tgz 中没有 $PREFIX/sbin/$B" >&2; exit 2; }
+    cp -p "$data_root/sbin/$B" "$d/sbin/$B"
+    if compgen -G "$data_root/modules/*" >/dev/null; then cp -p "$data_root/modules/"* "$d/modules/"; fi
     gobuild linux "$arch" "$d/bin" ./cmd/syedge-agent ./cmd/syedge-wrapper ./cmd/syedge-instance
     cp deploy/node/install-user.sh "$d/install-user.sh"
     cp docs/NOTICE "$d/NOTICE"
@@ -250,32 +270,36 @@ case "${1:-}" in
     st="$WORK/stage"
     mkdir -p "$st/syedge" "$st/agent" "$st/console" "$st/scripts"
     tar -C "$st/syedge" -xzf "$syedge_tgz"
-    [[ -x "$st/syedge/opt/$B/sbin/$B" ]] || { echo "$syedge_tgz 中没有 opt/$B/sbin/$B" >&2; exit 2; }
+    data_root="$st/syedge$PREFIX"
+    [[ -x "$data_root/sbin/$B" ]] || { echo "$syedge_tgz 中没有 $PREFIX/sbin/$B" >&2; exit 2; }
     gobuild linux "$arch" "$st/syedge" ./cmd/syedge-instance
-    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$st/syedge/opt/$B"   # 数据面软件包可独立使用
-    cp dataplane/packaging/systemd/syedge.service "$st/syedge/syedge.service"
-    cp dataplane/packaging/systemd/syedge@.service "$st/syedge/syedge@.service"
-    cp dataplane/packaging/logrotate/syedge "$st/syedge/logrotate"
-    cp dataplane/packaging/tmpfiles/syedge.conf "$st/syedge/tmpfiles.conf"
+    go run -trimpath -tags "$GOTAGS" -ldflags "$LDFLAGS" ./cmd/syedge-agent package-defaults -out "$data_root"   # 数据面软件包可独立使用
+    prefix_template dataplane/packaging/systemd/syedge.service "$st/syedge/syedge.service"
+    prefix_template dataplane/packaging/systemd/syedge@.service "$st/syedge/syedge@.service"
+    prefix_template dataplane/packaging/logrotate/syedge "$st/syedge/logrotate"
+    prefix_template dataplane/packaging/tmpfiles/syedge.conf "$st/syedge/tmpfiles.conf"
     gobuild linux "$arch" "$st/agent" ./cmd/syedge-agent ./cmd/syedge-wrapper ./cmd/syedge-instance
     cp dataplane/packaging/sudoers/syedge-agent "$st/agent/sudoers"
-    cp dataplane/packaging/systemd/syedge-agent.service "$st/agent/syedge-agent.service"
-    cp dataplane/packaging/systemd/syedge-agent@.service "$st/agent/syedge-agent@.service"
-    cp dataplane/packaging/systemd/syedge-firewall.service "$st/agent/syedge-firewall.service"
-    cp dataplane/packaging/systemd/syedge-firewall-refresh.service "$st/agent/syedge-firewall-refresh.service"
-    cp dataplane/packaging/systemd/syedge-firewall-refresh.path "$st/agent/syedge-firewall-refresh.path"
+    prefix_template dataplane/packaging/systemd/syedge-agent.service "$st/agent/syedge-agent.service"
+    prefix_template dataplane/packaging/systemd/syedge-agent@.service "$st/agent/syedge-agent@.service"
+    prefix_template dataplane/packaging/systemd/syedge-firewall.service "$st/agent/syedge-firewall.service"
+    prefix_template dataplane/packaging/systemd/syedge-firewall-refresh.service "$st/agent/syedge-firewall-refresh.service"
+    prefix_template dataplane/packaging/systemd/syedge-firewall-refresh.path "$st/agent/syedge-firewall-refresh.path"
     install -m 0755 dataplane/packaging/firewall/syedge-firewall "$st/agent/syedge-firewall"
     gobuild linux "$arch" "$st/console" ./cmd/syedge-console
     cp deploy/systemd/syedge-console.service deploy/nfpm/console.env docs/NOTICE "$st/console/"
     # 每个脚本 = shebang + 共用函数 + 本体（软件包脚本不能引用包外文件）
     for f in deploy/nfpm/scripts/*.sh; do
       [[ $(basename "$f") == common.sh ]] && continue
-      { echo '#!/bin/sh'; cat deploy/nfpm/scripts/common.sh; cat "$f"; } > "$st/scripts/$(basename "$f")"
+      { echo '#!/bin/sh'; cat deploy/nfpm/scripts/common.sh; cat "$f"; } | \
+        sed "s|/opt/$DEFAULT_BRAND|$PREFIX|g" > "$st/scripts/$(basename "$f")"
       chmod 0755 "$st/scripts/$(basename "$f")"
     done
     # 先把 ${VERSION} / ${ARCH} / ${STAGE} 代入配置，不依赖 nfpm 对各字段的环境变量展开
     for p in syedge syedge-agent syedge-console; do
-      sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "deploy/nfpm/$p.yaml" > "$st/$p.yaml"
+      tmp="$WORK/$p.yaml.prefix"
+      prefix_template "deploy/nfpm/$p.yaml" "$tmp"
+      sed -e "s|\${VERSION}|$VERSION|g" -e "s|\${ARCH}|$arch|g" -e "s|\${STAGE}|$st|g" "$tmp" > "$st/$p.yaml"
     done
     rebrand "$st"; brand_scan "$st"
     for fmt in deb rpm; do

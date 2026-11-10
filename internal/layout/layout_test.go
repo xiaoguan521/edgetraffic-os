@@ -112,6 +112,53 @@ func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
 	}
 }
 
+func TestCompiledRootDoesNotBypassSafetyOrChangeLegacyPaths(t *testing.T) {
+	old := defaultSystemRoot
+	t.Cleanup(func() { defaultSystemRoot = old })
+	defaultSystemRoot = "/usr"
+	if err := ValidateSystemRoot(defaultSystemRoot); err == nil {
+		t.Fatal("unsafe compiled-in system root accepted")
+	}
+	defaultSystemRoot = "/home/atwasoft/syedge"
+	for _, tc := range []struct{ root, log, state string }{
+		{"/opt/syedge", "/var/log/syedge", "/var/lib/syedge-agent"},
+		{defaultSystemRoot, defaultSystemRoot + "/logs", defaultSystemRoot + "/agent"},
+	} {
+		l := SystemAt(tc.root, "")
+		if l.LogDir() != tc.log || l.AgentState() != tc.state {
+			t.Errorf("%s: log=%s state=%s", tc.root, l.LogDir(), l.AgentState())
+		}
+	}
+}
+
+func TestMissingMarkerKeepsLegacyInstallation(t *testing.T) {
+	old := defaultSystemRoot
+	t.Cleanup(func() { defaultSystemRoot = old })
+	defaultSystemRoot = "/home/atwasoft/syedge"
+	fsroot := t.TempDir()
+	conf := filepath.Join(fsroot, "opt/syedge/conf")
+	if err := os.MkdirAll(conf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("releases/r000000", filepath.Join(conf, "current")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSystemRootAt(fsroot)
+	if err != nil || got != "/opt/syedge" {
+		t.Fatalf("legacy root = %q, %v", got, err)
+	}
+	newConf := filepath.Join(fsroot, "home/atwasoft/syedge/conf")
+	if err := os.MkdirAll(newConf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("releases/r000000", filepath.Join(newConf, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSystemRootAt(fsroot); err == nil {
+		t.Fatal("ambiguous existing installations were silently selected")
+	}
+}
+
 func TestCheckSystemRootRejectsUntrustedParents(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("ownership checks require root")

@@ -4,15 +4,17 @@ VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0
 COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE     ?= $(shell date -u +%Y-%m-%d)
 PKG      := github.com/xiaoguan521/edgetraffic-os/internal/version
-LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE)
+SYEDGE_PREFIX ?= /opt/syedge
+LAYOUT   := github.com/xiaoguan521/edgetraffic-os/internal/layout
+LDFLAGS  := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(DATE) -X $(LAYOUT).defaultSystemRoot=$(SYEDGE_PREFIX)
 
-.PHONY: all build console agent wrapper license-server test test-imports test-import-ui lint lint-web brand web proto clean gen gen-check hooks brand-matrix
+.PHONY: all build console agent instance wrapper license-server test test-imports test-import-ui lint lint-web brand web proto clean gen gen-check hooks brand-matrix
 
 all: test build
 
-build: console agent wrapper license-server
+build: console agent instance wrapper license-server
 
-console agent license-server:
+console agent instance license-server:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/syedge-$@ ./cmd/syedge-$@
 
 wrapper:

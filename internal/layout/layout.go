@@ -51,8 +51,20 @@ type Layout struct {
 	independent bool   // 具名实例拥有独立的数据面二进制、版本库和模块
 }
 
+// defaultSystemRoot 由发布构建通过 -ldflags 注入；空值时保持历史默认路径。
+// 这样 node、agent、instance 和 wrapper 与数据面的编译期前缀保持一致。
+var defaultSystemRoot string
+
 // DefaultSystemRoot 返回未设置 /etc/syedge/prefix 时使用的安装根目录。
-func DefaultSystemRoot() string { return "/opt/" + brand.ID() }
+func DefaultSystemRoot() string {
+	if defaultSystemRoot != "" {
+		return defaultSystemRoot
+	}
+	return LegacySystemRoot()
+}
+
+// LegacySystemRoot 是历史版本和未显式指定根目录的节点组档案所使用的固定路径。
+func LegacySystemRoot() string { return "/opt/" + brand.ID() }
 
 // System 返回 system 模式下的布局。根目录从 /etc/syedge/prefix 读取一次；标记
 // 缺失时使用 DefaultSystemRoot。实例名非法或标记无效时 panic：命令入口应在
@@ -100,9 +112,6 @@ func ValidateSystemRoot(root string) error {
 	if err := ValidateInstallRoot(root); err != nil {
 		return err
 	}
-	if root == DefaultSystemRoot() {
-		return nil
-	}
 	for _, dir := range []string{"/usr", "/usr/local", "/opt", "/var", "/var/lib", "/var/cache", "/home"} {
 		if root == dir {
 			return fmt.Errorf("system install root %s must be a dedicated directory", root)
@@ -112,11 +121,16 @@ func ValidateSystemRoot(root string) error {
 		"/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/etc", "/proc", "/run", "/sys",
 		"/root", "/var/log", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share",
 		"/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/usr/local/lib64", "/usr/local/libexec", "/usr/local/share",
-		DefaultSystemRoot(),
 	} {
 		if root == dir || strings.HasPrefix(root, dir+"/") {
 			return fmt.Errorf("system install root %s is inside a protected directory %s", root, dir)
 		}
+	}
+	if root != DefaultSystemRoot() && strings.HasPrefix(root, DefaultSystemRoot()+"/") {
+		return fmt.Errorf("system install root %s is inside the default installation", root)
+	}
+	if root != LegacySystemRoot() && strings.HasPrefix(root, LegacySystemRoot()+"/") {
+		return fmt.Errorf("system install root %s is inside the legacy installation", root)
 	}
 	return nil
 }
@@ -166,6 +180,9 @@ func (l Layout) runtimeRoot() string {
 	return l.root
 }
 
+// RuntimeRoot 是二进制及其动态模块所在的可信前缀。
+func (l Layout) RuntimeRoot() string { return l.runtimeRoot() }
+
 // suffix 是具名实例在系统目录名后的后缀，例如 -blue。
 func (l Layout) suffix() string {
 	if l.instance == "" {
@@ -213,7 +230,7 @@ func (l Layout) LogDir() string {
 	if l.mode == ModeUser {
 		return path.Join(l.Prefix(), "logs")
 	}
-	if l.root != DefaultSystemRoot() {
+	if l.root != LegacySystemRoot() {
 		return path.Join(l.Prefix(), "logs")
 	}
 	return "/var/log/" + brand.ID() + l.suffix()
@@ -224,7 +241,7 @@ func (l Layout) CacheDir() string {
 	if l.mode == ModeUser {
 		return path.Join(l.Prefix(), "cache")
 	}
-	if l.root != DefaultSystemRoot() {
+	if l.root != LegacySystemRoot() {
 		return path.Join(l.Prefix(), "cache")
 	}
 	return "/var/cache/" + brand.ID() + l.suffix()
@@ -244,7 +261,7 @@ func (l Layout) AgentState() string {
 	if l.mode == ModeUser {
 		return path.Join(l.Prefix(), "agent")
 	}
-	if l.root != DefaultSystemRoot() {
+	if l.root != LegacySystemRoot() {
 		return path.Join(l.Prefix(), "agent")
 	}
 	return "/var/lib/" + brand.Agent() + l.suffix()
@@ -356,7 +373,32 @@ func LoadSystemRootAt(fsroot string) (string, error) {
 	marker := filepath.Join(fsroot, filepath.FromSlash(PrefixMarker()))
 	fi, err := os.Lstat(marker)
 	if errors.Is(err, os.ErrNotExist) {
-		return DefaultSystemRoot(), nil
+		root := DefaultSystemRoot()
+		if root != LegacySystemRoot() {
+			legacy := filepath.Join(fsroot, filepath.FromSlash(LegacySystemRoot()), "conf", "current")
+			if _, e := os.Lstat(legacy); e == nil {
+				current := filepath.Join(fsroot, filepath.FromSlash(root), "conf", "current")
+				if _, e = os.Lstat(current); e == nil {
+					return "", fmt.Errorf("both legacy and default installations exist; specify %s", PrefixMarker())
+				} else if !errors.Is(e, os.ErrNotExist) {
+					return "", e
+				}
+				root = LegacySystemRoot()
+			} else if !errors.Is(e, os.ErrNotExist) {
+				return "", e
+			}
+		}
+		if err := ValidateSystemRoot(root); err != nil {
+			return "", err
+		}
+		// 生产文件系统上的隐式默认路径与标记路径一样需要验证父目录。
+		// 注入的测试文件系统由调用者单独使用 CheckSystemRootAt 验证所有权。
+		if fsroot == "/" {
+			if err := CheckSystemRootAt(fsroot, root); err != nil {
+				return "", err
+			}
+		}
+		return root, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", PrefixMarker(), err)

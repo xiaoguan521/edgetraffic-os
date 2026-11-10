@@ -110,7 +110,7 @@ func TestAddIndependentInstanceCreatesSeparateRuntime(t *testing.T) {
 	if err := f.ReopenAll(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(l.Bin() + " -c " + l.CurrentConf() + " -s reopen") {
+	if !f.ran(l.Bin() + " -p " + l.RuntimeRoot() + " -e " + l.ErrorLog() + " -c " + l.CurrentConf() + " -s reopen") {
 		t.Fatalf("independent reopen missing: %v", f.cmds)
 	}
 	if err := os.Remove(unit); err != nil {
@@ -605,7 +605,7 @@ func TestReopenAll(t *testing.T) {
 	if err := f.ReopenAll(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/syedge/sbin/syedge -s reopen", "/opt/syedge/sbin/syedge -c /opt/syedge/instances/blue/conf/current/syedge.conf -s reopen"}
+	want := []string{"/opt/syedge/sbin/syedge -p /opt/syedge -e /var/log/syedge/error.log -c /opt/syedge/conf/current/syedge.conf -s reopen", "/opt/syedge/sbin/syedge -p /opt/syedge -e /var/log/syedge-blue/error.log -c /opt/syedge/instances/blue/conf/current/syedge.conf -s reopen"}
 	// 运行时不使用 root（D5）：以 root 执行时经 runuser 以数据面用户发送信号，`-s` 打开的日志不会变成 root 所有
 	if os.Geteuid() == 0 {
 		for i := range want {
@@ -646,8 +646,8 @@ func TestReopenAllCustomPrefix(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := []string{
-				"/srv/syedge/sbin/syedge -e /srv/syedge/logs/error.log -c /srv/syedge/conf/current/syedge.conf -s reopen",
-				"/srv/syedge/sbin/syedge -e /srv/syedge/instances/blue/logs/error.log -c /srv/syedge/instances/blue/conf/current/syedge.conf -s reopen",
+				"/srv/syedge/sbin/syedge -p /srv/syedge -e /srv/syedge/logs/error.log -c /srv/syedge/conf/current/syedge.conf -s reopen",
+				"/srv/syedge/sbin/syedge -p /srv/syedge -e /srv/syedge/instances/blue/logs/error.log -c /srv/syedge/instances/blue/conf/current/syedge.conf -s reopen",
 			}
 			if !rootMaster {
 				for i := range want {

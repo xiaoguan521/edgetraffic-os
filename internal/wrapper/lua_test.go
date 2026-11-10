@@ -61,6 +61,28 @@ func dropLua(t *testing.T, p Paths, priv ed25519.PrivateKey, ver, variant string
 	_ = os.WriteFile(base+".sig", sb, 0o644)
 }
 
+func TestInstallLuaAcceptsPackagedDefaultPrefix(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Modules, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	dropLua(t, p, priv, "1.30.6-1", "lua", luaPackage(t, "1.30.6-1", map[string]string{"addon/PREFIX": "/home/atwasoft/syedge\n"}))
+	if err := p.installLua("1.30.6-1", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if !p.luaReady("1.30.6-1", "standard") {
+		t.Fatal("add-on was not installed")
+	}
+}
+
 // 节点装有 syedge-lua 时的热升级：缺附加包时在任何改动前拒绝；附加包坏 / 签名不符被拒绝；
 // 同一发行版本的模块已处于使用中时，不能静默把标准版模块当作国密模块复用。
 func TestPrepareLuaRejectsVariantCollision(t *testing.T) {
