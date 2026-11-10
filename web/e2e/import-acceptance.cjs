@@ -136,6 +136,10 @@ test('配置导入：浏览器、API、审批与业务响应', { timeout: 240000
       assert.ok(unsupported && unsupported.file === '/etc/web/web.conf' && unsupported.line > 0 && unsupported.blocking)
       await page.getByRole('heading', { name: new RegExp(`导入报告 #${uploaded.import.id} `) }).waitFor()
       await page.getByText('fastcgi_pass', { exact: true }).waitFor()
+      const blockingOnly = page.getByRole('checkbox', { name: '只看需人工处理的站点问题' })
+      await blockingOnly.check()
+      await page.getByText('fastcgi_pass', { exact: true }).waitFor()
+      await blockingOnly.uncheck()
       assert.ok(await button(page, '应用为草稿').isEnabled())
     })
     await t.test('IMP-04 下载报告内容与上传报告一致且无私钥', async () => {
