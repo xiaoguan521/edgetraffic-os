@@ -206,15 +206,19 @@ func (s *Server) downloadImport(c *gin.Context) {
 
 // ApplyResult 是应用导入的结果。
 type ApplyResult struct {
-	Upstreams []string `json:"upstreams"`
-	Certs     []string `json:"certificates"`
-	Sites     []struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-		Note    string `json:"note,omitempty"`
-	} `json:"sites"`
-	Snippets []uint   `json:"snippets"` // 已提交、待另一人审批的片段
-	Errors   []string `json:"errors"`
+	Upstreams []string       `json:"upstreams"`
+	Certs     []string       `json:"certificates"`
+	Sites     []ImportedSite `json:"sites"`
+	Snippets  []uint         `json:"snippets"` // 已提交、待另一人审批的片段
+	Errors    []string       `json:"errors"`
+}
+
+type ImportedSite struct {
+	ID         uint   `json:"id,omitempty"`
+	SourceName string `json:"source_name,omitempty"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	Note       string `json:"note,omitempty"`
 }
 
 // applyImport 把报告中的结果写成草稿：上游、证书、站点（有需人工处理的问题时停用）、片段（待审批）。
@@ -239,7 +243,7 @@ func (s *Server) applyImport(c *gin.Context) {
 	certMat := takeCerts(row.ID)
 	ctx := c.Request.Context()
 	q := s.q()
-	res := ApplyResult{Upstreams: []string{}, Certs: []string{}, Snippets: []uint{}, Errors: []string{}}
+	res := ApplyResult{Upstreams: []string{}, Certs: []string{}, Sites: []ImportedSite{}, Snippets: []uint{}, Errors: []string{}}
 
 	// 上游：同名且内容相同则沿用，不同则改名
 	upName := map[string]string{}
@@ -293,11 +297,14 @@ func (s *Server) applyImport(c *gin.Context) {
 			}
 		}
 		spec := sr.Spec
+		spec.Routes = append([]render.Route(nil), sr.Spec.Routes...)
 		spec.Name = name
 		for i := range spec.Routes {
 			if spec.Routes[i].Proxy != nil {
 				if n, ok := upName[spec.Routes[i].Proxy.Upstream]; ok {
-					spec.Routes[i].Proxy = &render.ProxySpec{Upstream: n}
+					proxy := *spec.Routes[i].Proxy
+					proxy.Upstream = n
+					spec.Routes[i].Proxy = &proxy
 				}
 			}
 		}
@@ -335,11 +342,7 @@ func (s *Server) applyImport(c *gin.Context) {
 			res.Errors = append(res.Errors, fmt.Sprintf("站点 %s：%v", name, err))
 			continue
 		}
-		res.Sites = append(res.Sites, struct {
-			Name    string `json:"name"`
-			Enabled bool   `json:"enabled"`
-			Note    string `json:"note,omitempty"`
-		}{name, enabled, note})
+		res.Sites = append(res.Sites, ImportedSite{ID: st.ID, SourceName: sr.Name, Name: name, Enabled: enabled, Note: note})
 		s.audit(c, "site.create", "site", name, map[string]any{"group_id": row.GroupID, "domains": spec.Domains, "origin": "import", "import": row.ID, "enabled": enabled})
 
 		submit := func(in deploy.SnippetInput) {

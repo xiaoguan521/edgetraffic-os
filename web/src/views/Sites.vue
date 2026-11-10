@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
@@ -7,6 +8,7 @@ import { useSession } from '../stores/session'
 import SiteEditor from '../components/SiteEditor.vue'
 
 const session = useSession()
+const route = useRoute()
 const tab = ref('sites')
 const groups = ref<any[]>([])
 const gid = ref(0)
@@ -15,10 +17,13 @@ const ups = ref<any[]>([])
 
 async function load() {
   groups.value = await api.get('/node-groups')
-  if (!gid.value && groups.value.length) gid.value = groups.value[0].id
+  if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
   ;[sites.value, ups.value] = await Promise.all([api.get('/sites', { group_id: gid.value }), api.get('/upstreams', { group_id: gid.value })])
 }
-onMounted(load)
+onMounted(async () => {
+  if (route.query.tab === 'ups') tab.value = 'ups'
+  await load()
+})
 
 const editorOpen = ref(false)
 const editing = ref<any>(null)
@@ -86,6 +91,7 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
       <div>
         <h1>站点与上游</h1>
         <p>这里的修改先保存为草稿，到“发布”页确认差异后再下发到节点。</p>
+        <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: gid, import: route.query.import } }">返回导入报告</router-link>
       </div>
       <a-space v-if="session.can('operator')">
         <a-button v-if="tab === 'ups'" type="primary" :disabled="!session.writable" @click="editUp(null)">新建上游</a-button>

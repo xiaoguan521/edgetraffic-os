@@ -143,7 +143,8 @@ func ValidateStaticPath(p string) error {
 const StaticWellKnown = ".well-known"
 
 type ProxySpec struct {
-	Upstream string `json:"upstream"` // UpstreamGroup.Name
+	Upstream  string `json:"upstream"` // UpstreamGroup.Name
+	WebSocket bool   `json:"websocket,omitempty"`
 }
 
 type RedirectSpec struct {

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import { useSession } from '../stores/session'
 
 const session = useSession()
+const route = useRoute()
 const groups = ref<any[]>([])
 const gid = ref(0)
 const sites = ref<any[]>([])
@@ -29,7 +31,7 @@ async function load() {
   try {
     if (!groups.value.length) {
       groups.value = await api.get('/node-groups')
-      if (!gid.value && groups.value.length) gid.value = groups.value[0].id
+      if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
     }
     ;[rows.value, sites.value] = await Promise.all([api.get('/snippets', { group_id: gid.value }), api.get('/sites', { group_id: gid.value })])
   } finally {
@@ -133,6 +135,7 @@ const pendingCount = computed(() => rows.value.filter((r) => r.pending_by).lengt
     <div class="page-head">
       <div>
         <h1>自定义片段</h1>
+        <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: gid, import: route.query.import } }">返回导入报告</router-link>
         <p>可视化表单覆盖不到的需求，用受限的配置片段补充：只允许白名单内的指令，由渲染器规范化输出；每次新增、修改、删除都要另一人批准，批准后随下一次发布生效。</p>
       </div>
       <a-space>

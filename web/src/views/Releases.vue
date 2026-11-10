@@ -71,7 +71,7 @@ const batchStatus: Record<string, string> = { pending: '等待', deploying: '发
 
 async function loadGroups() {
   groups.value = await api.get('/node-groups')
-  if (!gid.value && groups.value.length) gid.value = groups.value[0].id
+  if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
 }
 async function loadPreview() {
   previewErr.value = ''
@@ -219,6 +219,7 @@ function lastDeploy(rev: string) {
     <div class="page-head">
       <div>
         <h1>发布</h1>
+        <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: gid, import: route.query.import } }">返回导入报告</router-link>
         <p>每次发布生成一个不可变版本。节点逐台校验、切换、加载并探活，任何一步失败都会自动回滚，流量不中断。</p>
       </div>
       <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />

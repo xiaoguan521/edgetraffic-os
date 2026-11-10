@@ -141,7 +141,7 @@ jobs:
           sudo systemctl start syedge || { sudo journalctl -u syedge --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
           sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syedge/sbin/syedge www.example.com
       - name: renderer output through real syedge -t (default, instance and user-mode profiles)
-        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyedgeSyntax$|TestRenderProfileSyedgeSyntax$' ./internal/render/
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyedgeSyntax$|TestRenderProfileSyedgeSyntax$|TestWebSocketRealSyedge$' ./internal/render/
       - name: brand runtime check (default brand; Server header over HTTP/1.1 and HTTP/2, titles, error page)
         run: sudo scripts/ci/brand-runtime.sh "$(ls dist/syedge-*.tar.gz)" syedge SyEdge
       - name: wrapper hot upgrade with real syedge (single instance and two instances sharing one binary)

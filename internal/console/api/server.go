@@ -159,6 +159,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/imports", role(store.RoleOperator), s.writable, s.createImport)
 	a.GET("/imports/:id", role(store.RoleOperator), s.getImport)
 	a.GET("/imports/:id/report", role(store.RoleOperator), s.downloadImport)
+	a.GET("/imports/:id/review", role(store.RoleOperator), s.reviewImport)
 	a.POST("/imports/:id/apply", role(store.RoleOperator), s.writable, s.applyImport)
 
 	// 自定义片段（P7，规格书 12.7）：每次变更都需另一人批准

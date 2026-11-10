@@ -42,6 +42,7 @@ type Issue struct {
 	Directive string `json:"directive"`
 	Reason    string `json:"reason"`
 	Blocking  bool   `json:"blocking"`
+	Location  string `json:"location,omitempty"` // 原配置中的 location 上下文，不表示一定能转换为路由
 }
 
 // UpstreamResult 是一个转换成功的上游组。
@@ -669,6 +670,18 @@ func (c *conv) toServerSnippet(sr *SiteResult, x *conf.Directive, ctx render.Sni
 
 // location 转换为路由；转不了路由时整块作为 server 片段（仍需白名单内），否则需人工处理。
 func (c *conv) location(sr *SiteResult, x *conf.Directive, ctx render.SnippetContext, acc *[]*conf.Directive) {
+	issuesBefore := len(sr.Issues)
+	defer func() {
+		location := "location（特殊匹配，请查看原文件）"
+		if len(x.Args) == 1 && render.ValidatePath(x.Args[0]) == nil {
+			location = "location " + x.Args[0]
+		} else if len(x.Args) == 2 && (x.Args[0] == "=" || x.Args[0] == "^~") && render.ValidatePath(x.Args[1]) == nil {
+			location = "location " + x.Args[0] + " " + x.Args[1]
+		}
+		for i := issuesBefore; i < len(sr.Issues); i++ {
+			sr.Issues[i].Location = location
+		}
+	}()
 	r, rest, ok := c.route(x, sr.Name)
 	if ok {
 		if len(rest) > 0 {
@@ -706,6 +719,42 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 	if render.ValidatePath(r.Path) != nil {
 		return r, nil, false
 	}
+	// 仅在三个必需指令都明确且没有重复时转换 WebSocket。动态 map、继承与其他取值需人工核对。
+	wsCandidate, upgrade, connection, connectionTotal, httpVersion, badVersion := false, 0, 0, 0, 0, false
+	for _, d := range x.Block {
+		if d.Name == "proxy_set_header" && len(d.Args) > 0 {
+			switch strings.ToLower(d.Args[0]) {
+			case "upgrade":
+				wsCandidate = true
+				if len(d.Args) != 2 || d.Args[1] != "$http_upgrade" {
+					return r, nil, false
+				}
+				upgrade++
+			case "connection":
+				if len(d.Args) != 2 {
+					return r, nil, false
+				}
+				connectionTotal++
+				if d.Args[1] != "" {
+					wsCandidate = true
+				}
+				if strings.EqualFold(d.Args[1], "upgrade") {
+					connection++
+				} else if d.Args[1] != "" {
+					return r, nil, false
+				}
+			}
+		}
+		if d.Name == "proxy_http_version" {
+			if len(d.Args) != 1 || d.Args[0] != "1.1" {
+				badVersion = true
+			}
+			httpVersion++
+		}
+	}
+	if wsCandidate && (upgrade != 1 || connection != 1 || connectionTotal != 1 || httpVersion != 1 || badVersion) {
+		return r, nil, false
+	}
 	var rest []*conf.Directive
 	for _, d := range x.Block {
 		switch d.Name {
@@ -741,6 +790,9 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 			r.Mode = "deny"
 		case "proxy_set_header":
 			if len(d.Args) >= 1 {
+				if wsCandidate && (strings.EqualFold(d.Args[0], "upgrade") || strings.EqualFold(d.Args[0], "connection")) {
+					continue
+				}
 				if expected, ok := baselineHeaders[strings.ToLower(d.Args[0])]; ok {
 					if len(d.Args) != 2 || d.Args[1] != expected {
 						return r, nil, false // 不得静默改变原有代理头（例如 WebSocket）
@@ -749,12 +801,22 @@ func (c *conv) route(x *conf.Directive, site string) (render.Route, []*conf.Dire
 				}
 			}
 			rest = append(rest, d)
+		case "proxy_http_version":
+			if !wsCandidate {
+				rest = append(rest, d)
+			}
 		default:
 			rest = append(rest, d)
 		}
 	}
 	if r.Mode == "" {
 		return r, nil, false
+	}
+	if wsCandidate {
+		if r.Proxy == nil {
+			return r, nil, false
+		}
+		r.Proxy.WebSocket = true
 	}
 	if r.Mode != "proxy" {
 		for _, d := range rest {
