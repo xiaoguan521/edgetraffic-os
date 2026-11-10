@@ -48,7 +48,7 @@ func TestWebSocketRealSyedge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 	backendResult := make(chan error, 1)
 	go func() {
 		conn, err := backend.Accept()
@@ -56,7 +56,7 @@ func TestWebSocketRealSyedge(t *testing.T) {
 			backendResult <- err
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 		r := bufio.NewReader(conn)
 		req, err := http.ReadRequest(r)
@@ -89,7 +89,7 @@ func TestWebSocketRealSyedge(t *testing.T) {
 			t.Fatal(err)
 		}
 		reservations = append(reservations, l)
-		defer l.Close()
+		defer func() { _ = l.Close() }()
 		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
 	}
 	root := t.TempDir()
@@ -120,14 +120,14 @@ func TestWebSocketRealSyedge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 	cmd := exec.Command(bin, "-c", filepath.Join(dir, "syedge.conf"), "-g", "daemon off;")
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(syscall.SIGQUIT)
 		select {
@@ -150,7 +150,7 @@ func TestWebSocketRealSyedge(t *testing.T) {
 		output, _ := os.ReadFile(logPath)
 		t.Fatalf("syedge did not start: %v\n%s", err, output)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	_, err = io.WriteString(conn, "GET /socket HTTP/1.1\r\nHost: socket.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
 	if err != nil {
