@@ -174,6 +174,7 @@ location /v2/ { proxy_pass http://up_api/v2/; proxy_set_header X-Env $env_tag; p
 if ($request_method = TRACE) { return 405; }`
 	for i := range in.Sites[0].Routes {
 		if in.Sites[0].Routes[i].Mode == "proxy" {
+			in.Sites[0].Routes[i].Proxy.WebSocket = true
 			in.Sites[0].Routes[i].Snippet = `limit_req zone=api_rl burst=20 nodelay; proxy_read_timeout 300s; proxy_set_header X-Tenant "a b";`
 		}
 	}

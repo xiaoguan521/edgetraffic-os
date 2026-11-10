@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { brand } from '../brand'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
 
 const session = useSession()
+const route = useRoute()
 const certs = ref<any[]>([])
 const loading = ref(false)
 
@@ -239,6 +241,7 @@ const columns = [
     <div class="page-head">
       <div>
         <h1>证书</h1>
+        <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: route.query.group, import: route.query.import } }">返回导入报告</router-link>
         <p>站点从这里选择证书。私钥加密保存，任何页面都不会回显。证书续期在授权过期后仍可使用，续期后自动下发到引用它的节点组。</p>
       </div>
       <a-space v-if="session.can('operator')">

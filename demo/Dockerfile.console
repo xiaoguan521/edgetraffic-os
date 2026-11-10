@@ -18,7 +18,9 @@ RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/x
       -o /out/ ./cmd/syedge-console ./cmd/syedge-license-server
 
 FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+ARG UBUNTU_MIRROR=""
+RUN if [ -n "$UBUNTU_MIRROR" ]; then sed -i "s|^URIs: .*|URIs: ${UBUNTU_MIRROR%/}/|" /etc/apt/sources.list.d/ubuntu.sources; fi \
+ && apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY --from=go /out/ /usr/bin/
 VOLUME /var/lib/syedge-console
 EXPOSE 8443 9443

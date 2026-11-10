@@ -1,6 +1,8 @@
 # 演示用边缘节点镜像：syedge（从官方源码改名构建）+ syedge-agent + syedge-wrapper
 FROM ubuntu:24.04 AS syedge
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git ca-certificates \
+ARG UBUNTU_MIRROR=""
+RUN if [ -n "$UBUNTU_MIRROR" ]; then sed -i "s|^URIs: .*|URIs: ${UBUNTU_MIRROR%/}/|" /etc/apt/sources.list.d/ubuntu.sources; fi \
+ && apt-get update && apt-get install -y --no-install-recommends build-essential git ca-certificates \
       libpcre2-dev libssl-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY dataplane dataplane
@@ -18,7 +20,9 @@ COPY . .
 RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/xiaoguan521/edgetraffic-os/internal/license.ciKey=${EXTRA_LICENSE_KEY} -X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=${EXTRA_PKG_KEY}" -o /out/ ./cmd/syedge-agent ./cmd/syedge-wrapper
 
 FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y --no-install-recommends libpcre2-8-0 libssl3t64 zlib1g sudo \
+ARG UBUNTU_MIRROR=""
+RUN if [ -n "$UBUNTU_MIRROR" ]; then sed -i "s|^URIs: .*|URIs: ${UBUNTU_MIRROR%/}/|" /etc/apt/sources.list.d/ubuntu.sources; fi \
+ && apt-get update && apt-get install -y --no-install-recommends libpcre2-8-0 libssl3t64 zlib1g sudo \
       ca-certificates curl procps libcap2-bin && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r syedge && useradd -r -g syedge -s /usr/sbin/nologin syedge \
  && useradd -r -g syedge -s /usr/sbin/nologin syedge-agent

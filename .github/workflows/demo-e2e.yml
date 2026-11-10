@@ -36,6 +36,7 @@ jobs:
           COMPOSE_PROFILES: ${{ matrix.db == 'postgres' && 'acme,postgres' || 'acme' }}
           ETOS_ACME_CA_FILE: /var/lib/syedge-console/acme-ca.pem
           ETOS_DB: ${{ matrix.db == 'postgres' && 'postgres://etos:etos@postgres:5432/etos?sslmode=disable' || '' }}
+          UBUNTU_MIRROR: http://azure.archive.ubuntu.com/ubuntu
         run: ./demo.sh up
       - name: end-to-end
         working-directory: demo

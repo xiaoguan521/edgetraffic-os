@@ -115,7 +115,19 @@ jobs:
         with:
           go-version: "1.27"
       - name: build deps
-        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev
+        run: |
+          missing=()
+          for pkg in libpcre2-dev libssl-dev zlib1g-dev; do
+            if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -qx 'install ok installed'; then
+              missing+=("$pkg")
+            fi
+          done
+          if ((${#missing[@]})); then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          else
+            echo 'Required build dependencies are already installed'
+          fi
       - name: hpack-gen test
         run: go test ./dataplane/hpack-gen/
       - name: build syedge (static dependencies, as released)
@@ -141,7 +153,7 @@ jobs:
           sudo systemctl start syedge || { sudo journalctl -u syedge --no-pager | tail -20 | sed 's/^/::error::/'; exit 1; }
           sudo GITHUB_ACTIONS=true scripts/golden-rename.sh /opt/syedge/sbin/syedge www.example.com
       - name: renderer output through real syedge -t (default, instance and user-mode profiles)
-        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyedgeSyntax$|TestRenderProfileSyedgeSyntax$' ./internal/render/
+        run: sudo env "PATH=$PATH" GOFLAGS=-mod=vendor go test -count=1 -v -run 'TestRenderSyedgeSyntax$|TestRenderProfileSyedgeSyntax$|TestWebSocketRealSyedge$' ./internal/render/
       - name: brand runtime check (default brand; Server header over HTTP/1.1 and HTTP/2, titles, error page)
         run: sudo scripts/ci/brand-runtime.sh "$(ls dist/syedge-*.tar.gz)" syedge SyEdge
       - name: wrapper hot upgrade with real syedge (single instance and two instances sharing one binary)

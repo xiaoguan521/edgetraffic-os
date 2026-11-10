@@ -5,7 +5,7 @@ import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import RulesEditor, { type Rule as AccessRule } from './RulesEditor.vue'
 
-const props = defineProps<{ open: boolean; site: any | null; groupId: number; upstreams: any[] }>()
+const props = defineProps<{ open: boolean; site: any | null; groupId: number; upstreams: any[]; focusRoute?: string; migration?: boolean }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 interface Route {
@@ -13,7 +13,7 @@ interface Route {
   match: 'prefix' | 'exact'
   mode: 'static' | 'proxy' | 'redirect' | 'deny'
   static?: { index_html: string; bundle_id?: number }
-  proxy?: { upstream: string }
+  proxy?: { upstream: string; websocket?: boolean }
   redirect?: { to: string; code: number }
 }
 
@@ -37,6 +37,7 @@ const isNew = computed(() => !props.site)
 const certs = ref<any[]>([])
 const bundles = ref<any[]>([])
 const ipSets = ref<any[]>([])
+const routeSearch = ref('')
 async function loadBundles() {
   bundles.value = await api.get('/static-bundles', { group_id: props.groupId }).catch(() => [])
 }
@@ -105,6 +106,7 @@ watch(
   (o) => {
     if (!o) return
     error.value = ''
+    routeSearch.value = props.focusRoute || ''
     api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
     loadBundles()
     api.get('/ip-sets', { group_id: props.groupId }).then((x) => (ipSets.value = x)).catch(() => {})
@@ -129,6 +131,7 @@ watch(
 )
 
 function addRoute() {
+  routeSearch.value = ''
   f.routes.push({ path: '/new/', match: 'prefix', mode: 'deny' })
 }
 function setMode(r: Route, m: Route['mode']) {
@@ -227,7 +230,10 @@ const modes = [
         <h3>路由</h3>
         <a-button size="small" @click="addRoute">添加路由</a-button>
       </div>
-      <div v-for="(r, i) in f.routes" :key="i" class="route">
+      <a-input v-if="f.routes.length > 5 || routeSearch" v-model:value="routeSearch" allow-clear placeholder="按路径查找路由" style="margin-bottom: 10px" />
+      <a-alert v-if="migration && routeSearch && !f.routes.some((r) => r.path.toLowerCase().includes(routeSearch.toLowerCase()))" type="info" show-icon message="当前草稿没有匹配的路由，请核对原配置后添加；正则与特殊优先级不能直接转换为普通前缀路由。" style="margin-bottom: 10px" />
+      <template v-for="(r, i) in f.routes" :key="i">
+      <div v-if="!routeSearch || r.path.toLowerCase().includes(routeSearch.toLowerCase())" class="route">
         <div class="rline">
           <a-select v-model:value="r.match" style="width: 104px" :options="[{ label: '前缀匹配', value: 'prefix' }, { label: '精确匹配', value: 'exact' }]" />
           <a-input v-model:value="r.path" class="code" style="flex: 1" />
@@ -235,6 +241,7 @@ const modes = [
           <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
         </div>
         <template v-if="r.mode === 'static'">
+          <div v-if="migration" class="sub">请上传实际静态资源包，并核对原配置的 root、alias 和 try_files 行为；不会自动读取节点上的目录。</div>
           <div class="rline" v-if="r.match === 'prefix'">
             <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
               :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
@@ -242,13 +249,18 @@ const modes = [
           </div>
           <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
         </template>
-        <a-select v-else-if="r.mode === 'proxy'" v-model:value="r.proxy!.upstream" style="width: 100%" placeholder="选择上游服务" :options="upstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
+        <template v-else-if="r.mode === 'proxy'">
+          <a-select v-model:value="r.proxy!.upstream" style="width: 100%" placeholder="选择上游服务" :options="upstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
+          <a-checkbox v-model:checked="r.proxy!.websocket">启用 WebSocket 连接升级</a-checkbox>
+          <div v-if="migration" class="sub">请核对原配置的 Host、升级头和超时；勾选只启用标准连接升级，不保证与自定义头或 Lua 逻辑一致。</div>
+        </template>
         <div v-else-if="r.mode === 'redirect'" class="rline">
           <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />
           <a-select v-model:value="r.redirect!.code" style="width: 100px" :options="[301, 302, 307, 308].map((c) => ({ label: String(c), value: c }))" />
         </div>
         <div v-else class="deny">返回 403</div>
       </div>
+      </template>
 
       <RulesEditor v-model="f.rules" :upstreams="upstreams" :ip-sets="ipSets" />
 
