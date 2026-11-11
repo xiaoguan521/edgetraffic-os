@@ -72,7 +72,8 @@ r[#r + 1] = tostring(require("etos.json").decode('{"a":7}').a)
 ngx.say(table.concat(r, " "))`}},
 			Route{Path: "/lua-ext", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `local ok1, e1 = pcall(require, "resty.redis")
 local ok2, e2 = pcall(require, "resty.mysql")
-ngx.say(tostring(ok1), " ", tostring(ok2), " ", tostring(string.find(tostring(e1) .. tostring(e2), "not allowed", 1, true) ~= nil))`}},
+local ok3, e3 = pcall(require, "cjson")
+ngx.say(tostring(ok1), " ", tostring(ok2), " ", tostring(string.find(tostring(e1) .. tostring(e2), "not allowed", 1, true) ~= nil), " ", tostring(ok3), " ", tostring(string.find(tostring(e3), "not allowed", 1, true) ~= nil))`}},
 			Route{Path: "/lua-err", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `error("lua-script-boom")`}},
 			Route{Path: "/lua-moved", Match: "exact", Mode: "redirect", Redirect: &RedirectSpec{To: "https://new.test/", Code: 302},
 				LuaScripts: map[string]string{"header_filter": `ngx.header["X-Lua"] = "1"`}},

@@ -174,10 +174,70 @@ server {
             ngx.say(is_tbl and "ext-tablepool-ok" or "ext-tablepool-bad")
         }
     }
+    location = /ext-cjson {
+        content_by_lua_block {
+            local cjson = require "cjson"
+            local safe = require "cjson.safe"
+            local t = cjson.decode(cjson.encode({ a = 1, b = { "x", "y" } }))
+            local bad, err = safe.decode("{")
+            ngx.say((t.a == 1 and t.b[2] == "y" and bad == nil and err ~= nil) and "ext-cjson-ok" or "ext-cjson-bad")
+        }
+    }
+    location = /ext-redis {
+        content_by_lua_block {
+            local parser = require "redis.parser"
+            local q = parser.build_query({ "get", "a" })
+            local res, typ = parser.parse_reply("+OK\r\n")
+            local ok = q == "*2\r\n$3\r\nget\r\n$1\r\na\r\n" and res == "OK" and typ == parser.STATUS_REPLY
+            ngx.say(ok and "ext-redis-ok" or "ext-redis-bad")
+        }
+    }
+    location = /ext-rds {
+        content_by_lua_block {
+            local parser = require "rds.parser"
+            ngx.say((type(parser.parse) == "function" and parser.null ~= nil) and "ext-rds-ok" or "ext-rds-bad")
+        }
+    }
+    location = /ext-signal {
+        content_by_lua_block {
+            local sig = require "resty.signal"
+            local ok, err = sig.kill(ngx.worker.pid(), 0)
+            ngx.say((sig.signum("HUP") == 1 and ok == true) and "ext-signal-ok" or ("ext-signal-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-shell {
+        content_by_lua_block {
+            local shell = require "resty.shell"
+            local ok, stdout, stderr, reason = shell.run({ "echo", "hi" })
+            ngx.say((ok and stdout == "hi\n") and "ext-shell-ok" or ("ext-shell-bad " .. tostring(stderr) .. " " .. tostring(reason)))
+        }
+    }
+    location = /ext-upstream {
+        content_by_lua_block {
+            local names = require("ngx.upstream").get_upstreams()
+            local found = false
+            for _, n in ipairs(names) do
+                if n == "standalone_test_up" then found = true end
+            end
+            ngx.say(found and "ext-upstream-ok" or "ext-upstream-bad")
+        }
+    }
+    location = /ext-hc {
+        content_by_lua_block {
+            local hc = require "resty.upstream.healthcheck"
+            local ok, err = hc.spawn_checker({
+                shm = "standalone_hc", upstream = "standalone_test_up", type = "http",
+                http_req = "GET / HTTP/1.0\r\nHost: standalone-lua.test\r\n\r\n",
+                interval = 60000, timeout = 1000, fall = 2, rise = 2,
+                valid_statuses = { 200 }, concurrency = 1,
+            })
+            ngx.say(ok and "ext-hc-ok" or ("ext-hc-bad " .. tostring(err)))
+        }
+    }
 }
 EOF
 printf 'return { text = "standalone-lualib-ok" }\n' > "$W/hello.lua"
-printf 'lua_shared_dict standalone_test_locks 1m;\nlua_shared_dict standalone_test_limits 1m;\n' > "$W/ext-dicts.conf"
+printf 'lua_shared_dict standalone_test_locks 1m;\nlua_shared_dict standalone_test_limits 1m;\nlua_shared_dict standalone_hc 1m;\nupstream standalone_test_up {\n    server 127.0.0.1:18091;\n}\n' > "$W/ext-dicts.conf"
 
 # 1. 不带新参数安装附加包后，站点中的 Lua 指令应当失败
 if sudo bash "$W/lua/install.sh" > "$W/i1.log" 2>&1; then
@@ -244,6 +304,23 @@ extok 17 "resty.random.bytes 返回指定长度" /ext-random "ext-random-ok"
 extok 18 "resty.lock 加锁与解锁" /ext-lock "ext-lock-ok"
 extok 19 "resty.limit.req 可创建对象并计数" /ext-limit "ext-limit-ok"
 extok 20 "tablepool fetch / release" /ext-tablepool "ext-tablepool-ok"
+
+# 21-28. D1 第二阶段的编译库与上游模块（只在独立模式可用）：00 文件的 lua_package_cpath 指向 extlib，
+# 主配置第三行加载 lua-upstream 模块，C 库、resty.signal、resty.shell 与 resty.upstream.healthcheck 在真实数据面上可用
+line21=$(sudo grep '^lua_package_cpath' "$NEWCONF")
+want21="lua_package_cpath  \"$PREFIX/modules/lua/extlib/?.so\";"
+if [[ "$line21" == "$want21" ]]; then ok "21 00 文件的 lua_package_cpath 为 extlib/?.so"; else bad "21 lua_package_cpath 不是预期值：$line21"; fi
+extok 22 "cjson.encode / decode 往返，cjson.safe 对坏输入返回 nil 与错误" /ext-cjson "ext-cjson-ok"
+extok 23 "redis.parser 的 build_query 与 parse_reply" /ext-redis "ext-redis-ok"
+extok 24 "rds.parser 可 require" /ext-rds "ext-rds-ok"
+extok 25 "resty.signal 的 signum(HUP) 与对本 worker 的 kill(pid, 0)" /ext-signal "ext-signal-ok"
+extok 26 "resty.shell 运行 echo hi 并返回标准输出 hi" /ext-shell "ext-shell-ok"
+if sudo sed -n 3p "$MAIN" | grep -Eq '^load_module  .+/modules/lua/ngx_http_lua_upstream_module\.so;$'; then
+  extok 27 "lua-upstream 模块已加载，ngx.upstream 列出站点定义的 upstream" /ext-upstream "ext-upstream-ok"
+else
+  bad "27 主配置第三行应为 lua-upstream 模块的 load_module"
+fi
+extok 28 "resty.upstream.healthcheck 对该 upstream 的 spawn_checker 成功（共享字典 standalone_hc）" /ext-hc "ext-hc-ok"
 
 # 6. 重复启用报错，文件不变
 sudo cp -- "$MAIN" "$W/main.before6" && sudo cp -- "$NEWCONF" "$W/new.before6"
