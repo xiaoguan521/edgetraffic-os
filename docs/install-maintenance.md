@@ -646,6 +646,8 @@ sudo syedge-instance remove blue --yes     # 优雅停止并删除实例（保�
 
 静态目录需另行打包并在对应站点的静态路由中上传；原 `root`、`alias`、`try_files` 的访问路径和行为需要逐项核对。代理路由可启用标准 WebSocket 连接升级；导入器仅在源路由明确使用 HTTP/1.1、`Upgrade $http_upgrade` 和 `Connection upgrade` 且没有冲突时自动转换，其他头、动态变量和超时需手工适配。Lua 脚本及依赖不会自动迁移：需要相应授权、节点 Lua 扩展包和另一人审批，并在受限运行环境中验证兼容性。
 
+从 OpenResty 迁移的指令与模块差异、Lua 边界和基线默认值差异，见 [从 OpenResty 迁移](migrate-from-openresty.md)。
+
 ### 8.6 类 Nginx 的服务命令
 
 ```bash

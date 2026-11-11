@@ -9,3 +9,13 @@ README.md	docs/quickstart.md
 docs/install-maintenance.md	build-from-source.md
 docs/install-maintenance.md	### 路径约定
 docs/install-maintenance.md	/home/atwasoft/syedge
+docs/migrate-from-openresty.md	## 1. 能直接沿用的
+docs/migrate-from-openresty.md	## 2. 指令与模块差异
+docs/migrate-from-openresty.md	## 3. Lua 差异
+docs/migrate-from-openresty.md	## 4. 基线默认值差异
+docs/migrate-from-openresty.md	## 5. 迁移步骤
+docs/migrate-from-openresty.md	## 6. 迁移前自查清单
+docs/migrate-from-openresty.md	more_set_headers
+docs/migrate-from-openresty.md	auth_basic
+docs/migrate-from-openresty.md	resty.redis
+docs/migrate-from-openresty.md	client_max_body_size
