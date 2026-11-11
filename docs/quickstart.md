@@ -14,11 +14,7 @@
 
 ## 2. 独立模式：5 条命令跑起来
 
-只运行数据面、不接入控制台时使用。下面的路径都用变量 `R` 表示安装根目录。`R` 由安装脚本写入的配置给出，所以全新节点要先完成步骤 ① 的安装，再执行这一行：
-
-```bash
-R=$(sudo syedge-instance prefix)
-```
+只运行数据面、不接入控制台时使用。
 
 ① 解压并安装节点包：
 
@@ -28,6 +24,12 @@ cd syedge-node-<版本>-linux-<架构>
 sudo ./install.sh
 ```
 
+安装完成后取得安装根目录，下面的路径都用变量 `R` 表示：
+
+```bash
+R=$(sudo syedge-instance prefix)
+```
+
 ② 复制独立模式示例配置，然后按实际域名与后端修改：
 
 ```bash
@@ -35,10 +37,10 @@ sudo cp "$R/share/defaults/standalone-example.conf" "$R/conf/current/conf.d/www.
 sudo vi "$R/conf/current/conf.d/www.conf"
 ```
 
-③ 校验配置（路径为自定义根目录时必须显式给出 `-p`、`-c`、`-e`）：
+③ 校验配置（显式给出 `-p`、`-c`，任何安装根目录下都适用）：
 
 ```bash
-sudo "$R/sbin/syedge" -p "$R" -t -c "$R/conf/current/syedge.conf" -e "$R/logs/error.log"
+sudo "$R/sbin/syedge" -p "$R" -c "$R/conf/current/syedge.conf" -e stderr -t
 ```
 
 ④ 平滑重载，不要用 restart 代替：
@@ -86,12 +88,14 @@ sudo systemctl status syedge-agent --no-pager
 
 ## 4. 常用命令对照
 
-| 操作 | OpenResty 用户习惯的做法 | SyEdge 命令 |
+| 操作 | OpenResty 中的写法 | SyEdge 命令 |
 | --- | --- | --- |
-| 校验配置 | 检查配置语法 | `sudo syedge -t`；需要看展开后的全部配置时用 `sudo syedge -T` |
-| 平滑重载 | 不停服务地重载配置 | `sudo systemctl reload syedge`，或 `sudo syedge -s reload` |
-| 查看版本与编译参数 | 查看版本与编译参数 | `syedge -v` 看版本，`syedge -V` 看编译参数 |
-| 重开日志 | 重新打开日志文件 | `sudo syedge -s reopen`（日志轮转后执行） |
-| 查看错误日志 | 查看错误日志 | `sudo tail -f /var/log/syedge/error.log`；自定义安装根目录时改为 `$R/logs/error.log` |
+| 校验配置 | `openresty -t` | `sudo syedge -t`；看展开后的全部配置用 `sudo syedge -T` |
+| 平滑重载 | `openresty -s reload` | `sudo systemctl reload syedge`，或 `sudo syedge -s reload` |
+| 查看版本与编译参数 | `openresty -v` / `openresty -V` | `syedge -v` / `syedge -V` |
+| 重开日志 | `openresty -s reopen` | `sudo syedge -s reopen` |
+| 查看错误日志 | `tail -f /usr/local/openresty/nginx/logs/error.log` | `sudo tail -f /var/log/syedge/error.log`；安装根目录不是 `/opt/syedge` 时为 `$R/logs/error.log` |
+
+安装根目录不是编译期默认值时，`syedge -t` 等命令要像第 2 节那样带上 `-p` 与 `-c`。
 
 线上配置变更优先使用 reload。`restart` 会停止并重新启动服务，可能中断现有连接。
