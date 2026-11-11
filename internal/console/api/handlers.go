@@ -319,13 +319,20 @@ func (s *Server) listGroups(c *gin.Context) {
 	}
 	type row struct {
 		store.NodeGroup
-		Nodes  int64 `json:"nodes"`
-		Online int64 `json:"online"`
-		Sites  int64 `json:"sites"`
+		Nodes          int64  `json:"nodes"`
+		Online         int64  `json:"online"`
+		Sites          int64  `json:"sites"`
+		ManagementMode string `json:"management_mode"`
 	}
 	out := make([]row, 0, len(gs))
 	for _, g := range gs {
 		r := row{NodeGroup: *g}
+		mode, err := s.Deploy.ManagementMode(g.ID)
+		if err != nil {
+			failErr(c, err)
+			return
+		}
+		r.ManagementMode = mode
 		nd := q.Node
 		r.Nodes, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked")).Count()
 		r.Online, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Eq("online")).Count()
@@ -492,13 +499,19 @@ func (s *Server) enrollToken(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	management, err := s.Deploy.ManagementModeView(id)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	mode := prof.Mode
 	if mode == "" {
 		mode = "system"
 	}
 	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint,
 		"command": enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint), "mode": mode, "instance": prof.Instance, "root": prof.Root,
-		"http_port": prof.HTTP(), "https_port": prof.HTTPS(), "status_port": prof.Status()})
+		"http_port": prof.HTTP(), "https_port": prof.HTTPS(), "status_port": prof.Status(),
+		"management_mode": management.Mode, "management_label": management.Label, "management_description": management.Description})
 }
 
 // enrollCommand 返回在节点上执行的注册命令：默认实例注册已安装的 agent；

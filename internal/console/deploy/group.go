@@ -223,6 +223,10 @@ func (d *Service) DeleteGroup(id uint, user, ip string) (*GroupUsage, error) {
 				return err
 			},
 			func() error {
+				_, err := tx.SystemKV.WithContext(ctx).Where(tx.SystemKV.Key.Eq(managementModeKey(id))).Delete()
+				return err
+			},
+			func() error {
 				_, err := tx.NodeGroup.WithContext(ctx).Where(tx.NodeGroup.ID.Eq(id)).Delete()
 				return err
 			},

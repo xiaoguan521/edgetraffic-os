@@ -8,6 +8,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -85,6 +87,37 @@ type CertMaterial struct {
 	KeyPEM  string
 }
 
+// LuaReference records a Lua-related directive found in the uploaded
+// configuration. It is deliberately metadata only: the importer never executes
+// an uploaded script or makes it part of a managed release automatically.
+type LuaReference struct {
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Directive string `json:"directive"`
+	Target    string `json:"target,omitempty"`
+	Resolved  string `json:"resolved,omitempty"`
+	Missing   bool   `json:"missing"`
+}
+
+// LuaAsset is a hash inventory of uploaded Lua scripts and related module
+// files. Keeping only path, size and digest makes the report safe to download
+// while giving operators a deterministic checklist for a legacy runtime.
+type LuaAsset struct {
+	Path   string `json:"path"`
+	Size   int    `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+// LuaCompatibility describes why a configuration cannot be treated as a
+// managed Lua rule automatically. Legacy *_by_lua_file, package paths and
+// dynamic modules remain node-local until an operator explicitly migrates them.
+type LuaCompatibility struct {
+	RequiresLegacy bool           `json:"requires_legacy"`
+	References     []LuaReference `json:"references"`
+	Assets         []LuaAsset     `json:"assets"`
+	Missing        []string       `json:"missing"`
+}
+
 // Summary 是报告摘要。
 type Summary struct {
 	Servers int `json:"servers"` // http 中的 server 块数
@@ -103,6 +136,7 @@ type Report struct {
 	Upstreams    []UpstreamResult        `json:"upstreams"`
 	HTTPSnippet  string                  `json:"http_snippet"` // http 层白名单内的指令
 	Global       []Issue                 `json:"global"`       // 全局、stream 等不属于任何站点的内容
+	Lua          LuaCompatibility        `json:"lua"`
 	Certificates map[string]CertMaterial `json:"-"`
 }
 
@@ -226,13 +260,17 @@ type conv struct {
 }
 
 func convert(source string, files []conf.File, archive map[string][]byte, o Options) (*Report, error) {
-	c := &conv{o: o, r: &Report{Source: source, Sites: []SiteResult{}, Upstreams: []UpstreamResult{}, Global: []Issue{}, Certificates: map[string]CertMaterial{}},
+	c := &conv{o: o, r: &Report{Source: source, Sites: []SiteResult{}, Upstreams: []UpstreamResult{}, Global: []Issue{}, Lua: LuaCompatibility{References: []LuaReference{}, Assets: []LuaAsset{}, Missing: []string{}}, Certificates: map[string]CertMaterial{}},
 		archive: archive, upstreams: map[string]string{}, autoUps: map[string]string{}}
 	parsed, issues, err := expandIncludes(source, files, archive)
 	if err != nil {
 		return nil, err
 	}
 	c.r.Global = append(c.r.Global, issues...)
+	for _, ds := range parsed {
+		c.scanLua(ds)
+	}
+	c.inventoryLuaAssets()
 	// 先收集全部 upstream（站点可能引用其他文件中的上游）
 	for _, ds := range parsed {
 		c.walk(ds, true)
@@ -254,6 +292,73 @@ func convert(source string, files []conf.File, archive map[string][]byte, o Opti
 	}
 	c.summarize()
 	return c.r, nil
+}
+
+func luaReferenceTarget(name string, args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	switch {
+	case strings.HasSuffix(name, "_by_lua_file"), name == "load_module":
+		return strings.TrimSpace(args[0])
+	default:
+		return ""
+	}
+}
+
+func isLuaDirective(name string) bool {
+	return strings.Contains(strings.ToLower(name), "lua")
+}
+
+func (c *conv) scanLua(ds []*conf.Directive) {
+	for _, d := range ds {
+		name := strings.ToLower(d.Name)
+		luaDirective := isLuaDirective(name)
+		if name == "load_module" && len(d.Args) > 0 {
+			luaDirective = strings.Contains(strings.ToLower(d.Args[0]), "lua")
+		}
+		if luaDirective {
+			c.r.Lua.RequiresLegacy = true
+			ref := LuaReference{File: d.File, Line: d.Line, Directive: d.Name}
+			ref.Target = luaReferenceTarget(name, d.Args)
+			if ref.Target != "" && (strings.HasSuffix(name, "_by_lua_file") || name == "load_module") {
+				ref.Resolved = c.findArchivePath(ref.Target)
+				ref.Missing = c.archive != nil && ref.Resolved == ""
+				if ref.Missing && !containsString(c.r.Lua.Missing, ref.Target) {
+					c.r.Lua.Missing = append(c.r.Lua.Missing, ref.Target)
+				}
+			}
+			c.r.Lua.References = append(c.r.Lua.References, ref)
+		}
+		if d.IsBlock() {
+			c.scanLua(d.Block)
+		}
+	}
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *conv) inventoryLuaAssets() {
+	if c.archive == nil {
+		return
+	}
+	for name, body := range c.archive {
+		lower := strings.ToLower(name)
+		if !strings.HasSuffix(lower, ".lua") && !strings.Contains(lower, "/lua/") && !strings.Contains(lower, "lualib/") {
+			continue
+		}
+		sum := sha256.Sum256(body)
+		c.r.Lua.Assets = append(c.r.Lua.Assets, LuaAsset{Path: name, Size: len(body), SHA256: hex.EncodeToString(sum[:])})
+	}
+	sort.Slice(c.r.Lua.Assets, func(i, j int) bool { return c.r.Lua.Assets[i].Path < c.r.Lua.Assets[j].Path })
+	sort.Strings(c.r.Lua.Missing)
 }
 
 func (c *conv) global(d *conf.Directive, reason string) {
@@ -852,8 +957,15 @@ func (c *conv) proxyUpstream(target, site string) (string, bool) {
 
 // findFile 在压缩包中按路径后缀查找配置引用的文件（至少匹配文件名与上一级目录，或文件名唯一）。
 func (c *conv) findFile(ref string) []byte {
+	if name := c.findArchivePath(ref); name != "" {
+		return c.archive[name]
+	}
+	return nil
+}
+
+func (c *conv) findArchivePath(ref string) string {
 	if c.archive == nil {
-		return nil
+		return ""
 	}
 	parts := strings.Split(path.Clean(ref), "/")
 	best, bestN, ties := "", 0, 0
@@ -871,9 +983,9 @@ func (c *conv) findFile(ref string) []byte {
 		}
 	}
 	if bestN > 0 && ties == 1 {
-		return c.archive[best]
+		return best
 	}
-	return nil
+	return ""
 }
 
 func cloneDirective(d *conf.Directive) *conf.Directive {

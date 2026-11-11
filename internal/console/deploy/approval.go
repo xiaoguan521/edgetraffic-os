@@ -72,6 +72,9 @@ func (d *Service) RequestRelease(groupID uint, note, user, ip string) (*store.Re
 	if err != nil {
 		return nil, err
 	}
+	if err := d.ensureConfigManaged(groupID); err != nil {
+		return nil, err
+	}
 	rr := d.q().ReleaseRequest
 	n, err := rr.WithContext(bg).Where(rr.GroupID.Eq(groupID), rr.Status.Eq(ApprovalPending)).Count()
 	if err != nil {
@@ -201,6 +204,10 @@ func (d *Service) Approve(id uint, comment, user, ip string) (*store.Deployment,
 	}
 	g, err := store.First[store.NodeGroup](d.Store, req.GroupID)
 	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureConfigManaged(req.GroupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
