@@ -26,6 +26,32 @@
 4. 需要国密时，安装 `gmssl` 数据面包；标准版不能通过运行时配置切换为国密版。
 5. 需要 Lua JWT 规则时，安装与 `syedge` 版本一致的 `syedge-lua` 附加包。
 
+### 路径约定
+
+本手册用 `R` 表示 system 模式的安装根目录，即程序、版本库、配置和数据目录所在的根。`R` 不一定是 `/opt/syedge`，以本机实际值为准。查询方法：
+
+```bash
+sudo syedge-instance prefix
+```
+
+该命令随 `syedge-agent` 软件包安装，直接输出 `R`。若 `/etc/syedge/prefix` 不存在，则按历史规则判断：已有 `/opt/syedge` 安装时返回 `/opt/syedge`（见 `layout.go` 中 `LoadSystemRootAt`）。
+
+`R` 有两个常见的默认值，取决于程序是在哪里构建的：
+
+- 本地构建未设置 `SYEDGE_PREFIX` 时，`R=/opt/syedge`（`Makefile` 中 `SYEDGE_PREFIX ?= /opt/syedge`）。
+- GitHub Actions 发布的节点包默认 `R=/home/atwasoft/syedge`（`release.yml`、`packages.yml` 等工作流中的 `SYEDGE_PREFIX` 默认值）。
+
+首次安装时可用 `sudo ./install.sh --prefix <目录>` 指定其他根目录，安装脚本会把它写入 `/etc/syedge/prefix`。
+
+日志、缓存、agent 状态和 PID 目录与 `R` 的关系如下（代码依据：`internal/layout/layout.go`、`deploy/node/install.sh`）：
+
+| 用途 | `R=/opt/syedge`（历史布局） | 其他根目录 `R` |
+| --- | --- | --- |
+| 日志 | `/var/log/syedge` | `R/logs` |
+| 缓存 | `/var/cache/syedge` | `R/cache` |
+| agent 状态 | `/var/lib/syedge-agent` | `R/agent` |
+| PID 与运行目录 | `/run/syedge` | `/run/syedge`（不随 `R` 变化） |
+
 ## 2. 系统要求与端口
 
 ### 2.1 运行环境
@@ -83,11 +109,11 @@ sudo ./install.sh --prefix /home/atwasoft/node
 
 位于 `/home` 时，新版 systemd 会仅将安装目录映射进服务沙箱，其他家目录仍被隐藏。较旧 systemd 不支持该映射功能，会开放 `/home` 并继续隐藏 `/root` 和 `/run/user`；此时其他家目录仍依赖其文件权限保护。
 
-自定义目录下，手工校验要显式指定配置和错误日志；常规重载通过 systemd 保持服务单元中的路径设置：
+自定义目录下，手工校验要显式指定前缀、配置文件，并用 `-e stderr` 把错误输出到终端（与独立模式说明中的写法一致，不依赖日志目录位置）；常规重载通过 systemd 保持服务单元中的路径设置：
 
 ```bash
 R=$(sudo syedge-instance prefix)
-sudo "$R/sbin/syedge" -p "$R" -t -c "$R/conf/current/syedge.conf" -e "$R/logs/error.log"
+sudo "$R/sbin/syedge" -p "$R" -t -c "$R/conf/current/syedge.conf" -e stderr
 sudo systemctl reload syedge
 ```
 
@@ -411,19 +437,19 @@ Lua 模块与 `syedge` 二进制版本强绑定。升级带 Lua 的节点时，�
 
 ### 8.1 关键目录和文件
 
-| 路径 | 说明 |
-| --- | --- |
-| `/opt/syedge/sbin/syedge` | 数据面主程序 |
-| `/opt/syedge/conf/current` | 当前生效配置版本软链接；控制台托管时由 Agent 管理 |
-| `/opt/syedge/conf/releases/` | 配置版本目录 |
-| `/opt/syedge/share/defaults/` | 默认文件、独立模式示例和基线模板 |
-| `/opt/syedge/modules/lua` | 当前 Lua 模块版本软链接 |
-| `/var/log/syedge/error.log` | 错误日志 |
-| `/var/log/syedge/access.log`、`access.json` | 访问日志 |
-| `/var/cache/syedge/` | 临时文件目录 |
-| `/run/syedge/syedge.pid` | master PID 文件 |
-| `/var/lib/syedge-agent/` | Agent 身份、状态、升级文件和本机配置备份 |
-| `/var/lib/syedge-console/` | 控制台数据库、CA、安装 ID 和加密密钥 |
+| 路径 | 说明 | 其他安装根目录 `R`（非 `/opt/syedge`） |
+| --- | --- | --- |
+| `/opt/syedge/sbin/syedge` | 数据面主程序 | `R/sbin/syedge` |
+| `/opt/syedge/conf/current` | 当前生效配置版本软链接；控制台托管时由 Agent 管理 | `R/conf/current` |
+| `/opt/syedge/conf/releases/` | 配置版本目录 | `R/conf/releases/` |
+| `/opt/syedge/share/defaults/` | 默认文件、独立模式示例和基线模板 | `R/share/defaults/` |
+| `/opt/syedge/modules/lua` | 当前 Lua 模块版本软链接 | `R/modules/lua` |
+| `/var/log/syedge/error.log` | 错误日志 | `R/logs/error.log` |
+| `/var/log/syedge/access.log`、`access.json` | 访问日志 | `R/logs/access.json`（代码只生成 `access.json`） |
+| `/var/cache/syedge/` | 临时文件目录 | `R/cache/` |
+| `/run/syedge/syedge.pid` | master PID 文件 | 同左 |
+| `/var/lib/syedge-agent/` | Agent 身份、状态、升级文件和本机配置备份 | `R/agent/` |
+| `/var/lib/syedge-console/` | 控制台数据库、CA、安装 ID 和加密密钥 | 同左（与节点前缀无关，由 `ETOS_DATA` 决定） |
 
 控制台托管模式下，不要直接编辑 `/opt/syedge/conf/current`。应在控制台修改、预览、发布；Agent 会执行配置校验、reload、探活和失败回滚。
 

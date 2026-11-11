@@ -80,6 +80,8 @@ sudo bash install.sh --instance blue
 sudo bash uninstall.sh --instance blue
 ```
 
+以下以 `/opt/syedge` 为例，实际根目录见 [安装维护手册的路径约定](install-maintenance.md#路径约定)。
+
 安装的具体行为：
 - system 模式自动识别节点安装根目录 `R`（默认为 `/opt/syedge`，也可以是 `/home/atwasoft/node`），无需再次传入路径；只有一个实例时自动选择，多个实例时交互选择；非交互环境必须用 `--instance` 指定；
 - 共享实例的模块位于 `R/modules/lua`，安装或卸载会影响同一根目录的所有共享实例；独立实例 `blue` 的模块位于 `R/instances/blue/modules/lua`，只影响该实例。卸载前检查使用该模块的实例配置；

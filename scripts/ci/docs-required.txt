@@ -7,3 +7,5 @@ docs/quickstart.md	syedge-instance prefix
 docs/build-from-source.md	build-syedge.sh
 README.md	docs/quickstart.md
 docs/install-maintenance.md	build-from-source.md
+docs/install-maintenance.md	### 路径约定
+docs/install-maintenance.md	/home/atwasoft/syedge
