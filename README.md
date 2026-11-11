@@ -4,6 +4,7 @@
 控制面是自研 Web 控制台，统一管理多台边缘节点的「改配置 → 校验 → 下发 → reload → 验证 → 回滚」，并内置商业授权。
 
 - 设计规格书：[SyEdge 设计规格书 v3.1](https://claude.ai/artifact/6nhk8LuTBm3hqjBD1MryCp)（副本索引见 `docs/spec/`）
+- 快速上手：[`docs/quickstart.md`](docs/quickstart.md)
 - 安装维护手册：[`docs/install-maintenance.md`](docs/install-maintenance.md)
 - 编码规则：[`CLAUDE.md`](CLAUDE.md)（所有编码 Agent 与开发者必读）
 
