@@ -306,6 +306,9 @@ func (d *Service) newRevision(groupID uint, parent, note, user string) (*store.R
 // Publish 生成新版本并异步下发到组内所有节点，立即返回发布记录。
 // 开启发布审批时返回 ErrApprovalRequired，改走 RequestRelease → Approve。
 func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deployment, error) {
+	if err := d.ensureConfigManaged(groupID); err != nil {
+		return nil, err
+	}
 	if d.ApprovalEnabled() {
 		return nil, ErrApprovalRequired
 	}
@@ -318,6 +321,10 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 	}
 	g, err := store.First[store.NodeGroup](d.Store, groupID)
 	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureConfigManaged(groupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -382,6 +389,10 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 	}
 	g, err := store.First[store.NodeGroup](d.Store, groupID)
 	if err != nil || g.CurrentRevisionID == "" {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureConfigManaged(groupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -537,6 +548,10 @@ func (d *Service) Restore(nodeID uint, user, ip string) (*store.Deployment, erro
 	if !lk.TryLock() {
 		return nil, ErrBusy
 	}
+	if err := d.ensureConfigManaged(g.ID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
 	rev, err := d.revision(n.AppliedRevision, g.ID)
 	if err != nil {
 		lk.Unlock()
@@ -555,6 +570,10 @@ func (d *Service) Rollback(groupID uint, revID, user, ip string) (*store.Deploym
 	}
 	g, err := store.First[store.NodeGroup](d.Store, groupID)
 	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureConfigManaged(groupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -582,6 +601,10 @@ func (d *Service) Align(nodeID uint) {
 	if !lk.TryLock() {
 		return // 正在发布，结束后节点会被包含在发布中或下次上线再对齐
 	}
+	if err := d.ensureConfigManaged(g.ID); err != nil {
+		lk.Unlock()
+		return
+	}
 	rev, err := d.revision(g.CurrentRevisionID, 0)
 	if err != nil {
 		lk.Unlock()
@@ -591,6 +614,10 @@ func (d *Service) Align(nodeID uint) {
 }
 
 func (d *Service) start(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision, kind, note, user string, only []uint) (*store.Deployment, error) {
+	if err := d.ensureConfigManaged(g.ID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
 	nd := d.q().Node
 	sel := nd.WithContext(bg).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked"))
 	if only != nil {

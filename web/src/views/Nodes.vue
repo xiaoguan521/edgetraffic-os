@@ -13,6 +13,7 @@ const nodes = ref<any[]>([])
 const gid = ref<number>(0)
 const group = computed(() => groups.value.find((g) => g.id === gid.value))
 const profile = ref<any>(null)
+const managementMode = ref<any>(null)
 const view = ref<'group' | 'host'>('group')
 const hosts = ref<any[]>([])
 
@@ -20,9 +21,10 @@ async function load() {
   groups.value = await api.get('/node-groups')
   // 当前组被删除（或首次进入）时切到第一个组
   if (groups.value.length && !groups.value.some((g) => g.id === gid.value)) gid.value = groups.value[0].id
-  const [n, p, h] = await Promise.all([api.get('/nodes', { group_id: gid.value }), api.get(`/node-groups/${gid.value}/profile`), api.get('/hosts')])
+  const [n, p, h, m] = await Promise.all([api.get('/nodes', { group_id: gid.value }), api.get(`/node-groups/${gid.value}/profile`), api.get('/hosts'), api.get(`/node-groups/${gid.value}/management-mode`)] )
   nodes.value = n.filter((x: any) => x.status !== 'revoked')
   profile.value = p
+  managementMode.value = m
   hosts.value = h
 }
 const instanceLabel = computed(() => {
@@ -63,6 +65,7 @@ function copy(text: string) {
 // 节点组设置（含实例档案：同机多实例与 user 模式，设计 0001 第 3.4、5.2 节）
 const editing = ref(false)
 const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '' })
+const modeForm = ref('managed')
 const pform = reactive({ instance: '', mode: 'system', root: '', resource_mode: 'shared', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
 const locked = computed(() => nodes.value.length > 0) // 组内已有节点：实例名、模式、根目录不可改
 watch(() => pform.instance, (name) => { if (!name && !locked.value) pform.resource_mode = 'shared' })
@@ -71,6 +74,7 @@ function openGroup() {
   const p = profile.value || {}
   const e = p.effective || {}
   Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', resource_mode: p.resource_mode || 'shared', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
+  modeForm.value = managementMode.value?.mode || group.value?.management_mode || 'managed'
   editing.value = true
 }
 function profileChanged() {
@@ -103,6 +107,8 @@ async function createGroup() {
 
 const nameRe = /^[a-z0-9][a-z0-9-]{1,62}$/
 async function saveGroup() {
+  const changingMode = modeForm.value !== (managementMode.value?.mode || group.value?.management_mode || 'managed')
+  if (changingMode && modeForm.value === 'managed' && !window.confirm('切回“控制台托管”后仍不会自动发布，但之后的显式发布会覆盖节点本地配置。请确认已完成导入核对并保留了备份。')) return
   try {
     await api.put(`/node-groups/${gid.value}`, { ...gform, name: gform.name.trim() })
     if (profileChanged()) {
@@ -112,7 +118,8 @@ async function saveGroup() {
       if (pform.nofile) body.nofile = pform.nofile
       await api.put(`/node-groups/${gid.value}/profile`, body)
     }
-    message.success('已保存，发布后生效')
+    if (changingMode) await api.put(`/node-groups/${gid.value}/management-mode`, { mode: modeForm.value })
+    message.success(modeForm.value === 'managed' ? '已保存；切回托管不会自动发布，请先预览并确认后再发布' : '已保存；当前节点配置不会被控制台自动覆盖')
     editing.value = false
     load()
   } catch (e) {
@@ -260,7 +267,10 @@ function mb(b: number) {
         <span>组版本 <b class="num">{{ group.current_revision_id || '未发布' }}</b></span>
         <span>允许回源网段 <b class="code">{{ group.allowed_cidrs || '未设置' }}</b></span>
         <span v-if="profile">实例档案 <b>{{ instanceLabel }}</b></span>
+        <span v-if="managementMode">接入方式 <a-tag :color="managementMode.mode === 'managed' ? 'green' : managementMode.mode === 'legacy' ? 'purple' : 'gold'">{{ managementMode.label }}</a-tag></span>
       </div>
+      <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon message="观察接入：节点上线和心跳不会触发配置下发；导入内容只会进入控制台草稿。确认配置后，请在节点组设置切回“控制台托管”，再手动预览、审批和发布。" style="margin-bottom: 14px" />
+      <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：保留节点本地的原生配置、Lua 脚本和第三方依赖；控制台只做导入分析、审计和漂移观察，不会发布渲染配置。" style="margin-bottom: 14px" />
       <a-table :columns="columns" :data-source="nodes" row-key="id" :pagination="false">
         <template #emptyText>
           <a-empty description="这个节点组还没有节点。点击“添加节点”生成一次性注册命令。" />
@@ -317,7 +327,7 @@ function mb(b: number) {
           <a-descriptions-item label="控制台地址"><span class="code">{{ enroll.server }}</span></a-descriptions-item>
           <a-descriptions-item label="控制台 CA 指纹"><span class="code">{{ enroll.ca_fingerprint }}</span></a-descriptions-item>
         </a-descriptions>
-        <p class="sub">节点首次连接时用 CA 指纹确认控制台身份，之后全程使用双向证书认证。节点上线后会自动同步到节点组的当前版本。</p>
+        <p class="sub">节点首次连接时用 CA 指纹确认控制台身份，之后全程使用双向证书认证。<template v-if="managementMode?.mode === 'managed'">节点上线后会自动同步到节点组的当前版本；如果本机已有独立配置，请先导入并确认，或在注册命令末尾追加 <span class="code">-replace-local-config</span>（会先备份）。</template><template v-else>当前是“{{ managementMode?.label }}”：节点上线不会自动同步或覆盖本地配置。如果 Agent 因检测到独立配置而拒绝注册，请在命令末尾追加 <span class="code">-replace-local-config</span>，它会先备份到 Agent 状态目录；完成核对后再切回“控制台托管”并手动发布。</template></p>
       </template>
     </a-modal>
 
@@ -359,6 +369,14 @@ function mb(b: number) {
           <a-radio-group v-model:value="pform.resource_mode" :disabled="locked">
             <a-radio value="shared">共享</a-radio>
             <a-radio value="independent" :disabled="!pform.instance">独立</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-divider orientation="left" style="font-size: 13px">配置接管方式</a-divider>
+        <a-form-item label="节点配置来源" extra="观察接入或兼容配置下不会自动下发、回滚或恢复节点配置。切回控制台托管后也不会自动发布，需人工确认导入报告并显式发布。">
+          <a-radio-group v-model:value="modeForm">
+            <a-radio value="managed">控制台托管</a-radio>
+            <a-radio value="observe">观察接入</a-radio>
+            <a-radio value="legacy">兼容配置（原生 Lua）</a-radio>
           </a-radio-group>
         </a-form-item>
         <a-form-item label="安装根目录" :extra="pform.mode === 'user' ? '节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。' : 'system 模式默认使用 /opt/syedge；填写后，软件包会把程序与实例数据放在该绝对路径，并写入 /etc/syedge/prefix。'">

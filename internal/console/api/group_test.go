@@ -124,3 +124,38 @@ func TestGroupLifecycleHTTP(t *testing.T) {
 	// 最后一个节点组不能删除
 	requireStatus(t, f.json(t, "admin", http.MethodDelete, fmt.Sprintf("/node-groups/%d", f.group), map[string]any{"confirm": "imports"}), http.StatusConflict, "LAST_GROUP")
 }
+
+func TestGroupManagementModeHTTP(t *testing.T) {
+	f := newImportHTTP(t)
+	path := fmt.Sprintf("/node-groups/%d/management-mode", f.group)
+
+	w := f.request("viewer", http.MethodGet, path, nil, "", false)
+	requireStatus(t, w, http.StatusOK, "")
+	var mode struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &mode); err != nil || mode.Mode != "managed" {
+		t.Fatalf("default management mode response = %s", w.Body)
+	}
+	requireStatus(t, f.json(t, "viewer", http.MethodPut, path, map[string]string{"mode": "observe"}), http.StatusForbidden, "")
+	requireStatus(t, f.json(t, "operator", http.MethodPut, path, map[string]string{"mode": "unsafe"}), http.StatusBadRequest, "INVALID_MANAGEMENT_MODE")
+	w = f.json(t, "operator", http.MethodPut, path, map[string]string{"mode": "observe"})
+	requireStatus(t, w, http.StatusOK, "")
+	if err := json.Unmarshal(w.Body.Bytes(), &mode); err != nil || mode.Mode != "observe" {
+		t.Fatalf("observe management mode response = %s", w.Body)
+	}
+	if got := f.json(t, "operator", http.MethodPost, fmt.Sprintf("/node-groups/%d/publish", f.group), map[string]string{"note": "must not overwrite"}); got.Code != http.StatusConflict {
+		t.Fatalf("publish in observe mode = %d: %s", got.Code, got.Body)
+	} else {
+		requireStatus(t, got, http.StatusConflict, "CONFIG_MANAGEMENT_PAUSED")
+	}
+	w = f.request("viewer", http.MethodGet, "/node-groups", nil, "", false)
+	requireStatus(t, w, http.StatusOK, "")
+	var groups []struct {
+		ID             uint   `json:"id"`
+		ManagementMode string `json:"management_mode"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &groups); err != nil || len(groups) == 0 || groups[0].ManagementMode != "observe" {
+		t.Fatalf("list group management mode = %s", w.Body)
+	}
+}

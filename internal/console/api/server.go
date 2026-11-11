@@ -133,6 +133,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.DELETE("/node-groups/:id", role(store.RoleAdmin), s.writable, s.deleteGroup)
 	a.GET("/node-groups/:id/profile", s.getProfile)
 	a.PUT("/node-groups/:id/profile", role(store.RoleOperator), s.writable, s.setProfile)
+	a.GET("/node-groups/:id/management-mode", s.getManagementMode)
+	a.PUT("/node-groups/:id/management-mode", role(store.RoleOperator), s.writable, s.setManagementMode)
 	a.POST("/node-groups/:id/enroll", role(store.RoleOperator), s.writable, s.enrollToken)
 	a.GET("/node-groups/:id/preview", s.preview)
 	a.POST("/node-groups/:id/publish", role(store.RoleReleaser), s.writable, s.publish)
@@ -319,6 +321,10 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "DEPLOY_BUSY", err.Error())
 	case errors.Is(err, deploy.ErrNoChanges):
 		fail(c, http.StatusConflict, "NO_CHANGES", err.Error())
+	case errors.Is(err, deploy.ErrConfigManagementPaused):
+		fail(c, http.StatusConflict, "CONFIG_MANAGEMENT_PAUSED", err.Error())
+	case errors.Is(err, deploy.ErrInvalidManagementMode):
+		fail(c, http.StatusBadRequest, "INVALID_MANAGEMENT_MODE", err.Error())
 	case errors.Is(err, deploy.ErrApprovalRequired):
 		fail(c, http.StatusConflict, "APPROVAL_REQUIRED", "已开启发布审批：请提交发布申请，由另一位发布员批准后下发")
 	case errors.Is(err, deploy.ErrPendingRequest):

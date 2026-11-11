@@ -12,6 +12,7 @@ const session = useSession()
 const route = useRoute()
 const groups = ref<any[]>([])
 const gid = ref(0)
+const managementMode = ref<any>(null)
 const history = ref<any[]>([])
 const current = ref<any>(null) // { import, report, result, certs_pending }
 const uploading = ref(false)
@@ -31,6 +32,11 @@ async function load() {
     groups.value = await api.get('/node-groups')
     if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
   }
+  managementMode.value = groups.value.find((g) => g.id === gid.value)?.management_mode === 'legacy'
+    ? { mode: 'legacy', label: '兼容配置' }
+    : groups.value.find((g) => g.id === gid.value)?.management_mode === 'observe'
+      ? { mode: 'observe', label: '观察接入' }
+      : { mode: 'managed', label: '控制台托管' }
   history.value = await api.get('/imports', { group_id: gid.value })
 }
 watch(gid, () => {
@@ -210,6 +216,10 @@ const statusTag: Record<string, { t: string; c: string }> = {
         <a-button v-if="session.can('operator')" type="primary" :loading="uploading" :disabled="!session.writable" @click="pick">上传配置</a-button>
       </a-space>
     </div>
+    <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon style="margin-bottom: 16px"
+      message="当前节点组是观察接入" description="上传、分析和应用只会生成控制台草稿，不会覆盖节点本地配置。完成核对后，请到“节点”页切回控制台托管，再显式预览、审批和发布。" />
+    <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon style="margin-bottom: 16px"
+      message="当前节点组是兼容配置" description="原生 Lua 配置和第三方依赖继续由节点本地维护。导入器只分析上传的主配置、include、脚本和证书材料，不会从节点读取文件，也不会自动迁移任意 Lua 运行时。" />
 
     <template v-if="rep">
       <section class="panel">
@@ -231,6 +241,9 @@ const statusTag: Record<string, { t: string; c: string }> = {
         </div>
         <a-alert v-if="rep.summary.issues" type="warning" show-icon style="margin-top: 12px"
           message="请逐项核对未转换内容；包含问题的站点可能处于停用状态，应用为草稿并不代表迁移完成。" />
+        <a-alert v-if="rep.lua?.requires_legacy" type="warning" show-icon style="margin-top: 12px"
+          :message="`检测到 ${rep.lua.references?.length || 0} 项原生 Lua 配置：不能直接转为受限托管脚本`"
+          :description="`报告已记录 ${rep.lua.assets?.length || 0} 个 Lua / 依赖文件及其 SHA-256。${rep.lua.missing?.length ? `缺失引用：${rep.lua.missing.join('、')}。` : ''}请在“兼容配置”模式下保留节点本地运行时，或逐项迁移到受限 Lua 插入点。`" />
         <div v-if="rep.summary.issues" class="issue-groups">
           <div class="sub">按问题类型筛选（数字为导入时的报告条目，不会因编辑草稿自动消失）：</div>
           <a-space wrap>

@@ -16,6 +16,7 @@
 | 开启 3 条常用规则后 QPS 下降 ≤ 15%，其余 P10 验收 | `scripts/ci/lua-acceptance.sh`（见 `docs/lua.md`） | `lua` |
 | 同机多实例与非 root 运行（设计 0001 第 10.3 节 MI-01～05、07，RL-01、02） | `scripts/ci/p11-acceptance.sh`（真实数据面）：<br>- user 阶段：普通用户安装两个实例、无 root 进程、wrapper 拒绝以 root 运行、主机级热升级（第二个实例注入失败后重试）与删除实例期间持续请求 0 失败；<br>- system 阶段：三个实例，单实例 reload 不影响其他实例、端口冲突被拒绝、跨实例 sudo 被拒绝、reopen-all、主机级热升级与删除实例期间 0 失败、有具名实例时卸载被拒绝。<br>MI-06 由 `go test ./internal/wrapper/` 覆盖，RL-03 由 `internal/instance` 的 ensure 用例覆盖。 | `ci`（dataplane） |
 | 品牌定制（BR-01～04） | `make brand-matrix`（本地）：生成的改名 patch、全部 Go 程序与节点包中没有默认品牌名；BR-03 由 `internal/console/api` 的注册用例与 `pkgsig` 的包名校验覆盖。真实的定制品牌数据面构建见 `docs/brand.md` | 本地 |
+| 已有独立配置的观察接入 | 节点组切到 `observe` / `legacy` 后注册带本地配置的节点、上传多文件配置包、查看 Lua 依赖清单；验证上线不自动对齐，发布/回滚/恢复被拒绝；切回 `managed` 后仍需显式预览与发布 | `internal/console/api`、`internal/console/deploy`、`internal/console/importer` |
 
 ## 压测客户端与“0 失败请求”的口径
 

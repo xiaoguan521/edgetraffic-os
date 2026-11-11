@@ -224,6 +224,10 @@ function lastDeploy(rev: string) {
       </div>
       <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
+    <a-alert v-if="group?.management_mode === 'observe'" type="warning" show-icon style="margin-bottom: 16px"
+      message="当前节点组是观察接入" description="预览仍可用，但发布、灰度、回滚和审批下发已暂停，不会覆盖节点本地配置。完成导入核对后，请到“节点”页切回控制台托管。" />
+    <a-alert v-else-if="group?.management_mode === 'legacy'" type="info" show-icon style="margin-bottom: 16px"
+      message="当前节点组是兼容配置" description="原生 Lua 配置由节点本地维护；本页只保留版本分析和历史记录，不会下发渲染配置。" />
 
     <section class="panel req" v-if="pendingReq">
       <div class="phead">
@@ -247,7 +251,7 @@ function lastDeploy(rev: string) {
         <a-input v-model:value="reviewComment" placeholder="审批意见（可选，写入审计）" :maxlength="200" />
         <template v-if="!mine">
           <a-button danger :loading="reviewing" @click="review('reject')">驳回</a-button>
-          <a-button type="primary" :loading="reviewing" :disabled="!session.writable || pendingReq.stale" @click="review('approve')">批准并发布</a-button>
+          <a-button type="primary" :loading="reviewing" :disabled="!session.writable || group?.management_mode !== 'managed' || pendingReq.stale" @click="review('approve')">批准并发布</a-button>
         </template>
         <a-button v-if="mine || session.can('admin')" :loading="reviewing" @click="review('cancel')">撤回</a-button>
       </div>
@@ -275,15 +279,15 @@ function lastDeploy(rev: string) {
           </a-collapse>
           <div class="pub" v-if="session.can('releaser')">
             <a-input v-model:value="note" placeholder="发布说明，例如：首页改版" :maxlength="120" />
-            <a-button type="primary" size="large" :loading="publishing" :disabled="!session.writable || (approval.enabled && !!pendingReq)" @click="publish">
+            <a-button type="primary" size="large" :loading="publishing" :disabled="!session.writable || group?.management_mode !== 'managed' || (approval.enabled && !!pendingReq)" @click="publish">
               {{ approval.enabled ? '提交发布申请' : `发布到 ${group?.name}` }}
             </a-button>
           </div>
-          <div class="more" v-if="session.can('releaser') && !approval.enabled">
+          <div class="more" v-if="session.can('releaser') && !approval.enabled && group?.management_mode === 'managed'">
             <a v-if="hasFeature('canary')" @click="canaryOpen = true">灰度发布…</a>
             <a v-if="hasFeature('batch_release') && groups.length > 1" @click="batchGroups = [gid]; batchOpen = true">批量发布到多个节点组…</a>
           </div>
-          <div class="more" v-else-if="session.can('releaser') && hasFeature('batch_release') && groups.length > 1">
+          <div class="more" v-else-if="session.can('releaser') && hasFeature('batch_release') && groups.length > 1 && group?.management_mode === 'managed'">
             <a @click="batchGroups = [gid]; batchOpen = true">批量提交多个节点组的发布申请…</a>
           </div>
           <div v-if="approval.enabled" class="hint">已开启发布审批：提交后由另一位发布员审批，批准后才下发。{{ pendingReq ? '当前已有待审批的申请。' : '' }}</div>
@@ -328,7 +332,7 @@ function lastDeploy(rev: string) {
             <div class="sub">{{ record.created_by }}</div>
           </template>
           <template v-else-if="column.key === 'ops'">
-            <a-popconfirm v-if="session.can('releaser') && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
+            <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
               <a-button size="small">回滚到此版本</a-button>
             </a-popconfirm>
           </template>

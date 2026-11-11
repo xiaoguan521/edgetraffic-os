@@ -22,6 +22,8 @@
 
 独立模式验收夹具：`scripts/ci/standalone-lua-response-filter.conf`。它验证请求阶段的放行/拒绝、响应头新增与 `Content-Length` 清除，以及响应体改写；实际运行仍须在已安装匹配 `syedge-lua` 的独立节点上先执行 `syedge -t`。
 
+已有独立配置需要先接入控制台观察时，使用节点组的 `observe` / `legacy` 接管方式；它们只做导入分析、审计和漂移观察，不会把原生 Lua 配置自动改写成受限脚本，也不会自动覆盖节点。操作步骤见 [现有配置的观察接入与 Lua 兼容](legacy-config-management.md)。
+
 ## 原生规则积木
 
 每条规则由 1–8 个条件（同时满足）和 1 个动作组成，每个站点最多 32 条。

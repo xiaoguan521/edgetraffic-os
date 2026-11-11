@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
 // 一份“-T”输出：主配置 + conf.d 下两个站点 + 一个四层代理，覆盖完全转换、部分转换与无法转换三种情况。
@@ -165,6 +167,27 @@ func TestImportDump(t *testing.T) {
 	}
 	if r.Summary.Servers != 3 || r.Summary.Full+r.Summary.Partial+r.Summary.Failed != 2 {
 		t.Fatalf("summary %+v", r.Summary)
+	}
+}
+
+func TestImportInventoriesLegacyLuaAssets(t *testing.T) {
+	r, err := FromFiles([]conf.File{
+		{Name: "conf/syedge.conf", Body: []byte(`http { server { listen 80; server_name lua.example.com; location / { access_by_lua_file lua/access.lua; proxy_pass http://10.0.0.2:8080; } } }`)},
+		{Name: "lua/access.lua", Body: []byte("return true\n")},
+		{Name: "lua/lualib/resty/example.lua", Body: []byte("return {}\n")},
+	}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Lua.RequiresLegacy || len(r.Lua.References) != 1 || len(r.Lua.Assets) != 2 {
+		t.Fatalf("legacy Lua inventory = %+v", r.Lua)
+	}
+	ref := r.Lua.References[0]
+	if ref.Directive != "access_by_lua_file" || ref.Target != "lua/access.lua" || ref.Resolved != "/lua/access.lua" || ref.Missing {
+		t.Fatalf("Lua reference = %+v", ref)
+	}
+	if r.Lua.Assets[0].Path != "/lua/access.lua" || r.Lua.Assets[0].SHA256 == "" || r.Lua.Assets[1].Path != "/lua/lualib/resty/example.lua" {
+		t.Fatalf("Lua assets = %+v", r.Lua.Assets)
 	}
 }
 

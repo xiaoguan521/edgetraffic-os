@@ -80,6 +80,9 @@ func canaryBatches(ids []uint, percents []int) [][]uint {
 
 // StartCanary 生成新版本并开始灰度。开启发布审批时不可用（灰度本身不替代双人复核）。
 func (d *Service) StartCanary(groupID uint, note, user, ip string, o CanaryOptions) (*store.CanaryRelease, error) {
+	if err := d.ensureConfigManaged(groupID); err != nil {
+		return nil, err
+	}
 	if d.ApprovalEnabled() {
 		return nil, ErrApprovalRequired
 	}
@@ -111,6 +114,11 @@ func (d *Service) StartCanary(groupID uint, note, user, ip string, o CanaryOptio
 	}
 	g, err := store.First[store.NodeGroup](d.Store, groupID)
 	if err != nil {
+		lk.Unlock()
+		release()
+		return nil, err
+	}
+	if err := d.ensureConfigManaged(groupID); err != nil {
 		lk.Unlock()
 		release()
 		return nil, err
