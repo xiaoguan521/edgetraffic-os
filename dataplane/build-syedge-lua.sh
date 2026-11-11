@@ -4,6 +4,7 @@
 # 用法：dataplane/build-syedge-lua.sh [-o 输出目录] [-v 包版本]
 #   依赖按 dataplane/lua/DEPS 克隆并校验提交哈希；LuaJIT 编译为静态 PIC 库链入 lua 模块（模块只依赖 syedge 与 glibc）；
 #   对标准版（OpenSSL）与国密版（铜锁）各执行一次 build-syedge.sh -S（与基础包完全相同的参数）并编译两个动态模块。
+#   附加库 extlib（D1 第一阶段）：DEPS 中的纯 Lua 库，只复制 lib/ 下的 .lua 到 addon/extlib/；只有独立模式与原生兼容配置包使用。
 # 产物：
 #   <输出目录>/syedge-lua-<包版本>-<架构>.tar.gz   附加包（install.sh / uninstall.sh + addon/）
 #   <输出目录>/base/                              同一次构建产出的标准版与国密版基础包（CI 验收用）
@@ -65,8 +66,40 @@ cp -r "$RESTY_CORE_SRC/lib/." "$A/lualib/"
 cp -r "$LRUCACHE_SRC/lib/." "$A/lualib/"
 cp -r "$HERE/lua/lualib/etos" "$A/lualib/"
 find "$A/lualib" -type f ! -name '*.lua' -delete
+
+# 附加库 extlib（D1 第一阶段）：纯 Lua，安装到 <M>/lua/extlib/。控制台托管的 lua_package_path 不引用它（internal/render 不生成）。
+# 每个库的许可在克隆后的 README 中校验为 BSD（本仓库的 DEPS 只收 MIT / BSD / Apache-2.0）；模块名与 lualib 冲突即失败。
+EXT_LIST="$WORK/ext-list"; EXT_NOTICE="$WORK/ext-notice"; : > "$EXT_LIST"; : > "$EXT_NOTICE"
+ext_lib() { # <名称> <git> <标签> <提交>
+  local src rd rel f
+  src=$(pin "$1" "$2" "$3" "$4")
+  rd=$(ls "$src"/README.* | head -1)
+  grep -qi 'licensed under the BSD license' "$rd" || { echo "$1: license is not BSD ($rd)" >&2; exit 4; }
+  mkdir -p "$A/extlib"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$src/lib/"}"
+    [[ ! -e "$A/extlib/$rel" && ! -e "$A/lualib/$rel" ]] || { echo "$1: module $rel is already provided" >&2; exit 4; }
+    mkdir -p "$A/extlib/$(dirname "$rel")"
+    cp "$f" "$A/extlib/$rel"
+  done < <(find "$src/lib" -type f -name '*.lua' -print0)
+  printf '  %-30s %-8s BSD-2-Clause\n' "$1" "$3" >> "$EXT_LIST"
+  { echo "---- $1 $3"; awk '/^Copyright and License/{p=1; next} /^\[Back to TOC\]/{p=0} p' "$rd" | grep -v '^=\+$'; echo; } >> "$EXT_NOTICE"
+  EXT_TAGS+="$1 $3, "
+}
+EXT_TAGS=""
+ext_lib lua-resty-redis "$RESTY_REDIS_GIT" "$RESTY_REDIS_TAG" "$RESTY_REDIS_COMMIT"
+ext_lib lua-resty-mysql "$RESTY_MYSQL_GIT" "$RESTY_MYSQL_TAG" "$RESTY_MYSQL_COMMIT"
+ext_lib lua-resty-memcached "$RESTY_MEMCACHED_GIT" "$RESTY_MEMCACHED_TAG" "$RESTY_MEMCACHED_COMMIT"
+ext_lib lua-resty-dns "$RESTY_DNS_GIT" "$RESTY_DNS_TAG" "$RESTY_DNS_COMMIT"
+ext_lib lua-resty-string "$RESTY_STRING_GIT" "$RESTY_STRING_TAG" "$RESTY_STRING_COMMIT"
+ext_lib lua-resty-upload "$RESTY_UPLOAD_GIT" "$RESTY_UPLOAD_TAG" "$RESTY_UPLOAD_COMMIT"
+ext_lib lua-resty-websocket "$RESTY_WEBSOCKET_GIT" "$RESTY_WEBSOCKET_TAG" "$RESTY_WEBSOCKET_COMMIT"
+ext_lib lua-resty-lock "$RESTY_LOCK_GIT" "$RESTY_LOCK_TAG" "$RESTY_LOCK_COMMIT"
+ext_lib lua-resty-limit-traffic "$RESTY_LIMIT_TRAFFIC_GIT" "$RESTY_LIMIT_TRAFFIC_TAG" "$RESTY_LIMIT_TRAFFIC_COMMIT"
+ext_lib lua-tablepool "$TABLEPOOL_GIT" "$TABLEPOOL_TAG" "$TABLEPOOL_COMMIT"
+EXT_TAGS=${EXT_TAGS%, }
 cat > "$A/VERSION" <<EOF
-{"name":"syedge-lua","version":"$PKG_VERSION","syedge":"$UPSTREAM_VERSION","luajit":"$LUAJIT_TAG","ndk":"$NDK_TAG","lua_module":"$LUA_MODULE_TAG","resty_core":"$RESTY_CORE_TAG","lrucache":"$LRUCACHE_TAG"}
+{"name":"syedge-lua","version":"$PKG_VERSION","syedge":"$UPSTREAM_VERSION","luajit":"$LUAJIT_TAG","ndk":"$NDK_TAG","lua_module":"$LUA_MODULE_TAG","resty_core":"$RESTY_CORE_TAG","lrucache":"$LRUCACHE_TAG","extlib":"$EXT_TAGS"}
 EOF
 printf '%s\n' "${SYEDGE_PREFIX:-/opt/$B}" > "$A/PREFIX"
 {
@@ -79,7 +112,11 @@ printf '%s\n' "${SYEDGE_PREFIX:-/opt/$B}" > "$A/PREFIX"
   echo "  lua-resty-core ($RESTY_CORE_TAG)                      BSD-2-Clause"
   echo "  lua-resty-lrucache ($LRUCACHE_TAG)                    BSD-2-Clause"
   echo
+  echo "Bundled Lua libraries (pure Lua, unmodified; installed under <modules>/lua/extlib/):"
+  cat "$EXT_LIST"
+  echo
   for f in "$LUAJIT_SRC/COPYRIGHT" "$NDK_SRC/LICENSE"; do [[ -f "$f" ]] && { echo "---- $(basename "$(dirname "$f")")/$(basename "$f")"; cat "$f"; echo; }; done
+  cat "$EXT_NOTICE"
 } > "$A/NOTICE"
 install -m 0755 "$HERE/lua/install.sh" "$WORK/pkg/install.sh"
 install -m 0755 "$HERE/lua/uninstall.sh" "$WORK/pkg/uninstall.sh"

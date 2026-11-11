@@ -119,3 +119,42 @@ i2d_SSL_SESSION
 i2d_X509
 # Lua 模块（ngx.re 的 DFA 匹配；其余 PCRE2 函数核心已使用）
 pcre2_dfa_match_8
+# 附加库 extlib（lua-resty-string：md5 / sha1 / sha224 / sha256 / sha384 / sha512 / aes / random，FFI 调用；lua-resty-mysql 经 resty.sha256 / resty.sha512 使用）
+EVP_BytesToKey
+EVP_CIPHER_CTX_ctrl
+EVP_CIPHER_CTX_free
+EVP_CIPHER_CTX_new
+EVP_CIPHER_CTX_set_padding
+EVP_DecryptFinal_ex
+EVP_DecryptInit_ex
+EVP_DecryptUpdate
+EVP_EncryptFinal_ex
+EVP_EncryptInit_ex
+EVP_EncryptUpdate
+EVP_md5
+EVP_sha224
+EVP_sha384
+EVP_sha512
+MD5_Final
+MD5_Init
+MD5_Update
+RAND_bytes
+RAND_pseudo_bytes
+SHA1_Final
+SHA1_Init
+SHA1_Update
+SHA224_Final
+SHA224_Init
+SHA224_Update
+SHA256_Final
+SHA256_Init
+SHA256_Update
+SHA384_Final
+SHA384_Init
+SHA384_Update
+SHA512_Final
+SHA512_Init
+SHA512_Update
+# 附加库 extlib（lua-resty-string 的 resty.string.to_hex 经 FFI 调用 nginx 核心函数；syedge 以 -Wl,-E 链接，核心符号本身已导出）
+ngx_atoi
+ngx_hex_dump

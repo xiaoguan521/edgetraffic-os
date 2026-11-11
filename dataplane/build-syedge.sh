@@ -274,5 +274,15 @@ if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
     [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::add to dataplane/lua/base-exports.txt: $missing"
     exit 7
   fi
+  # 附加库（extlib / lualib 中经 FFI 调用的 C 函数，见 base-exports.txt）：列出的每个符号都必须由基础包动态导出。
+  # 库是运行时经 dlsym 解析的，load_module 与 syedge -t 都不会触发，所以这里直接核对导出表（标准版与铜锁各执行一次）。
+  nm -D --defined-only "$O/sbin/$B" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$WORK/base-defined"
+  grep -v -e '^#' -e '^$' "$HERE/lua/base-exports.txt" | sort -u > "$WORK/base-wanted"
+  not_exported=$(comm -23 "$WORK/base-wanted" "$WORK/base-defined" | tr '\n' ' ')
+  if [[ -n "${not_exported// }" ]]; then
+    echo "base binary does not export symbols listed in base-exports.txt: $not_exported" >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::not exported by the base binary: $not_exported"
+    exit 7
+  fi
   echo "LUA MODULES OK: $LUA_MODULES_OUT"
 fi

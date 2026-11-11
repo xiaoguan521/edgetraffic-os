@@ -33,3 +33,18 @@ pinned upstream release (dataplane/UPSTREAM) during P0.
 
 Other third-party components (Go modules, npm packages, Tongsuo/OpenSSL) are
 listed in the SBOM generated for each release.
+
+Lua 附加包随附的第三方库（纯 Lua，未修改；许可均为 BSD-2-Clause，版本与提交哈希见 dataplane/lua/DEPS）：
+
+  lua-resty-redis          v0.34   Copyright (C) 2012-2017, by Yichun Zhang (agentzh), OpenResty Inc.
+  lua-resty-mysql          v0.31   Copyright (C) 2012-2018, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-memcached      v0.18   Copyright (C) 2012-2017, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-dns            v0.24   Copyright (C) 2012-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-string         v0.19   Copyright (C) 2012-2018, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-upload         v0.11   Copyright (C) 2012-2017, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-websocket      v0.16   Copyright (C) 2013-2017, by Yichun Zhang (agentzh), OpenResty Inc.
+  lua-resty-lock           v0.09   Copyright (C) 2013-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-limit-traffic  v0.09   Copyright (C) 2015-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-tablepool            v0.03   Copyright (C) 2016-2021, by Yichun "agentzh" Zhang, OpenResty Inc.
+
+每个库的完整版权声明与 BSD-2-Clause 许可条文，随附加包的 NOTICE 文件一同分发（构建时从各库 README 的 “Copyright and License” 一节提取）。
