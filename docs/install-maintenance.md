@@ -398,6 +398,16 @@ sudo bash install.sh
 # 或明确指定实例：sudo bash install.sh --instance blue
 ```
 
+独立模式（未接入控制台）可以一条命令安装并启用 Lua，不需要手改主配置：
+
+```bash
+sudo bash install.sh --standalone          # 安装附加包，并写入主配置的 load_module 与 conf.d/00-lua-standalone.conf（不 reload）
+sudo systemctl reload syedge
+sudo bash install.sh --standalone-disable  # 停用（不卸载附加包）；卸载前必须先停用
+```
+
+前置条件是节点未注册到控制台、`conf/current` 指向初始版本 `r000000`、主配置中没有 `load_module`。启用后自己的 Lua 文件放在 `R/lualib/` 下，站点里用 `require` 加载。详细说明见 [docs/lua.md 独立模式手工 Lua](lua.md)。
+
 安装脚本会：
 
 - 校验附加包版本与运行中的 `syedge` 版本一致；

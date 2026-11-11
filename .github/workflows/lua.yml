@@ -22,6 +22,7 @@ on:
       - "scripts/ci/lua-acceptance.sh"
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
+      - "scripts/ci/lua-standalone.sh"
       - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   pull_request:
@@ -42,6 +43,7 @@ on:
       - "scripts/ci/lua-acceptance.sh"
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
+      - "scripts/ci/lua-standalone.sh"
       - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   workflow_dispatch:
@@ -123,6 +125,8 @@ jobs:
         run: bash scripts/ci/lua-custom-prefix.sh dist-lua ${{ matrix.base }}
       - name: Lua shared and independent instance selection (${{ matrix.base }})
         run: bash scripts/ci/lua-instance-targets.sh dist-lua ${{ matrix.base }}
+      - name: Lua standalone enable and disable (${{ matrix.base }})
+        run: bash scripts/ci/lua-standalone.sh dist-lua ${{ matrix.base }}
       - name: GM and Lua multi-instance upgrade and rollback
         if: matrix.base == 'standard'
         run: |

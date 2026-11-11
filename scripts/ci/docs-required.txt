@@ -19,3 +19,5 @@ docs/migrate-from-openresty.md	more_set_headers
 docs/migrate-from-openresty.md	auth_basic
 docs/migrate-from-openresty.md	resty.redis
 docs/migrate-from-openresty.md	client_max_body_size
+docs/lua.md	--standalone-disable
+docs/install-maintenance.md	install.sh --standalone
