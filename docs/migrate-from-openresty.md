@@ -20,11 +20,11 @@
 
 | OpenResty 中的写法 | SyEdge 是否支持 | 替代做法 |
 | --- | --- | --- |
-| `more_set_headers` | 否（无 headers-more 模块） | server 级 `add_header`。不要在 location 内写 `add_header`，它会覆盖 server 级的同名头。启用 Lua 后也可在 `header_filter_by_lua_block` 中用 `ngx.header` 设置。 |
+| `more_set_headers` | 否（无 headers-more 模块） | server 级 `add_header`。不要在 location 内写 `add_header`：location 内只要出现一条，server 级的全部 `add_header` 在该 location 都不再生效。启用 Lua 后也可在 `header_filter_by_lua_block` 中用 `ngx.header` 设置。 |
 | `more_clear_headers` | 否 | 清除上游响应头用 `proxy_hide_header`（上游内置指令；基线已对 `X-Powered-By` 生效）。 |
 | `auth_basic` / `auth_basic_user_file` | 否（编译时关闭 `http_auth_basic`） | 控制台托管：使用“外部鉴权”规则，对节点组内的上游发子请求，2xx 放行，401 / 403 原样返回（见 [Lua 与原生规则](lua.md)）。独立模式：`auth_request` 模块已编译，可自备返回 2xx / 401 / 403 的鉴权服务；或在 `access_by_lua_block` 中实现（需 Lua 附加包）。SyEdge 不读取 htpasswd 文件，无法直接沿用用户名密码文件。 |
 | `echo` / `echo_exec` 等 | 否 | `return 200 "文本";`；或 Lua 的 `content` 阶段（`ngx.say`）。 |
-| `set_escape_uri` 等 set-misc 指令 | 否 | 无，需评估 |
+| `set_escape_uri` 等 set-misc 指令 | 否 | 启用 Lua 后，转义类可用 `set_by_lua_block` 调用 `ngx.escape_uri` / `ngx.unescape_uri` 代替；其余指令无，需评估。 |
 | `redis2_*` | 否 | 无，需评估 |
 | `memc_*` | 否 | 无，需评估 |
 | `srcache_*` | 否 | 无，需评估 |
@@ -61,7 +61,7 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 
 **两种使用方式的区别：**
 
-- **独立模式**：受信任的运维人员可以在手工维护的 `conf.d/*.conf` 中直接使用原生 Lua 指令（如 `access_by_lua_block`）。装完附加包后，主配置中还需要手工加载模块，启用步骤见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。
+- **独立模式**：受信任的运维人员可以在手工维护的 `conf.d/*.conf` 中直接使用原生 Lua 指令（如 `access_by_lua_block`）。可用的指令与验收夹具见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。注意：基线主配置默认不加载 Lua 模块，装完附加包后还需要在主配置最前面加载 `R/modules/lua/` 下的 `ndk_http_module.so` 与 `ngx_http_lua_module.so`（先 ndk 后 lua），并在 `http` 内把 `lua_package_path` 指向 `R/modules/lua/lualib/?.lua`，否则 `*_by_lua*` 指令会被报为未知指令。`R` 是安装根目录，见安装维护手册的[路径约定](install-maintenance.md#路径约定)。
 - **控制台托管**：Lua 只能以“自定义 Lua 脚本”片段受控开放，是受限环境。关键限制：
   - 只有管理员可以提交，并须由另一位管理员批准，需要 `lua` 授权，节点组内每台节点都要装附加包；
   - 只支持 `rewrite`、`access`、`content`、`header_filter`、`body_filter` 五个阶段，每段最大 16 KiB；
@@ -132,11 +132,11 @@ location /api/ {
 
 **路线 A：独立模式，逐站点迁到 `conf.d`**
 
-1. 按 [快速上手](quickstart.md) 第 2 节安装 `syedge`，确认 `sudo syedge -t` 通过。
-2. 把每个站点的 `server`、`upstream`、`location` 从旧配置复制到 `/opt/syedge/conf/current/conf.d/<站点>.conf`，不要用旧的 `/etc/nginx` 或 `openresty` 目录整体覆盖 `conf/current`（见 [安装维护手册](install-maintenance.md) 8.2、8.5 节）。
+1. 按 [快速上手](quickstart.md) 第 2 节安装 `syedge`，并用其中的校验命令确认基线配置通过。下文的 `R` 是安装根目录（`R=$(sudo syedge-instance prefix)`）。
+2. 把每个站点的 `server`、`upstream`、`location` 从旧配置复制到 `$R/conf/current/conf.d/<站点>.conf`，不要用旧的 `/etc/nginx` 或 `openresty` 目录整体覆盖 `conf/current`（见 [安装维护手册](install-maintenance.md) 8.2、8.5 节）。
 3. 按第 2 节替换不支持的指令；需要 Lua 的站点先按 [安装维护手册](install-maintenance.md) 7.1 节安装附加包，并按第 3 节加载模块。
-4. 对照第 4 节核对基线默认值，需要时在 server 或 location 内覆盖。运行 `sudo syedge -t`。
-5. 在测试域名上验证通过后执行 `sudo syedge -t && sudo systemctl reload syedge`。
+4. 对照第 4 节核对基线默认值，需要时在 server 或 location 内覆盖，然后再次校验。
+5. 校验通过后执行 `sudo systemctl reload syedge`，先用测试域名验证，再切换业务流量。
 
 **路线 B：控制台托管，“配置导入”加观察接入**
 
