@@ -1,6 +1,6 @@
 # SyEdge 代码库全景解读
 
-> **仓库**：[edgetraffic-os](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os)　|　**分支**：`main`　|　**基线版本**：`v0.1.0`（MVP）
+> **仓库**：[edgetraffic-os](../)　|　**分支**：`main`　|　**基线版本**：`v0.1.0`（MVP）
 > **语言**：Go 1.26 + Vue 3 / TypeScript　|　**后端总代码量**：~30,000 行（不含生成代码与 vendor）
 
 ---
@@ -41,14 +41,14 @@ graph TB
 
 | 程序 | 部署位置 | 入口文件 | 核心职责 |
 | --- | --- | --- | --- |
-| **syedge-console** | 客户内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-console/main.go) | Web 控制台、REST API、配置渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
-| **syedge-agent** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-agent/main.go) | 主动连接控制台，本地发布状态机、指标采集、漂移检测；**不监听端口** |
-| **syedge-wrapper** | 每台边缘节点 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-wrapper/main.go) | agent 唯一的提权入口，只执行 `test / reload / reopen / quit / upgrade-*` |
+| **syedge-console** | 客户内网 | [main.go](../cmd/syedge-console/main.go) | Web 控制台、REST API、配置渲染器、发布编排、内置 CA、审计、License 校验、gRPC 网关 |
+| **syedge-agent** | 每台边缘节点 | [main.go](../cmd/syedge-agent/main.go) | 主动连接控制台，本地发布状态机、指标采集、漂移检测；**不监听端口** |
+| **syedge-wrapper** | 每台边缘节点 | [main.go](../cmd/syedge-wrapper/main.go) | agent 唯一的提权入口，只执行 `test / reload / reopen / quit / upgrade-*` |
 | **syedge** | 每台边缘节点 | `dataplane/` | 数据面：处理公网流量（NGINX 改名构建） |
-| **syedge-license-server** | 厂商内网 | [main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-license-server/main.go) | 客户与订单管理、License 签发 / 激活 / 吊销、授权后台 Web |
+| **syedge-license-server** | 厂商内网 | [main.go](../cmd/syedge-license-server/main.go) | 客户与订单管理、License 签发 / 激活 / 吊销、授权后台 Web |
 
 > [!IMPORTANT]
-> 另有一个 **syedge-license-signer**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-license-signer/main.go)）是**离线签名工具**，部署在离线签名机上，不含任何网络代码。正式 License 和升级包都由它签名。
+> 另有一个 **syedge-license-signer**（[main.go](../cmd/syedge-license-signer/main.go)）是**离线签名工具**，部署在离线签名机上，不含任何网络代码。正式 License 和升级包都由它签名。
 
 ---
 
@@ -196,8 +196,8 @@ edgetraffic-os/
 | Pinia | — | 状态管理 |
 
 前端有**两个独立应用**：
-1. **控制台前端**（[web/src/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/web/src)）— 33 个页面
-2. **授权后台前端**（[web/src-portal/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/web/src-portal)）— 8 个页面
+1. **控制台前端**（[web/src/](../web/src)）— 33 个页面
+2. **授权后台前端**（[web/src-portal/](../web/src-portal)）— 8 个页面
 
 ---
 
@@ -218,7 +218,7 @@ graph LR
     Agent -->|mTLS 双向流| GRPC
 ```
 
-**启动流程**（[main.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/cmd/syedge-console/main.go#L85-L238)）：
+**启动流程**（[main.go](../cmd/syedge-console/main.go#L85-L238)）：
 
 1. 打开/创建数据库（SQLite 或 PostgreSQL）
 2. 加载/创建内置 CA（`pki.LoadOrCreate`）
@@ -231,24 +231,24 @@ graph LR
 
 ### 5.2 控制台 REST API
 
-API 路由定义在 [server.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/server.go#L65-L256)，核心路由分组：
+API 路由定义在 [server.go](../internal/console/api/server.go#L65-L256)，核心路由分组：
 
 | 路由前缀 | 功能模块 | 对应文件 |
 | --- | --- | --- |
-| `/api/v1/auth/*` | 登录/登出/OIDC/密码 | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/node-groups/*` | 节点组管理、发布、回滚 | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/nodes/*` | 节点管理、漂移 | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/sites/*` | 站点 CRUD | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/upstreams/*` | 上游 CRUD | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/certificates/*` | 证书管理（含 ACME/国密） | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/streams/*` | 四层代理（TCP/UDP/SNI） | [streams.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/streams.go) |
-| `/api/v1/snippets/*` | 自定义配置片段 | [snippets.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/snippets.go) |
-| `/api/v1/imports/*` | 配置导入 | [imports.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/imports.go) |
-| `/api/v1/packages/*` | 数据面版本库 | [packages.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/packages.go) |
-| `/api/v1/alerts/*` | 告警通道与规则 | [alerts.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/alerts.go) |
-| `/api/v1/ip-sets/*` | IP 集/地域库 | [ipsets.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/ipsets.go) |
-| `/api/v1/license/*` | 授权管理 | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
-| `/api/v1/audit/*` | 审计日志 | [handlers.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/api/handlers.go) |
+| `/api/v1/auth/*` | 登录/登出/OIDC/密码 | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/node-groups/*` | 节点组管理、发布、回滚 | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/nodes/*` | 节点管理、漂移 | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/sites/*` | 站点 CRUD | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/upstreams/*` | 上游 CRUD | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/certificates/*` | 证书管理（含 ACME/国密） | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/streams/*` | 四层代理（TCP/UDP/SNI） | [streams.go](../internal/console/api/streams.go) |
+| `/api/v1/snippets/*` | 自定义配置片段 | [snippets.go](../internal/console/api/snippets.go) |
+| `/api/v1/imports/*` | 配置导入 | [imports.go](../internal/console/api/imports.go) |
+| `/api/v1/packages/*` | 数据面版本库 | [packages.go](../internal/console/api/packages.go) |
+| `/api/v1/alerts/*` | 告警通道与规则 | [alerts.go](../internal/console/api/alerts.go) |
+| `/api/v1/ip-sets/*` | IP 集/地域库 | [ipsets.go](../internal/console/api/ipsets.go) |
+| `/api/v1/license/*` | 授权管理 | [handlers.go](../internal/console/api/handlers.go) |
+| `/api/v1/audit/*` | 审计日志 | [handlers.go](../internal/console/api/handlers.go) |
 
 **RBAC 四级角色**：`admin` > `operator` > `releaser` > `viewer`
 
@@ -272,14 +272,14 @@ Agent 运行在每台边缘节点上，**只主动连接控制台，不监听任
 
 | 包 | 职责 |
 | --- | --- |
-| [agent/conn](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/agent/conn) | gRPC 连接管理、注册、指令接收 |
-| [agent/apply](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/agent/apply) | 发布状态机（解压 → test → reload → 探活 → 回滚）、漂移检测 |
-| [agent/collect](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/agent/collect) | 指标采集（CPU/内存/连接/请求/分钟级站点指标） |
-| [agent/selfupdate](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/agent/selfupdate) | agent 自升级（验签后 exec 替换） |
+| [agent/conn](../internal/agent/conn) | gRPC 连接管理、注册、指令接收 |
+| [agent/apply](../internal/agent/apply) | 发布状态机（解压 → test → reload → 探活 → 回滚）、漂移检测 |
+| [agent/collect](../internal/agent/collect) | 指标采集（CPU/内存/连接/请求/分钟级站点指标） |
+| [agent/selfupdate](../internal/agent/selfupdate) | agent 自升级（验签后 exec 替换） |
 
 ### 5.4 gRPC 协议
 
-协议定义：[agent.proto](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/api/proto/agent/v1/agent.proto)
+协议定义：[agent.proto](../api/proto/agent/v1/agent.proto)
 
 ```mermaid
 sequenceDiagram
@@ -310,7 +310,7 @@ sequenceDiagram
 
 ### 5.5 配置渲染器（Render）
 
-[internal/render/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render) 是系统的核心引擎，负责将结构化模型转为 syedge 配置文件。
+[internal/render/](../internal/render) 是系统的核心引擎，负责将结构化模型转为 syedge 配置文件。
 
 ```
 Input (站点 + 上游 + 证书 + 规则 + 片段 + 四层代理)
@@ -324,13 +324,13 @@ Bundle { Revision, Files map, Manifest{Digest} }
 
 | 文件 | 职责 |
 | --- | --- |
-| [render.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/render.go) | 主渲染逻辑：校验 → 模板执行 → tar.gz 打包 |
-| [model.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/model.go) | 输入模型定义（Site, Route, Upstream 等） |
-| [rules.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/rules.go) | 访问规则积木（IP/UA/Header/Path/Method → 拒绝/跳转/限速） |
-| [snippet.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/snippet.go) | 自定义片段校验与规范化 |
-| [lua.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/lua.go) | Lua 扩展渲染（JWT 沙箱等） |
-| [stream.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/stream.go) | 四层代理渲染 |
-| [validate.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/render/validate.go) | 输入校验 |
+| [render.go](../internal/render/render.go) | 主渲染逻辑：校验 → 模板执行 → tar.gz 打包 |
+| [model.go](../internal/render/model.go) | 输入模型定义（Site, Route, Upstream 等） |
+| [rules.go](../internal/render/rules.go) | 访问规则积木（IP/UA/Header/Path/Method → 拒绝/跳转/限速） |
+| [snippet.go](../internal/render/snippet.go) | 自定义片段校验与规范化 |
+| [lua.go](../internal/render/lua.go) | Lua 扩展渲染（JWT 沙箱等） |
+| [stream.go](../internal/render/stream.go) | 四层代理渲染 |
+| [validate.go](../internal/render/validate.go) | 输入校验 |
 | `templates/*.tmpl` | Go 模板文件 |
 
 > [!CAUTION]
@@ -338,7 +338,7 @@ Bundle { Revision, Files map, Manifest{Digest} }
 
 ### 5.6 发布编排（Deploy）
 
-[deploy.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/deploy/deploy.go) 实现完整的发布流程：
+[deploy.go](../internal/console/deploy/deploy.go) 实现完整的发布流程：
 
 ```mermaid
 graph LR
@@ -363,7 +363,7 @@ graph LR
 
 ## 6. 数据模型（30 张表）
 
-数据模型定义在 [store/model.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/console/store/model.go)，共 **30 个 GORM Model**：
+数据模型定义在 [store/model.go](../internal/console/store/model.go)，共 **30 个 GORM Model**：
 
 ### 6.1 核心业务实体
 
@@ -416,7 +416,7 @@ graph LR
 base64url(payload_json) + "." + base64url(ed25519_signature)
 ```
 
-Payload 结构（[license.go](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/internal/license/license.go#L20-L59)）：
+Payload 结构（[license.go](../internal/license/license.go#L20-L59)）：
 
 ```go
 type Payload struct {
@@ -569,7 +569,7 @@ cd demo && ./demo.sh reset  # 重置数据
 
 ## 11. 前端页面导航
 
-### 控制台（[web/src/views/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/web/src/views)）
+### 控制台（[web/src/views/](../web/src/views)）
 
 | 页面 | 文件 | 功能 |
 | --- | --- | --- |
@@ -590,7 +590,7 @@ cd demo && ./demo.sh reset  # 重置数据
 | 审计日志 | `Audit.vue` | 操作审计 |
 | 系统设置 | `System.vue` | 用户/LDAP/OIDC/安全策略/授权 |
 
-### 授权后台（[web/src-portal/views/](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/web/src-portal/views)）
+### 授权后台（[web/src-portal/views/](../web/src-portal/views)）
 
 | 页面 | 功能 |
 | --- | --- |
@@ -607,7 +607,7 @@ cd demo && ./demo.sh reset  # 重置数据
 
 ## 12. 关键编码规则摘要
 
-完整规则见 [CLAUDE.md](file:///Users/youyou/Downloads/edge_traffic/edgetraffic-os/CLAUDE.md)：
+完整规则见 [CLAUDE.md](../CLAUDE.md)：
 
 > [!CAUTION]
 > **以下规则违反任一条即拒绝合并：**
