@@ -299,8 +299,10 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occu
   systemctl is-active -q syedge.service syedge@blue.service syedge@green.service && ok "全程没有实例停止" || bad "有实例的单元不在运行"
 
   echo "== 独立实例单独安装与升级"
-  out=$(syedge-instance add gold --http 38080 --https 38443 --status 8084 --resource-mode independent 2>&1) \
-    && ok "创建独立实例 gold" || bad "创建独立实例：$out"
+  # 端口取在本机临时端口范围（32768–60999）之外：上面的持续请求每次都用一个临时端口作源端口，
+  # 关闭后在 TIME_WAIT 中保留约 60 秒；恰好用到同一个号时，数据面监听该端口会报“地址已被占用”而启动失败
+  out=$(syedge-instance add gold --http 28180 --https 28543 --status 8084 --resource-mode independent 2>&1) \
+    && ok "创建独立实例 gold" || bad "创建独立实例：$out $(journalctl -u syedge@gold.service --no-pager -n 15 2>&1 | tr '\n' ' ')"
   local GOLD=/run/syedge-gold/syedge.pid shared_pid shared_link
   shared_pid=$(masterpid "$D"); shared_link=$(readlink /opt/syedge/sbin/syedge)
   [[ "$(exe "$GOLD")" == /opt/syedge/instances/gold/sbin/syedge ]] && ok "gold 使用独立二进制" || bad "gold 二进制：$(exe "$GOLD")"
