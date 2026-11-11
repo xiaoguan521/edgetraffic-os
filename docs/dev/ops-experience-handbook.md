@@ -451,7 +451,7 @@ location 内一旦写 `proxy_set_header`，http 层的 5 条全部失效，需�
 
 以下是执行完 T1–T7 后给出的建议，不是决定，仍需负责人确认后另写任务。
 
-- D1：建议作为下一轮的首选。只在独立模式与原生兼容配置包（legacy）中提供，先放纯 Lua 库（如 resty.http、resty.redis，许可逐个核对），C 模块暂不开放；控制台托管的受限环境不变。理由：迁移指南里这是现网脚本搬不过来的最大缺口。（进展：第一阶段已实现，随附 10 个纯 Lua 库，见 `docs/lua.md` 的“随附的 Lua 库”一节；C 模块与第二阶段库仍未决定。）
+- D1：建议作为下一轮的首选。只在独立模式与原生兼容配置包（legacy）中提供，先放纯 Lua 库（如 resty.http、resty.redis，许可逐个核对），C 模块暂不开放；控制台托管的受限环境不变。理由：迁移指南里这是现网脚本搬不过来的最大缺口。（进展：第一阶段已实现，随附 10 个纯 Lua 库。第二阶段已实现：编译库 cjson、redis / rds parser、resty.signal（`librestysignal.so`），纯 Lua 的 resty.upstream.healthcheck，以及动态模块 lua-upstream（`ngx.upstream`）；resty.shell 不随附（它依赖的 ngx.pipe 需要核心的 socket CLOEXEC 补丁，syedge 核心没有）；它们只在独立模式与原生兼容配置包中加载，托管环境仍不加载编译库与动态模块。见 `docs/lua.md` 的“随附的 Lua 库”一节。）
 - D2：建议暂缓。tar 包加 install.sh（含 --standalone）已覆盖安装与启用，包管理器的 postinstall 自动切换模块风险较高。
 - D3：建议暂缓，等签名与授权方案确定后再做。
 - D4：建议维持现状。已有客户按现在的默认前缀部署，文档已用安装根目录 R 的约定消除歧义。

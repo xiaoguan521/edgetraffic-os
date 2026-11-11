@@ -23,3 +23,8 @@ docs/lua.md	--standalone-disable
 docs/install-maintenance.md	install.sh --standalone
 docs/lua.md	## 随附的 Lua 库
 docs/lua.md	resty.redis
+docs/lua.md	cjson.so
+docs/lua.md	resty.upstream.healthcheck
+docs/lua.md	ngx_http_lua_upstream_module.so
+docs/lua.md	librestysignal.so
+docs/migrate-from-openresty.md	resty.shell

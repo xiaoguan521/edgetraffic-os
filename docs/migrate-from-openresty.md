@@ -51,20 +51,22 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 - `ndk_http_module`、`ngx_http_lua_module`；
 - `lua-resty-core`、`lua-resty-lrucache`；
 - 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`；
-- 第一阶段随附的 10 个纯 Lua 库（安装在 `R/modules/lua/extlib/`）：`resty.redis`、`resty.mysql`、`resty.memcached`、`resty.dns.resolver`、`resty.string` 及 `resty.md5` / `resty.sha*` / `resty.aes` / `resty.random`、`resty.upload`、`resty.websocket.*`、`resty.lock`、`resty.limit.*`、`tablepool`。清单、版本与许可见 [docs/lua.md](lua.md) 的“随附的 Lua 库”一节。它们只对独立模式与原生兼容配置包可用，控制台托管的环境不可用。
+- 第一阶段随附的 10 个纯 Lua 库（安装在 `R/modules/lua/extlib/`）：`resty.redis`、`resty.mysql`、`resty.memcached`、`resty.dns.resolver`、`resty.string` 及 `resty.md5` / `resty.sha*` / `resty.aes` / `resty.random`、`resty.upload`、`resty.websocket.*`、`resty.lock`、`resty.limit.*`、`tablepool`；
+- 第二阶段随附：`cjson`（含 `cjson.safe`）、`redis.parser`、`rds.parser`、`resty.signal`、`resty.upstream.healthcheck`，以及动态模块 `ngx_http_lua_upstream_module.so`（提供 `ngx.upstream`）。编译库安装在 `R/modules/lua/extlib/`。
+  `resty.shell` 与 `ngx.pipe` 不可用，也没有随附（需要核心的 socket CLOEXEC 补丁，见 [docs/lua.md](lua.md)）。
+清单、版本与许可见 [docs/lua.md](lua.md) 的“随附的 Lua 库”一节。这些库只对独立模式与原生兼容配置包可用，控制台托管的环境不可用。
 
 **附加包中没有（现状）：**
 
-- `cjson`（JSON 请用 `etos.json`），以及 `lua-redis-parser`、`lua-rds-parser`、`lua-resty-signal`、`lua-resty-shell`：需要编译 C 库，计划在第二阶段提供；
-- `resty.upstream.healthcheck`：依赖第三方 C 模块，本阶段不提供，待决定；
-- `resty.http`：本阶段未纳入随附库；
+- 其他 OpenResty C 模块，例如 headers-more（`more_set_headers`）、echo、set-misc、srcache 等；
+- stream 的 Lua 模块，以及 drizzle、postgres、iconv 模块；
+- OpenResty 官方库之外的第三方库，例如 `resty.http`；
 - `resty.rsa`、`resty.openssl`：未随附。因此 `lua-resty-mysql` 的非 TLS `caching_sha2_password` 完整认证与 ed25519 认证不可用，请使用 TLS 连接；
-- stream 的 Lua 模块；
 - `resty` 命令行与 `opm`。
 
 **两种使用方式的区别：**
 
-- **独立模式**：受信任的运维人员可以在手工维护的 `conf.d/*.conf` 中直接使用原生 Lua 指令（如 `access_by_lua_block`）。可用的指令与验收夹具见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。注意：基线主配置默认不加载 Lua 模块，否则 `*_by_lua*` 指令会被报为未知指令。独立模式下在附加包目录内执行 `sudo bash install.sh --standalone` 即可：它在主配置最前面加载 `R/modules/lua/` 下的 `ndk_http_module.so` 与 `ngx_http_lua_module.so`（先 ndk 后 lua），并通过 `conf.d/00-lua-standalone.conf` 设置 `lua_package_path`，然后用 `syedge -t` 校验（不 reload）。用法、前置条件与停用方法见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。`R` 是安装根目录，见安装维护手册的[路径约定](install-maintenance.md#路径约定)。
+- **独立模式**：受信任的运维人员可以在手工维护的 `conf.d/*.conf` 中直接使用原生 Lua 指令（如 `access_by_lua_block`）。可用的指令与验收夹具见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。注意：基线主配置默认不加载 Lua 模块，否则 `*_by_lua*` 指令会被报为未知指令。独立模式下在附加包目录内执行 `sudo bash install.sh --standalone` 即可：它在主配置最前面加载 `R/modules/lua/` 下的 `ndk_http_module.so` 与 `ngx_http_lua_module.so`（先 ndk 后 lua；附加包带有 lua-upstream 模块时再加载 `ngx_http_lua_upstream_module.so`），并通过 `conf.d/00-lua-standalone.conf` 设置 `lua_package_path` 与 `lua_package_cpath`（编译库），然后用 `syedge -t` 校验（不 reload）。用法、前置条件与停用方法见 [docs/lua.md](lua.md) 的“独立模式手工 Lua”一节。`R` 是安装根目录，见安装维护手册的[路径约定](install-maintenance.md#路径约定)。
 - **控制台托管**：Lua 只能以“自定义 Lua 脚本”片段受控开放，是受限环境。关键限制：
   - 只有管理员可以提交，并须由另一位管理员批准，需要 `lua` 授权，节点组内每台节点都要装附加包；
   - 只支持 `rewrite`、`access`、`content`、`header_filter`、`body_filter` 五个阶段，每段最大 16 KiB；

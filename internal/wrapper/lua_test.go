@@ -262,10 +262,89 @@ func TestLuaEntryPatternExtlib(t *testing.T) {
 			t.Errorf("%s should be accepted", n)
 		}
 	}
-	for _, n := range []string{"addon/extlib/resty/x.so", "addon/extlib/x.txt", "addon/extlibx/x.lua", "addon/extlib/resty/x.lua.sh"} {
+	for _, n := range []string{"addon/extlib/resty/x.txt", "addon/extlibx/x.lua", "addon/extlib/resty/x.lua.sh"} {
 		if luaEntryRe.MatchString(n) {
 			t.Errorf("%s should be rejected", n)
 		}
+	}
+}
+
+// D1 第二阶段：附加包可以携带 extlib 下的编译库（*.so，与基础变体无关）和标准版 / 国密版各一份的 lua-upstream 模块。
+// 其他路径、目录穿越、带点或横线的目录名与额外后缀一律拒绝。
+func TestLuaEntryPatternNativeModules(t *testing.T) {
+	for _, n := range []string{
+		"addon/standard/ngx_http_lua_upstream_module.so",
+		"addon/gmssl/ngx_http_lua_upstream_module.so",
+		"addon/extlib/cjson.so",
+		"addon/extlib/redis/parser.so",
+		"addon/extlib/rds/parser.so",
+		"addon/extlib/librestysignal.so",
+	} {
+		if !luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be accepted", n)
+		}
+	}
+	for _, n := range []string{
+		"addon/lualib/x.so",
+		"addon/extlib/../x.so",
+		"addon/extlib/a/../x.so",
+		"addon/extlib/a.b/x.so",
+		"addon/extlib/x-y.so",
+		"addon/extlib//x.so",
+		"addon/extlib/x.so.sh",
+		"addon/extlibx/x.so",
+		"addon/standard/other.so",
+		"addon/other/ngx_http_lua_upstream_module.so",
+		"addon/standard/ngx_http_lua_upstream_module.so.sh",
+		"addon/gmssl/ngx_http_lua_upstream_module.so/x",
+	} {
+		if luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be rejected", n)
+		}
+	}
+}
+
+// 附加包中的编译库随包安装到 modules/lua-<版本>/extlib/；上游模块只取与基础变体匹配的一份（另一份跳过）。
+func TestInstallLuaWithNativeModules(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Modules, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	ver := "1.30.6-1"
+	pkg := luaPackage(t, ver, map[string]string{
+		"addon/extlib/cjson.so":                          "cjson-so",
+		"addon/extlib/redis/parser.so":                   "redis-so",
+		"addon/standard/ngx_http_lua_upstream_module.so": "std-upstream",
+		"addon/gmssl/ngx_http_lua_upstream_module.so":    "gm-upstream",
+	})
+	dropLua(t, p, priv, ver, "lua", pkg)
+	if err := p.installLua(ver, "standard"); err != nil {
+		t.Fatalf("add-on with native modules rejected: %v", err)
+	}
+	want := map[string]string{
+		"extlib/cjson.so":                 "cjson-so",
+		"extlib/redis/parser.so":          "redis-so",
+		"ngx_http_lua_upstream_module.so": "std-upstream",
+	}
+	for f, body := range want {
+		b, err := os.ReadFile(filepath.Join(p.luaDir(ver), f))
+		if err != nil || string(b) != body {
+			t.Errorf("%s = %q, %v; want %q", f, b, err, body)
+		}
+	}
+	// 不带 extlib 的旧包仍可安装（TestInstallLuaAcceptsPackagedDefaultPrefix 覆盖）；带 .. 的路径被拒绝
+	ver2 := "1.30.7-1"
+	dropLua(t, p, priv, ver2, "lua", luaPackage(t, ver2, map[string]string{"addon/extlib/a/../x.so": "x"}))
+	if err := p.installLua(ver2, "standard"); err == nil {
+		t.Fatal("add-on entry with .. accepted")
 	}
 }
 

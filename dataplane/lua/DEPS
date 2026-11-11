@@ -18,7 +18,27 @@ LRUCACHE_TAG=v0.15
 LRUCACHE_COMMIT=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b
 # 附加库 extlib（D1 第一阶段，纯 Lua，全部来自 github.com/openresty/，许可均为 BSD-2-Clause，README 中的 “licensed under the BSD license” 声明在构建时校验）。
 # 标签为各仓库截至 2026-11-11 的最新正式发布标签（不取 rc）；提交哈希为该标签指向的提交（轻量标签，ls-remote 与克隆后 rev-parse HEAD 一致）。
-# 不在第一阶段：lua-cjson、lua-redis-parser、lua-rds-parser、lua-resty-signal、lua-resty-shell（需要编译 C 库）；lua-resty-upstream-healthcheck（依赖第三方 C 模块）。
+# 第二阶段（D1）：编译库与 lua-upstream 动态模块。许可在克隆后校验：cjson 为 MIT（LICENSE），其余 README 声明 BSD。
+# 编译库（cjson、redis/rds parser、resty.signal 的 librestysignal.so）只依赖 LuaJIT 头文件，直接用 cc 编译，不链接 libluajit。
+# lua-upstream-nginx-module 与 lua 模块同一次 configure 编译为第三个动态模块（同一套 configure 参数）。
+CJSON_GIT=https://github.com/openresty/lua-cjson.git
+CJSON_TAG=2.1.0.20
+CJSON_COMMIT=5f53e878d0441e1555f53060178c61d161079e06
+REDIS_PARSER_GIT=https://github.com/openresty/lua-redis-parser.git
+REDIS_PARSER_TAG=v0.13
+REDIS_PARSER_COMMIT=2c5a4e960da7870ab29dd6001ba6a2828ce77760
+RDS_PARSER_GIT=https://github.com/openresty/lua-rds-parser.git
+RDS_PARSER_TAG=v0.06
+RDS_PARSER_COMMIT=621e6b978983b4779435a56480ea636eae93d65d
+RESTY_SIGNAL_GIT=https://github.com/openresty/lua-resty-signal.git
+RESTY_SIGNAL_TAG=v0.05
+RESTY_SIGNAL_COMMIT=42319006723c104e47d6922db17459c95e4db224
+RESTY_UPSTREAM_HC_GIT=https://github.com/openresty/lua-resty-upstream-healthcheck.git
+RESTY_UPSTREAM_HC_TAG=v0.10
+RESTY_UPSTREAM_HC_COMMIT=71b878c8d66e3c475d744314d83ed53512613ebc
+LUA_UPSTREAM_GIT=https://github.com/openresty/lua-upstream-nginx-module.git
+LUA_UPSTREAM_TAG=v0.08
+LUA_UPSTREAM_COMMIT=ad49f606989f91a514a7568eb45deb2642dd3e86
 RESTY_REDIS_GIT=https://github.com/openresty/lua-resty-redis.git
 RESTY_REDIS_TAG=v0.34
 RESTY_REDIS_COMMIT=0d014dd1c7ca16e2e7570e04d16421e3df0d3b36
