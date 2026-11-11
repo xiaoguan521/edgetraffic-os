@@ -191,7 +191,7 @@ standalone_enable() {
   SA_TMP=$(mktemp "$SA_DIR/.syedge-new.XXXXXX") || sa_fail "无法创建临时文件"
   {
     printf '%s\n' "# 独立模式 Lua（install.sh --standalone 生成）。自己的 Lua 文件放在 $IPREFIX/lualib/ 下。"
-    printf '%s\n' "lua_package_path   \"$ROOT/modules/lua/lualib/?.lua;$IPREFIX/lualib/?.lua\";"
+    printf '%s\n' "lua_package_path   \"$ROOT/modules/lua/lualib/?.lua;$ROOT/modules/lua/extlib/?.lua;$IPREFIX/lualib/?.lua\";"
     printf '%s\n' "lua_package_cpath  \"$ROOT/modules/lua/lualib/?.disabled\";"
   } > "$SA_TMP" || sa_fail "无法生成 conf.d/00-lua-standalone.conf"
   same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置 00 文件的属主与权限"
@@ -270,6 +270,8 @@ dest="$M/lua-$pkg"; tmp="$M/.lua-$pkg.tmp"
 rm -rf "$tmp"; mkdir -p "$tmp"
 install -m 0644 "$HERE/addon/$base/ndk_http_module.so" "$HERE/addon/$base/ngx_http_lua_module.so" "$tmp/"
 cp -r "$HERE/addon/lualib" "$tmp/lualib"
+# 附加库 extlib（D1 第一阶段，纯 Lua）：旧版附加包没有该目录，不报错。只有独立模式与原生兼容配置包的配置引用它
+if [[ -d "$HERE/addon/extlib" ]]; then cp -r "$HERE/addon/extlib" "$tmp/extlib"; fi
 install -m 0644 "$HERE/addon/VERSION" "$HERE/addon/NOTICE" "$tmp/"
 echo "$base" > "$tmp/BASE"
 chmod -R u=rwX,go=rX "$tmp"

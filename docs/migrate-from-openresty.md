@@ -50,12 +50,15 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 - LuaJIT 2.1（静态链入 Lua 模块）；
 - `ndk_http_module`、`ngx_http_lua_module`；
 - `lua-resty-core`、`lua-resty-lrucache`；
-- 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`。
+- 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`；
+- 第一阶段随附的 10 个纯 Lua 库（安装在 `R/modules/lua/extlib/`）：`resty.redis`、`resty.mysql`、`resty.memcached`、`resty.dns.resolver`、`resty.string` 及 `resty.md5` / `resty.sha*` / `resty.aes` / `resty.random`、`resty.upload`、`resty.websocket.*`、`resty.lock`、`resty.limit.*`、`tablepool`。清单、版本与许可见 [docs/lua.md](lua.md) 的“随附的 Lua 库”一节。它们只对独立模式与原生兼容配置包可用，控制台托管的环境不可用。
 
-**附加包中没有：**
+**附加包中没有（现状）：**
 
-- `cjson`（JSON 请用 `etos.json`）；
-- `resty.redis`、`resty.mysql`、`resty.http`、`resty.dns`、`resty.lock`、`resty.limit.*`、`resty.upstream.healthcheck`、`resty.websocket`、`resty.string`；
+- `cjson`（JSON 请用 `etos.json`），以及 `lua-redis-parser`、`lua-rds-parser`、`lua-resty-signal`、`lua-resty-shell`：需要编译 C 库，计划在第二阶段提供；
+- `resty.upstream.healthcheck`：依赖第三方 C 模块，本阶段不提供，待决定；
+- `resty.http`：本阶段未纳入随附库；
+- `resty.rsa`、`resty.openssl`：未随附。因此 `lua-resty-mysql` 的非 TLS `caching_sha2_password` 完整认证与 ed25519 认证不可用，请使用 TLS 连接；
 - stream 的 Lua 模块；
 - `resty` 命令行与 `opm`。
 
