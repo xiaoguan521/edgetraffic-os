@@ -31,7 +31,7 @@ resolve_target() {
         if [[ "$1" == --standalone-disable ]]; then act=disable; fi
         if [[ -n "$STANDALONE_ACTION" && "$STANDALONE_ACTION" != "$act" ]]; then die "--standalone 与 --standalone-disable 互斥"; fi
         STANDALONE_ACTION=$act; shift ;;
-      -h|--help) echo "用法：bash $(basename "$0") [--instance <实例名或 default>]"; exit 0 ;;
+      -h|--help) echo "用法：bash $(basename "$0") [--instance <实例名或 default>] [--standalone | --standalone-disable]（后两个只用于 install.sh：独立模式启用 / 停用 Lua）"; exit 0 ;;
       *) die "未知参数：$1" ;;
     esac
   done
@@ -164,7 +164,7 @@ standalone_precheck() {
   [[ -f "$conf" ]] || die "缺少主配置：$conf"
   st=$(agent_state_dir)
   [[ ! -e "$st/node.json" && ! -L "$st/node.json" ]] || die "节点已注册到控制台（$st/node.json 存在），不能独立启用 Lua"
-  if grep -qs 'load_module' "$conf"; then die "主配置已含 load_module，独立模式 Lua 可能已启用，未做任何改动"; fi
+  if grep -Eqs '^[[:space:]]*load_module[[:space:]]' "$conf"; then die "主配置已含 load_module，独立模式 Lua 可能已启用，未做任何改动"; fi
   [[ ! -e "$IPREFIX/conf/current/conf.d/00-lua-standalone.conf" ]] || die "已存在 conf.d/00-lua-standalone.conf，独立模式 Lua 已启用，未做任何改动"
 }
 

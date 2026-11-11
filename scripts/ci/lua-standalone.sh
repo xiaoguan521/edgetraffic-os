@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 在一次性 CI 主机上验证独立模式“一条命令启用 Lua”（install.sh --standalone / --standalone-disable）。
 #   用法：scripts/ci/lua-standalone.sh <dist-lua 目录> <standard|gmssl>
-#   环境准备照 lua-custom-prefix.sh 与 lua-instance-targets.sh：附加包用发布包里的 install.sh / uninstall.sh，
-#   root 执行安装脚本。与它们不同的是基础包必须装到编译期前缀（生产路径）：基线配置 share/defaults/baseline
-#   由编译期前缀渲染，路径只对该前缀有效；r000000 与 conf/current 的写法照 syedge-postinstall.sh。
+#   环境准备照 lua-acceptance.sh：基础包装到编译期前缀（生产路径），master 以 syedge 运行；附加包用发布包里的
+#   install.sh / uninstall.sh，由 root 执行。CI 的基础包不带初始版本，这里用 syedge-agent package-defaults 生成
+#   （与发布包相同），r000000 与 conf/current 的写法照 syedge-postinstall.sh。
 #   断言编号与 docs/dev/ops-experience-handbook.md 的 T5 表格一致。
 set -uo pipefail
 DIST=$(realpath "$1"); BASE=$2
@@ -18,7 +18,11 @@ NEWCONF="$PREFIX/conf/releases/r000000/conf.d/00-lua-standalone.conf"
 SITE="$PREFIX/conf/releases/r000000/conf.d/standalone-www.conf"
 PIDF=/run/syedge/syedge.pid
 # agent 状态目录：与 internal/layout/layout.go 的 AgentState 一致（历史根目录 /opt/syedge 用 /var/lib/syedge-agent，其他为 <前缀>/agent）
-if [[ "$PREFIX" == /opt/syedge ]]; then STATE_DIR=/var/lib/syedge-agent; else STATE_DIR="$PREFIX/agent"; fi
+if [[ "$PREFIX" == /opt/syedge ]]; then
+  LOG_DIR=/var/log/syedge; CACHE_DIR=/var/cache/syedge; STATE_DIR=/var/lib/syedge-agent
+else
+  LOG_DIR="$PREFIX/logs"; CACHE_DIR="$PREFIX/cache"; STATE_DIR="$PREFIX/agent"
+fi
 NODE_JSON="$STATE_DIR/node.json"
 PARENT=$(dirname "$PREFIX")
 
@@ -28,7 +32,7 @@ done
 W=$(mktemp -d); chmod 0755 "$W"
 parent_made=0; [[ -d "$PARENT" ]] || parent_made=1
 cleanup() {
-  if [[ -x "$SY" && -e "$CONF" ]]; then sudo "$SY" -p "$PREFIX" -c "$CONF" -s quit >/dev/null 2>&1; sleep 2; fi
+  if [[ -n "${MASTER:-}" ]]; then sudo kill -QUIT "$MASTER" 2>/dev/null; sleep 2; fi
   sudo rm -f -- "$NODE_JSON" "$SITE"
   sudo rm -rf -- "$PREFIX"
   [[ $parent_made -eq 0 ]] || sudo rmdir -- "$PARENT" 2>/dev/null
@@ -41,7 +45,7 @@ ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; [[ -z "${GITHUB_ACTIONS:-}" ]] || echo "::error title=lua-standalone ($BASE/$ARCH)::$1"; fail=$((fail+1)); }
 die() { bad "$1"; echo "---- $fail failed"; exit 1; }
 syedge_t() { sudo "$SY" -p "$PREFIX" -c "$CONF" -e stderr -t -q 2>&1; }
-reload() { sudo "$SY" -p "$PREFIX" -c "$CONF" -s reload >/dev/null 2>&1; }
+reload() { sudo kill -HUP "$MASTER"; }
 # 轮询直到响应体等于期望值（reload 后新 worker 接管需要片刻）
 body_is() {
   local i b=""
@@ -60,23 +64,29 @@ luapkg=$(ls "$DIST"/syedge-lua-*-"$ARCH".tar.gz | head -1)
 echo "== 基础包 $(basename "$basepkg")，附加包 $(basename "$luapkg")，前缀 $PREFIX"
 
 echo "== 安装基础包到编译期前缀并写入初始版本 r000000"
-tar -C "$W" -xzf "$basepkg" || die "基础包解包失败"
-[[ -f "$W$PREFIX/share/defaults/baseline/syedge.conf" ]] || die "基础包缺少 share/defaults/baseline"
-[[ $parent_made -eq 0 ]] || sudo mkdir -p -- "$PARENT"
-sudo mv -- "$W$PREFIX" "$PREFIX" || die "无法安装基础包到 $PREFIX"
-sudo chown -R root:root -- "$PREFIX"
+sudo tar -C / -xzf "$basepkg" || die "基础包解包失败"
+[[ -x "$SY" ]] || die "基础包中没有 $SY"
+GOFLAGS=-mod=vendor go run -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$PREFIX" \
+  ./cmd/syedge-agent package-defaults -out "$W/defaults" || die "无法生成初始版本"
+[[ -f "$W/defaults/share/defaults/baseline/syedge.conf" ]] || die "初始版本缺少主配置"
 getent group syedge >/dev/null || sudo groupadd -r syedge
 id syedge >/dev/null 2>&1 || sudo useradd -r -g syedge -s /usr/sbin/nologin syedge
-sudo mkdir -p -- "$PREFIX/conf/releases" "$PREFIX/logs" "$PREFIX/cache" /run/syedge
-sudo cp -a -- "$PREFIX/share/defaults/baseline" "$PREFIX/conf/releases/r000000" || die "无法写入 r000000"
+sudo mkdir -p -- "$PREFIX/conf/releases" "$LOG_DIR" "$CACHE_DIR" /run/syedge "$PREFIX/modules"
+sudo cp -r -- "$W/defaults/share/defaults/baseline" "$PREFIX/conf/releases/r000000" || die "无法写入 r000000"
 sudo mkdir -p -- "$PREFIX/conf/releases/r000000/conf.d"
 sudo ln -sfn releases/r000000 "$PREFIX/conf/current"
+# 与 agent 写出的版本一致：root 所有，数据面用户所在组可读
+sudo chown -R root:syedge "$PREFIX/conf" && sudo chmod -R g+rX "$PREFIX/conf"
+sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge
 mkdir "$W/lua" && tar -C "$W/lua" -xzf "$luapkg" || die "附加包解包失败"
 
-echo "== 启动数据面（基线配置，之后全程不重启）"
-sudo "$SY" -p "$PREFIX" -c "$CONF" || die "syedge 无法启动"
+echo "== 启动数据面（基线配置，以 syedge 运行，之后全程不重启）"
+MASTER=""
+sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- \
+  "$SY" -p "$PREFIX" -e "$LOG_DIR/error.log" -c "$CONF" || die "syedge 无法启动：$(sudo tail -n 5 "$LOG_DIR/error.log" 2>/dev/null | tr '\n' ' ')"
 for _ in $(seq 50); do sudo test -s "$PIDF" && break; sleep 0.2; done
 MASTER=$(sudo cat "$PIDF" 2>/dev/null) || die "找不到 master pid"
+[[ "$MASTER" =~ ^[0-9]+$ ]] || die "master pid 无效"
 echo "master pid $MASTER"
 
 # 断言 9 的基准：开始时保存主配置
@@ -176,6 +186,7 @@ out=$(syedge_t); rc=$?
 # 9. 去掉 Lua 站点后停用并卸载：都成功，主配置与最初逐字节相同
 sudo rm -f -- "$SITE"
 sudo bash "$W/lua/install.sh" --standalone-disable > "$W/i9.log" 2>&1; rc9=$?
+reload; sleep 2
 sudo bash "$W/lua/uninstall.sh" > "$W/u9.log" 2>&1; rc9u=$?
 if [[ $rc9 -eq 0 && $rc9u -eq 0 ]] && sudo cmp -s "$MAIN" "$W/main.orig" && ! sudo test -e "$NEWCONF" && ! sudo test -e "$PREFIX/modules/lua"; then
   ok "9 停用与卸载成功，主配置与最初逐字节相同"
