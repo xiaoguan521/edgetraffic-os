@@ -147,8 +147,11 @@ jobs:
             SYEDGE_TEST_LUA_UPGRADE_PACKAGE="$work/syedge-lua-$ver-${{ matrix.arch }}.tar.gz" \
             go test -mod=vendor -count=1 -v -run TestGMWithLuaMultiInstanceRollback ./internal/wrapper/
       - name: install performance test tool
+        # 即使软件源不可用，也运行后续功能验收；P10 脚本会将缺少 wrk 明确记为失败。
+        continue-on-error: true
         run: sudo apt-get install -y -qq wrk >/dev/null
       - name: P10 acceptance (${{ matrix.base }} / ${{ matrix.arch }})
+        id: p10
         env:
           PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
           PKG_KID: etos-ci-pkg-ephemeral
@@ -158,6 +161,7 @@ jobs:
           PERF_GATE: ${{ matrix.arch == 'x86_64' && '1' || '0' }}
         run: scripts/ci/lua-acceptance.sh dist-lua ${{ matrix.base }}
       - name: Native Lua publish and rollback (${{ matrix.base }} / ${{ matrix.arch }})
+        if: ${{ !cancelled() && steps.p10.outcome != 'skipped' }}
         run: |
           sudo env "PATH=$PATH" \
             SYEDGE_LEGACY_IT_BIN="$SYEDGE_PREFIX/sbin/syedge" \

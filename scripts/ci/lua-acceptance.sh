@@ -305,6 +305,7 @@ check "中止后 reload 正常" "$(req -H "$H" http://127.0.0.1/hs/a)" "401"
 check "进程名为 syedge" "$(ps -eo comm | sort -u | grep -i syedge | tr '\n' ' ')" "syedge"
 nocheck "没有上游名进程" "$(ps -eo comm,args | grep -vi ' grep' | grep -i 'ngi''nx' || true)" "ngi"
 
+if command -v wrk >/dev/null 2>&1; then
 echo "== 性能：三条常用规则（IP 拒绝、UA 拒绝、JWT 校验）下 QPS 下降不超过 15%"
 cat > "$W/xff.lua" <<'EOF'
 local c = 0
@@ -361,6 +362,9 @@ if (( $(nproc) >= 4 )); then
   read -r wdrop _ wraw <<<"$(abba 2 taskset -c 3)"
   echo "::notice title=perf-isolated $BASE/$ARCH::隔离最坏情况（参考，不作门槛）ABBA ×2：$wraw；中位下降 $(pct "$wdrop")"
   for p in $(pgrep -x syedge); do sudo taskset -a -p -c "0-$(( $(nproc) - 1 ))" "$p" >/dev/null || true; done
+fi
+else
+  bad "缺少 wrk，无法执行性能验收"
 fi
 
 echo "== 附加包卸载"
