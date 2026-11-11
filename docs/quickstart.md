@@ -99,3 +99,5 @@ sudo systemctl status syedge-agent --no-pager
 安装根目录不是编译期默认值时，`syedge -t` 等命令要像第 2 节那样带上 `-p` 与 `-c`。
 
 线上配置变更优先使用 reload。`restart` 会停止并重新启动服务，可能中断现有连接。
+
+从 OpenResty 迁移：见 [从 OpenResty 迁移](migrate-from-openresty.md)。
