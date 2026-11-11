@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -33,7 +34,7 @@ func TestManagementModeDefaultsAndTransitions(t *testing.T) {
 		t.Fatalf("invalid management mode = %v", err)
 	}
 	var n int64
-	if err := d.Store.DB.WithContext(context.Background()).Table("audit_logs").Where("action = ? AND object_id = ?", "group.management_mode", g.ID).Count(&n).Error; err != nil || n != 3 {
+	if err := d.Store.DB.WithContext(context.Background()).Table("audit_logs").Where("action = ? AND object_id = ?", "group.management_mode", fmt.Sprint(g.ID)).Count(&n).Error; err != nil || n != 3 {
 		t.Fatalf("management mode audit rows = %d, %v", n, err)
 	}
 }
