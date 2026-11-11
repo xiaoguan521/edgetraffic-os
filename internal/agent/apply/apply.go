@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 )
 
 // Status 与协议 CommandResult.Status 一一对应。
@@ -63,6 +64,7 @@ type PostCheck struct {
 // Config 描述节点上的路径与提权方式。
 type Config struct {
 	ConfRoot     string          // /opt/syedge/conf
+	Prefix       string          // 数据面 -p 前缀（相对 -c 的解析基准）
 	PidFile      string          // /run/syedge/syedge.pid
 	ErrorLog     string          // /var/log/syedge/error.log
 	LockFile     string          // /run/syedge-agent/apply.lock
@@ -119,14 +121,25 @@ func (a *Applier) Apply(ctx context.Context, rev, parent string, bundle []byte, 
 	}
 	defer unlock()
 
-	if cur := a.Current(); cur != parent {
+	cur := a.Current()
+	if cur != parent {
 		return Result{Status: Conflict, Message: fmt.Sprintf("node is at %q, expected parent %q", cur, parent)}
+	}
+	if cur == rev {
+		return Result{Status: Conflict, Message: "target revision is already current; refusing to replace a live configuration"}
+	}
+	final := filepath.Join(a.releases(), rev)
+	_, statErr := os.Lstat(final)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return Result{Status: Rejected, Message: "cannot inspect target revision: " + statErr.Error()}
 	}
 	if err := a.unpack(rev, bundle, digest); err != nil {
 		return Result{Status: Rejected, Message: "bundle rejected: " + err.Error()}
 	}
 	if out, err := a.wrapper(ctx, "test", rev); err != nil {
-		_ = os.RemoveAll(filepath.Join(a.releases(), rev))
+		if errors.Is(statErr, os.ErrNotExist) {
+			_ = os.RemoveAll(final)
+		}
 		return Result{Status: Invalid, Message: "configuration test failed", Stderr: out}
 	}
 	return a.switchTo(ctx, rev, true, checks)
@@ -212,6 +225,15 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 	if err != nil {
 		return Result{Status: Degraded, Message: brand.ID() + " is not running: " + err.Error()}
 	}
+	marker := filepath.Join(a.releases(), rev, configbundle.LegacyMarker)
+	if _, err := os.Lstat(marker); err == nil {
+		title, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", before.master))
+		if err != nil || !legacyMasterUsesCurrent(string(title), a.C.Prefix, filepath.Join(a.link("current"), brand.ConfName())) {
+			return Result{Status: Rejected, Message: "cannot verify running master uses the managed current configuration; start it with an explicit -c " + filepath.Join(a.link("current"), brand.ConfName())}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Result{Status: Rejected, Message: "cannot inspect native configuration marker: " + err.Error()}
+	}
 	if err := a.setLink("current", filepath.Join("releases", rev)); err != nil {
 		return Result{Status: Degraded, Message: "switch failed: " + err.Error()}
 	}
@@ -253,6 +275,49 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 		a.cleanup()
 	}
 	return Result{Status: Applied, Message: "applied " + rev}
+}
+
+// A live process started with a different -c keeps using that path on reload,
+// even when the controller switches current. Compare the path itself, not its
+// symlink target, because the target intentionally changes during deployment.
+func legacyMasterUsesCurrent(title, defaultPrefix, want string) bool {
+	if !strings.HasPrefix(title, brand.MasterTitle()) {
+		return false
+	}
+	fields := strings.Fields(strings.ReplaceAll(title, "\x00", " "))
+	var prefix, conf string
+	for i := 0; i < len(fields); i++ {
+		s := fields[i]
+		switch {
+		case s == "-c" || s == "-p":
+			if i+1 == len(fields) {
+				return false
+			}
+			i++
+			if s == "-c" {
+				conf = fields[i]
+			} else {
+				prefix = fields[i]
+			}
+		case strings.HasPrefix(s, "-c") && len(s) > 2:
+			conf = s[2:]
+		case strings.HasPrefix(s, "-p") && len(s) > 2:
+			prefix = s[2:]
+		}
+	}
+	if conf == "" {
+		return false
+	}
+	if !filepath.IsAbs(conf) {
+		if prefix == "" {
+			prefix = defaultPrefix
+		}
+		if !filepath.IsAbs(prefix) {
+			return false
+		}
+		conf = filepath.Join(prefix, conf)
+	}
+	return filepath.Clean(conf) == filepath.Clean(want)
 }
 
 // lockFailed 区分“另一次发布正在进行”（锁被占用）与“无法创建锁”（运行时目录缺失或无权限）：
@@ -307,14 +372,16 @@ func (a *Applier) unpack(rev string, bundle []byte, digest string) error {
 		return errors.New("bundle too large")
 	}
 	final := filepath.Join(a.releases(), rev)
-	if _, err := os.Stat(final); err == nil {
+	if info, err := os.Lstat(final); err == nil {
 		// 同一版本重复下发：校验现有目录后复用
-		if m, err := readManifest(final); err == nil && m.Digest == digest {
-			return verifyDir(final, m)
+		if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			if m, err := readManifest(final); err == nil && m.Digest == digest {
+				return verifyDir(final, m)
+			}
 		}
-		if err := os.RemoveAll(final); err != nil {
-			return err
-		}
+		return fmt.Errorf("revision %s already exists with different contents; refusing to replace it", rev)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	tmp := final + ".tmp"
 	if err := a.extractTo(tmp, rev, bundle, digest); err != nil {
@@ -371,10 +438,9 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		mode := os.FileMode(0o644)
-		if strings.HasSuffix(clean, ".key") {
-			mode = 0o640
-		}
+		// Config and Lua files may contain credentials regardless of suffix.
+		// The agent and dataplane share the syedge group in system mode.
+		mode := os.FileMode(0o640)
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 		if err != nil {
 			return err
@@ -454,6 +520,9 @@ func verifyDir(dir string, m *manifest) error {
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
+		}
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("%s: non-regular file in revision", p)
 		}
 		rel, _ := filepath.Rel(dir, p)
 		rel = filepath.ToSlash(rel)
@@ -708,7 +777,10 @@ func (a *Applier) postChecks(ctx context.Context, checks []PostCheck) error {
 		}
 		cl := &http.Client{Transport: tr, Timeout: 5 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+c.Host+c.Path, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+c.Host+c.Path, nil)
+		if err != nil {
+			return fmt.Errorf("invalid post check: %w", err)
+		}
 		resp, err := cl.Do(req)
 		if err != nil {
 			return fmt.Errorf("%s %s%s: %v", scheme, c.Host, c.Path, err)

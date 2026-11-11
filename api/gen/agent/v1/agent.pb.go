@@ -691,6 +691,7 @@ type Hello struct {
 	Instance           *InstanceInfo          `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`                                   // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
 	Brand              string                 `protobuf:"bytes,8,opt,name=brand,proto3" json:"brand,omitempty"`                                         // 同 EnrollRequest.brand
 	RunningVersion     string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syedge -V 不同）
+	Capabilities       []string               `protobuf:"bytes,10,rep,name=capabilities,proto3" json:"capabilities,omitempty"`                          // Agent 支持的发布安全能力；旧版为空
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -786,6 +787,13 @@ func (x *Hello) GetRunningVersion() string {
 		return x.RunningVersion
 	}
 	return ""
+}
+
+func (x *Hello) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
 }
 
 type Heartbeat struct {
@@ -2233,7 +2241,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06result\x18\f \x01(\v2#.edgetraffic.agent.v1.CommandResultH\x00R\x06result\x122\n" +
 	"\x03log\x18\r \x01(\v2\x1e.edgetraffic.agent.v1.LogChunkH\x00R\x03log\x129\n" +
 	"\x05drift\x18\x0e \x01(\v2!.edgetraffic.agent.v1.DriftReportH\x00R\x05driftB\x06\n" +
-	"\x04body\"\xfe\x02\n" +
+	"\x04body\"\xa2\x03\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x120\n" +
 	"\x14syapp_version_output\x18\x02 \x01(\tR\x12syappVersionOutput\x12!\n" +
@@ -2243,7 +2251,9 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\tlua_addon\x18\x06 \x01(\tR\bluaAddon\x12>\n" +
 	"\binstance\x18\a \x01(\v2\".edgetraffic.agent.v1.InstanceInfoR\binstance\x12\x14\n" +
 	"\x05brand\x18\b \x01(\tR\x05brand\x12'\n" +
-	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\"\xe9\x02\n" +
+	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\x12\"\n" +
+	"\fcapabilities\x18\n" +
+	" \x03(\tR\fcapabilities\"\xe9\x02\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +

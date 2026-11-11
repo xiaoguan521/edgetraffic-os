@@ -11,7 +11,6 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/textdiff"
-	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
@@ -53,9 +52,15 @@ func (d *Service) loadDrift(nodeID uint) (*store.Node, *store.NodeDrift, []gatew
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("revision %s not found", row.RevisionID)
 	}
-	want, err := render.ReadTarGz(rev.Bundle)
+	want, err := d.revisionFiles(rev)
 	if err != nil {
 		return nil, nil, nil, nil, err
+	}
+	if isLegacyRevision(rev) {
+		for i := range files {
+			files[i].Content = ""
+			files[i].Omitted = true
+		}
 	}
 	return n, row, files, want, nil
 }
@@ -73,7 +78,7 @@ func (d *Service) DriftView(nodeID uint) (*DriftDetail, error) {
 		case strings.HasSuffix(f.Path, ".key"):
 			x.Diff = "（私钥文件只比较哈希：" + f.SHA256 + "）"
 		case f.Omitted:
-			x.Diff = "（文件超过上报上限，只比较哈希：" + f.SHA256 + "）"
+			x.Diff = "（内容未上报，只比较哈希：" + f.SHA256 + "）"
 		case f.Change == "removed":
 			x.Diff = textdiff.Unified(f.Path, string(want[f.Path]), "")
 		default:
@@ -133,6 +138,9 @@ func (d *Service) AdoptDrift(nodeID uint, user, ip string) (*AdoptResult, error)
 	n, row, files, want, err := d.loadDrift(nodeID)
 	if err != nil {
 		return nil, err
+	}
+	if rev, err := d.revision(row.RevisionID, n.GroupID); err != nil || isLegacyRevision(rev) {
+		return nil, ErrLegacyAdminRequired
 	}
 	res := &AdoptResult{Snippets: []uint{}, Rejected: []string{}}
 	q := d.q()

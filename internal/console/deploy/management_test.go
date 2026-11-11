@@ -102,3 +102,61 @@ func TestAlignSkipsReadOnlyManagementModes(t *testing.T) {
 		t.Fatalf("observe mode created an automatic alignment: %d", count)
 	}
 }
+
+func TestManagedHandoffWaitsForExplicitPublish(t *testing.T) {
+	d, g := newTestService(t)
+	addSite(t, d, g, "site-a")
+	old, err := d.Publish(g.ID, "old", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, d, old)
+	n := &store.Node{GroupID: g.ID, Name: "edge-1", Status: "online", AppliedRevision: "r000000"}
+	if err := query.Use(d.Store.DB).Node.WithContext(context.Background()).Create(n); err != nil {
+		t.Fatal(err)
+	}
+	d.Agents = &applyAgents{d: d}
+	for _, mode := range []string{ManagementModeObserve, ManagementModeManaged} {
+		if err := d.SetManagementMode(g.ID, mode, "alice", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.Align(n.ID)
+	var count int64
+	if err := d.Store.DB.Table("deployments").Where("group_id = ? AND kind = ?", g.ID, "align").Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("alignment before explicit publish = %d, %v", count, err)
+	}
+	// Even unchanged console drafts must permit an explicit adoption publish.
+	dep, err := d.Publish(g.ID, "take over", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := waitDone(t, d, dep); got.Status != "APPLIED" {
+		t.Fatalf("explicit publish = %+v", got)
+	}
+	n2 := &store.Node{GroupID: g.ID, Name: "edge-2", Status: "online", AppliedRevision: "r000000"}
+	if err := query.Use(d.Store.DB).Node.WithContext(context.Background()).Create(n2); err != nil {
+		t.Fatal(err)
+	}
+	d.Align(n2.ID)
+	if err := d.Store.DB.Table("deployments").Where("group_id = ? AND kind = ?", g.ID, "align").Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("alignment after explicit publish = %d, %v", count, err)
+	}
+	var alignment store.Deployment
+	if err := d.Store.DB.Where("group_id = ? AND kind = ?", g.ID, "align").First(&alignment).Error; err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, d, &alignment)
+}
+
+func TestCannotChangeManagementModeDuringCanary(t *testing.T) {
+	d, g := newTestService(t)
+	canaryActive.Store(g.ID, struct{}{})
+	t.Cleanup(func() { canaryActive.Delete(g.ID) })
+	if err := d.SetManagementMode(g.ID, ManagementModeObserve, "alice", ""); !errors.Is(err, ErrCanaryRunning) {
+		t.Fatalf("mode change during canary = %v", err)
+	}
+	if mode, err := d.ManagementMode(g.ID); err != nil || mode != ManagementModeManaged {
+		t.Fatalf("mode after refused change = %q, %v", mode, err)
+	}
+}

@@ -14,7 +14,20 @@ import (
 type applyAgents struct{ d *Service }
 
 func (a *applyAgents) Online(uint) bool { return true }
+func (a *applyAgents) SendLegacy(ctx context.Context, id uint, m *agentv1.ServerMessage, timeout time.Duration) (*agentv1.CommandResult, error) {
+	return a.Send(ctx, id, m, timeout)
+}
 func (a *applyAgents) Send(_ context.Context, id uint, m *agentv1.ServerMessage, _ time.Duration) (*agentv1.CommandResult, error) {
+	return &agentv1.CommandResult{Status: agentv1.CommandResult_APPLIED}, nil
+}
+
+type rollbackFailAgents struct{}
+
+func (a *rollbackFailAgents) Online(uint) bool { return true }
+func (a *rollbackFailAgents) Send(_ context.Context, _ uint, m *agentv1.ServerMessage, _ time.Duration) (*agentv1.CommandResult, error) {
+	if m.GetRollback() != nil {
+		return &agentv1.CommandResult{Status: agentv1.CommandResult_REJECTED, Message: "rollback rejected"}, nil
+	}
 	return &agentv1.CommandResult{Status: agentv1.CommandResult_APPLIED}, nil
 }
 
@@ -90,4 +103,23 @@ func TestCanaryRollsBackOn5xx(t *testing.T) {
 		t.Fatalf("publish after rollback: %v", err)
 	}
 	waitDone(t, d, dep)
+}
+
+func TestCanaryReportsRollbackFailure(t *testing.T) {
+	d, g, ids, _ := canaryFixture(t)
+	d.Agents = &rollbackFailAgents{}
+	q := query.Use(d.Store.DB)
+	if err := q.MetricMinute.WithContext(context.Background()).Create(&store.MetricMinute{
+		NodeID: ids[0], Site: "site-a", Minute: time.Now().Unix(), Requests: 100, S5xx: 30,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := d.StartCanary(g.ID, "v2", "alice", "", CanaryOptions{Percents: []int{10, 100}, Observe: 100 * time.Millisecond, Max5xxPercent: 5, MinRequests: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitCanary(t, d, c.ID)
+	if v.Status != "rollback_failed" || v.Batches[0].Status != "rollback_failed" {
+		t.Fatalf("rollback failure was not reported: %+v", v)
+	}
 }

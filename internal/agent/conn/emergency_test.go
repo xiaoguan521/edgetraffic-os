@@ -245,11 +245,20 @@ func TestExpiredLicenseEmergencyOperations(t *testing.T) {
 		t.Fatalf("forged restore bundle accepted under expired license: %+v", r)
 	}
 
-	// 5. 过期授权下回滚到 r000001
-	if r := execCmd(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: "r000001"}}}); r.Status != agentv1.CommandResult_APPLIED {
-		t.Fatalf("rollback under expired license failed: %+v", r)
+	// 5. 已批准历史版本可通过带摘要的 Apply 回退；伪造同版本内容必须拒绝。
+	forged, forgedDigest, _ := renderSiteBundle(t, "r000001", c1, k1, "/injected")
+	bundles["r000001"] = forged
+	if r := execCmd(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{RevisionId: "r000001", ParentRevisionId: "r000004", BundleSha256: forgedDigest}}}); r.Status != agentv1.CommandResult_REJECTED {
+		t.Fatalf("forged historic revision accepted under expired license: %+v", r)
+	}
+	bundles["r000001"] = b1
+	if r := execCmd(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{RevisionId: "r000001", ParentRevisionId: "r000004", BundleSha256: d1}}}); r.Status != agentv1.CommandResult_APPLIED {
+		t.Fatalf("verified rollback under expired license failed: %+v", r)
 	}
 	if a.applier.Current() != "r000001" {
 		t.Fatalf("current after rollback = %s, want r000001", a.applier.Current())
+	}
+	if r := execCmd(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: "r000002"}}}); r.Status != agentv1.CommandResult_APPLIED {
+		t.Fatalf("ordinary rollback under expired license failed: %+v", r)
 	}
 }

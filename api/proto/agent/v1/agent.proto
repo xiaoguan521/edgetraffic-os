@@ -69,6 +69,7 @@ message Hello {
   InstanceInfo instance = 7;         // 同 EnrollRequest.instance：每次上线都上报，便于发现档案不一致
   string brand = 8;                  // 同 EnrollRequest.brand
   string running_version = 9;        // 本实例 worker 实际运行的数据面版本（状态页上报，同机多实例共用二进制时可能与 syedge -V 不同）
+  repeated string capabilities = 10; // Agent 支持的发布安全能力；旧版为空
 }
 
 message Heartbeat {

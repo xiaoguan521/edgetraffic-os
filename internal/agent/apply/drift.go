@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 )
 
 // 漂移 diff 采集（规格书 12.7 路径 B）：只读取受管版本目录（releases/<当前版本>）内的文件。
@@ -62,6 +64,7 @@ func (a *Applier) Drift() (*DriftReport, error) {
 			Files:    []DriftFile{{Path: manifestName, Change: "modified", Omitted: true}},
 		}, nil
 	}
+	_, redact := m.Files[configbundle.LegacyMarker]
 	rep := &DriftReport{Revision: rel}
 	state := sha256.New()
 	seen := map[string]bool{}
@@ -100,7 +103,7 @@ func (a *Applier) Drift() (*DriftReport, error) {
 		if !ok {
 			f.Change = "added"
 		}
-		if strings.HasSuffix(r, ".key") || len(b) > MaxDriftFile || total+len(b) > MaxDriftBytes || len(rep.Files) >= MaxDriftFiles {
+		if redact || strings.HasSuffix(r, ".key") || len(b) > MaxDriftFile || total+len(b) > MaxDriftBytes || len(rep.Files) >= MaxDriftFiles {
 			f.Omitted = true
 		} else {
 			f.Content = b
@@ -114,7 +117,7 @@ func (a *Applier) Drift() (*DriftReport, error) {
 	}
 	for r := range m.Files {
 		if !seen[r] {
-			rep.Files = append(rep.Files, DriftFile{Path: r, Change: "removed"})
+			rep.Files = append(rep.Files, DriftFile{Path: r, Change: "removed", Omitted: redact})
 			state.Write([]byte(r + ":removed\n"))
 		}
 	}

@@ -184,8 +184,10 @@ func tarDir(dir, out string) error {
 		if err != nil {
 			return err
 		}
-		defer func() { _ = src.Close() }()
 		_, err = io.Copy(tw, src)
+		if closeErr := src.Close(); err == nil {
+			err = closeErr
+		}
 		return err
 	})
 	if err != nil {

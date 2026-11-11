@@ -91,12 +91,24 @@ type CertMaterial struct {
 // configuration. It is deliberately metadata only: the importer never executes
 // an uploaded script or makes it part of a managed release automatically.
 type LuaReference struct {
-	File      string `json:"file"`
-	Line      int    `json:"line"`
-	Directive string `json:"directive"`
-	Target    string `json:"target,omitempty"`
-	Resolved  string `json:"resolved,omitempty"`
-	Missing   bool   `json:"missing"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Directive  string `json:"directive"`
+	Target     string `json:"target,omitempty"`
+	Resolved   string `json:"resolved,omitempty"`
+	Candidate  string `json:"candidate,omitempty"`
+	Resolution string `json:"resolution,omitempty"` // exact | unverified | missing
+	Missing    bool   `json:"missing"`
+}
+
+// LuaDependency is a static hint, not a guarantee that the node's package path,
+// native ABI or dynamically constructed imports are available.
+type LuaDependency struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Status string `json:"status"` // candidate | unverified
 }
 
 // LuaAsset is a hash inventory of uploaded Lua scripts and related module
@@ -112,10 +124,11 @@ type LuaAsset struct {
 // managed Lua rule automatically. Legacy *_by_lua_file, package paths and
 // dynamic modules remain node-local until an operator explicitly migrates them.
 type LuaCompatibility struct {
-	RequiresLegacy bool           `json:"requires_legacy"`
-	References     []LuaReference `json:"references"`
-	Assets         []LuaAsset     `json:"assets"`
-	Missing        []string       `json:"missing"`
+	RequiresLegacy bool            `json:"requires_legacy"`
+	References     []LuaReference  `json:"references"`
+	Assets         []LuaAsset      `json:"assets"`
+	Missing        []string        `json:"missing"`
+	Dependencies   []LuaDependency `json:"dependencies"`
 }
 
 // Summary 是报告摘要。
@@ -260,7 +273,7 @@ type conv struct {
 }
 
 func convert(source string, files []conf.File, archive map[string][]byte, o Options) (*Report, error) {
-	c := &conv{o: o, r: &Report{Source: source, Sites: []SiteResult{}, Upstreams: []UpstreamResult{}, Global: []Issue{}, Lua: LuaCompatibility{References: []LuaReference{}, Assets: []LuaAsset{}, Missing: []string{}}, Certificates: map[string]CertMaterial{}},
+	c := &conv{o: o, r: &Report{Source: source, Sites: []SiteResult{}, Upstreams: []UpstreamResult{}, Global: []Issue{}, Lua: LuaCompatibility{References: []LuaReference{}, Assets: []LuaAsset{}, Missing: []string{}, Dependencies: []LuaDependency{}}, Certificates: map[string]CertMaterial{}},
 		archive: archive, upstreams: map[string]string{}, autoUps: map[string]string{}}
 	parsed, issues, err := expandIncludes(source, files, archive)
 	if err != nil {
@@ -322,8 +335,17 @@ func (c *conv) scanLua(ds []*conf.Directive) {
 			ref := LuaReference{File: d.File, Line: d.Line, Directive: d.Name}
 			ref.Target = luaReferenceTarget(name, d.Args)
 			if ref.Target != "" && (strings.HasSuffix(name, "_by_lua_file") || name == "load_module") {
-				ref.Resolved = c.findArchivePath(ref.Target)
-				ref.Missing = c.archive != nil && ref.Resolved == ""
+				ref.Resolution = "unverified"
+				if c.archive != nil && !strings.Contains(ref.Target, "$") {
+					exact := path.Clean("/" + strings.TrimPrefix(ref.Target, "/"))
+					if _, ok := c.archive[exact]; ok {
+						ref.Resolved, ref.Resolution = exact, "exact"
+					} else if candidate := c.findArchivePath(ref.Target); candidate != "" {
+						ref.Candidate = candidate
+					} else {
+						ref.Missing, ref.Resolution = true, "missing"
+					}
+				}
 				if ref.Missing && !containsString(c.r.Lua.Missing, ref.Target) {
 					c.r.Lua.Missing = append(c.r.Lua.Missing, ref.Target)
 				}
@@ -356,9 +378,48 @@ func (c *conv) inventoryLuaAssets() {
 		}
 		sum := sha256.Sum256(body)
 		c.r.Lua.Assets = append(c.r.Lua.Assets, LuaAsset{Path: name, Size: len(body), SHA256: hex.EncodeToString(sum[:])})
+		if strings.HasSuffix(lower, ".lua") {
+			c.scanLuaDependencies(name, body)
+		}
 	}
 	sort.Slice(c.r.Lua.Assets, func(i, j int) bool { return c.r.Lua.Assets[i].Path < c.r.Lua.Assets[j].Path })
+	sort.Slice(c.r.Lua.Dependencies, func(i, j int) bool {
+		a, b := c.r.Lua.Dependencies[i], c.r.Lua.Dependencies[j]
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		return a.Line < b.Line
+	})
 	sort.Strings(c.r.Lua.Missing)
+}
+
+var luaImportHint = regexp.MustCompile(`\b(require|dofile|loadfile)\s*\(?\s*["']([^"'\r\n]+)["']`)
+
+func (c *conv) scanLuaDependencies(name string, body []byte) {
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		for _, m := range luaImportHint.FindAllStringSubmatch(line, -1) {
+			if len(c.r.Lua.Dependencies) >= maxArchiveFiles {
+				return
+			}
+			dep := LuaDependency{File: name, Line: i + 1, Kind: m[1], Target: m[2], Status: "unverified"}
+			suffixes := []string{"/" + strings.TrimPrefix(path.Clean(m[2]), "/")}
+			if m[1] == "require" {
+				module := strings.ReplaceAll(m[2], ".", "/")
+				suffixes = []string{"/" + module + ".lua", "/" + module + "/init.lua", "/" + module + ".so"}
+			}
+			for candidate := range c.archive {
+				for _, suffix := range suffixes {
+					if strings.HasSuffix(candidate, suffix) {
+						dep.Status = "candidate"
+					}
+				}
+			}
+			c.r.Lua.Dependencies = append(c.r.Lua.Dependencies, dep)
+		}
+	}
 }
 
 func (c *conv) global(d *conf.Directive, reason string) {

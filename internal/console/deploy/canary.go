@@ -27,7 +27,7 @@ type CanaryOptions struct {
 type CanaryBatch struct {
 	Nodes        []uint  `json:"nodes"`
 	DeploymentID uint    `json:"deployment_id"`
-	Status       string  `json:"status"` // pending | deploying | observing | passed | failed | rolled_back | skipped
+	Status       string  `json:"status"` // pending | deploying | observing | passed | failed | rolled_back | rollback_failed | skipped
 	Requests     uint64  `json:"requests"`
 	Errors5xx    uint64  `json:"errors_5xx"`
 	Rate         float64 `json:"rate"`
@@ -83,6 +83,9 @@ func (d *Service) StartCanary(groupID uint, note, user, ip string, o CanaryOptio
 	if err := d.ensureConfigManaged(groupID); err != nil {
 		return nil, err
 	}
+	if err := d.ensureHandoffComplete(groupID); err != nil {
+		return nil, err
+	}
 	if d.ApprovalEnabled() {
 		return nil, ErrApprovalRequired
 	}
@@ -119,6 +122,11 @@ func (d *Service) StartCanary(groupID uint, note, user, ip string, o CanaryOptio
 		return nil, err
 	}
 	if err := d.ensureConfigManaged(groupID); err != nil {
+		lk.Unlock()
+		release()
+		return nil, err
+	}
+	if err := d.ensureHandoffComplete(groupID); err != nil {
 		lk.Unlock()
 		release()
 		return nil, err
@@ -214,10 +222,22 @@ func (d *Service) runCanary(c *store.CanaryRelease, rev *store.Revision, o Canar
 		}
 	}
 	var canaried []uint
-	rollback := func(why string) {
-		if base, err := d.revision(c.BaseRevisionID, c.GroupID); err == nil && len(canaried) > 0 {
-			_, _ = deploy(base, "rollback", "灰度回滚："+why, canaried)
+	rollback := func(why string) error {
+		if len(canaried) == 0 {
+			return nil
 		}
+		base, err := d.revision(c.BaseRevisionID, c.GroupID)
+		if err != nil {
+			return fmt.Errorf("找不到原版本 %s: %w", c.BaseRevisionID, err)
+		}
+		dep, err := deploy(base, "rollback", "灰度回滚："+why, canaried)
+		if err != nil {
+			return err
+		}
+		if dep.Status != "APPLIED" {
+			return fmt.Errorf("回滚发布状态为 %s，请检查节点结果", dep.Status)
+		}
+		return nil
 	}
 	for i := range batches {
 		b := &batches[i]
@@ -239,9 +259,14 @@ func (d *Service) runCanary(c *store.CanaryRelease, rev *store.Revision, o Canar
 			}
 			b.Status, b.Message = "failed", msg
 			canaried = append(canaried, b.Nodes...)
-			rollback(msg)
+			rollbackErr := rollback(msg)
 			for j := i + 1; j < len(batches); j++ {
 				batches[j].Status = "skipped"
+			}
+			if rollbackErr != nil {
+				b.Status, b.Message = "rollback_failed", msg+"；回滚失败："+rollbackErr.Error()
+				save("rollback_failed", fmt.Sprintf("第 %d 批%s；回滚失败：%s", i+1, msg, rollbackErr), true)
+				return
 			}
 			save("failed", fmt.Sprintf("第 %d 批%s，已回滚到 %s", i+1, msg, c.BaseRevisionID), true)
 			return
@@ -269,9 +294,17 @@ func (d *Service) runCanary(c *store.CanaryRelease, rev *store.Revision, o Canar
 		if b.Requests >= o.MinRequests && b.Rate > o.Max5xxPercent {
 			b.Status = "rolled_back"
 			b.Message = fmt.Sprintf("5xx 占比 %.1f%% 超过阈值 %.1f%%", b.Rate, o.Max5xxPercent)
-			rollback(b.Message)
+			rollbackErr := rollback(b.Message)
 			for j := i + 1; j < len(batches); j++ {
 				batches[j].Status = "skipped"
+			}
+			if rollbackErr != nil {
+				b.Status = "rollback_failed"
+				b.Message += "；回滚失败：" + rollbackErr.Error()
+				save("rollback_failed", fmt.Sprintf("第 %d 批%s", i+1, b.Message), true)
+				_ = d.Audit.Write(audit.Entry{Username: c.CreatedBy, Action: "release.canary_rollback", ObjectType: "node_group", ObjectID: fmt.Sprint(c.GroupID),
+					Result: "failed", Detail: map[string]any{"canary": c.ID, "batch": i + 1, "error": rollbackErr.Error()}})
+				return
 			}
 			save("rolled_back", fmt.Sprintf("第 %d 批%s，已自动回滚到 %s", i+1, b.Message, c.BaseRevisionID), true)
 			_ = d.Audit.Write(audit.Entry{Username: c.CreatedBy, Action: "release.canary_rollback", ObjectType: "node_group", ObjectID: fmt.Sprint(c.GroupID),
