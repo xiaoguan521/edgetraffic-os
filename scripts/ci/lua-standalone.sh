@@ -16,6 +16,7 @@ CONF="$PREFIX/conf/current/syedge.conf"
 MAIN="$PREFIX/conf/releases/r000000/syedge.conf"
 NEWCONF="$PREFIX/conf/releases/r000000/conf.d/00-lua-standalone.conf"
 SITE="$PREFIX/conf/releases/r000000/conf.d/standalone-www.conf"
+DICT="$PREFIX/conf/releases/r000000/conf.d/standalone-ext-dicts.conf"
 PIDF=/run/syedge/syedge.pid
 # agent 状态目录：与 internal/layout/layout.go 的 AgentState 一致（历史根目录 /opt/syedge 用 /var/lib/syedge-agent，其他为 <前缀>/agent）
 if [[ "$PREFIX" == /opt/syedge ]]; then
@@ -91,8 +92,9 @@ echo "master pid $MASTER"
 
 # 断言 9 的基准：开始时保存主配置
 sudo cp -- "$MAIN" "$W/main.orig" || die "无法保存主配置副本"
-openssl genrsa -traditional 2048 > "$W/rsa.key" 2>/dev/null || die "无法生成 RSA 私钥"
+(umask 077; openssl genrsa -traditional 2048 > "$W/rsa.key" 2>/dev/null) || die "无法生成 RSA 私钥"
 openssl rsa -in "$W/rsa.key" -pubout -out "$W/rsa.pub" 2>/dev/null || die "无法生成 RSA 公钥"
+sudo chgrp syedge "$W/rsa.key" && chmod 0640 "$W/rsa.key" && chmod 0644 "$W/rsa.pub" || die "无法设置 RSA 测试密钥权限"
 cat > "$W/site-lua.conf" <<'EOF'
 server {
     listen       127.0.0.1:18090;
@@ -112,6 +114,141 @@ server {
                 return
             end
             ngx.say("resty-rsa-ok")
+        }
+    }
+    location = /ext-require {
+        content_by_lua_block {
+            local mods = { "resty.redis", "resty.mysql", "resty.rsa", "resty.memcached", "resty.dns.resolver", "resty.string",
+                "resty.md5", "resty.sha1", "resty.sha256", "resty.aes", "resty.random", "resty.upload",
+                "resty.websocket.server", "resty.websocket.client", "resty.lock", "resty.limit.req",
+                "resty.limit.conn", "resty.limit.count", "resty.limit.traffic", "tablepool" }
+            local bad = {}
+            for _, m in ipairs(mods) do
+                local ok, err = pcall(require, m)
+                if not ok then bad[#bad + 1] = m .. ": " .. tostring(err) end
+            end
+            if #bad == 0 then ngx.say("ext-modules-ok") else ngx.say(table.concat(bad, "; ")) end
+        }
+    }
+    location = /ext-digest {
+        content_by_lua_block {
+            local str = require "resty.string"
+            local sha256, md5, sha1 = require "resty.sha256", require "resty.md5", require "resty.sha1"
+            local s256 = sha256:new(); s256:update("abc")
+            local m5 = md5:new(); m5:update("abc")
+            local s1 = sha1:new(); s1:update("abc")
+            local a, b, c = str.to_hex(s256:final()), str.to_hex(m5:final()), str.to_hex(s1:final())
+            if a == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                and b == "900150983cd24fb0d6963f7d28e17f72"
+                and c == "a9993e364706816aba3e25717850c26c9cd0d89d" then
+                ngx.say("ext-digest-ok")
+            else
+                ngx.say(a, " ", b, " ", c)
+            end
+        }
+    }
+    location = /ext-aes {
+        content_by_lua_block {
+            local aes = require "resty.aes"
+            local a = aes:new("0123456789abcdef", nil, aes.cipher(128, "cbc"), aes.hash.sha256)
+            local enc = a:encrypt("hello syedge")
+            local dec = enc and a:decrypt(enc)
+            ngx.say(dec == "hello syedge" and "ext-aes-ok" or "ext-aes-bad")
+        }
+    }
+    location = /ext-random {
+        content_by_lua_block {
+            local s = require("resty.random").bytes(16)
+            ngx.say(s and #s == 16 and "ext-random-ok" or "ext-random-bad")
+        }
+    }
+    location = /ext-lock {
+        content_by_lua_block {
+            local lock = require "resty.lock"
+            local l = lock:new("standalone_test_locks")
+            local el, err = l:lock("k1")
+            local un = el and l:unlock()
+            ngx.say((el and un == 1) and "ext-lock-ok" or ("ext-lock-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-limit {
+        content_by_lua_block {
+            local req = require "resty.limit.req"
+            local lim, err = req.new("standalone_test_limits", 10, 5)
+            local delay = lim and lim:incoming("ip", true)
+            ngx.say((lim and delay ~= nil) and "ext-limit-ok" or ("ext-limit-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-tablepool {
+        content_by_lua_block {
+            local tp = require "tablepool"
+            local t = tp.fetch("standalone_ext", 0, 4)
+            local is_tbl = type(t) == "table"
+            tp.release("standalone_ext", t)
+            ngx.say(is_tbl and "ext-tablepool-ok" or "ext-tablepool-bad")
+        }
+    }
+    location = /ext-cjson {
+        content_by_lua_block {
+            local cjson = require "cjson"
+            local safe = require "cjson.safe"
+            local t = cjson.decode(cjson.encode({ a = 1, b = { "x", "y" } }))
+            local bad, err = safe.decode("{")
+            ngx.say((t.a == 1 and t.b[2] == "y" and bad == nil and err ~= nil) and "ext-cjson-ok" or "ext-cjson-bad")
+        }
+    }
+    location = /ext-redis {
+        content_by_lua_block {
+            local parser = require "redis.parser"
+            local q = parser.build_query({ "get", "a" })
+            local res, typ = parser.parse_reply("+OK\r\n")
+            local ok = q == "*2\r\n$3\r\nget\r\n$1\r\na\r\n" and res == "OK" and typ == parser.STATUS_REPLY
+            ngx.say(ok and "ext-redis-ok" or "ext-redis-bad")
+        }
+    }
+    location = /ext-rds {
+        content_by_lua_block {
+            local parser = require "rds.parser"
+            ngx.say((type(parser.parse) == "function" and parser.null ~= nil) and "ext-rds-ok" or "ext-rds-bad")
+        }
+    }
+    location = /ext-signal {
+        content_by_lua_block {
+            local sig = require "resty.signal"
+            local ok, err = sig.kill(ngx.worker.pid(), 0)
+            ngx.say((sig.signum("HUP") == 1 and ok == true) and "ext-signal-ok" or ("ext-signal-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-shell {
+        content_by_lua_block {
+            local ok, err = pcall(require, "resty.shell")
+            if not ok and string.find(tostring(err), "module 'resty.shell' not found", 1, true) then
+                ngx.say("ext-shell-not-bundled")
+            else
+                ngx.say("ext-shell-bad " .. tostring(ok) .. " " .. tostring(err))
+            end
+        }
+    }
+    location = /ext-upstream {
+        content_by_lua_block {
+            local names = require("ngx.upstream").get_upstreams()
+            local found = false
+            for _, n in ipairs(names) do
+                if n == "standalone_test_up" then found = true end
+            end
+            ngx.say(found and "ext-upstream-ok" or "ext-upstream-bad")
+        }
+    }
+    location = /ext-hc {
+        content_by_lua_block {
+            local hc = require "resty.upstream.healthcheck"
+            local ok, err = hc.spawn_checker({
+                shm = "standalone_hc", upstream = "standalone_test_up", type = "http",
+                http_req = "GET / HTTP/1.0\r\nHost: standalone-lua.test\r\n\r\n",
+                interval = 60000, timeout = 1000, fall = 2, rise = 2,
+                valid_statuses = { 200 }, concurrency = 1,
+            })
+            ngx.say(ok and "ext-hc-ok" or ("ext-hc-bad " .. tostring(err)))
         }
     }
 }
@@ -134,10 +271,9 @@ local private_key, err = read("$W/rsa.key")
 if not private_key then error("read private key: " .. tostring(err)) end
 
 local M = {}
-
 function M.roundtrip()
     local message = "resty.mysql RSA password"
-    -- resty.mysql uses KEY_TYPE.PKCS8 for a server PKIX public key for compatibility.
+    -- 与 resty.mysql 的 _encrypt_password 使用完全相同的参数。
     local pub, err = rsa:new({
         public_key = public_key,
         key_type = rsa.KEY_TYPE.PKCS8,
@@ -145,11 +281,13 @@ function M.roundtrip()
         algorithm = "sha1",
     })
     if not pub then return nil, "new public key: " .. tostring(err) end
-
     local encrypted, err = pub:encrypt(message)
     if not encrypted then return nil, "encrypt: " .. tostring(err) end
 
-    local priv, err = rsa:new({ private_key = private_key })
+    local priv, err = rsa:new({
+        private_key = private_key,
+        padding = rsa.PADDING.RSA_PKCS1_OAEP_PADDING,
+    })
     if not priv then return nil, "new private key: " .. tostring(err) end
     local decrypted, err = priv:decrypt(encrypted)
     if decrypted ~= message then return nil, "decrypt: " .. tostring(err or "round-trip mismatch") end
@@ -158,7 +296,6 @@ function M.roundtrip()
     if not signer then return nil, "new signer: " .. tostring(err) end
     local signature, err = signer:sign(message)
     if not signature then return nil, "sign: " .. tostring(err) end
-
     local verifier, err = rsa:new({
         public_key = public_key,
         key_type = rsa.KEY_TYPE.PKIX,
@@ -167,11 +304,12 @@ function M.roundtrip()
     if not verifier then return nil, "new verifier: " .. tostring(err) end
     local verified, err = verifier:verify(message, signature)
     if not verified then return nil, "verify: " .. tostring(err) end
+    if verifier:verify(message .. " altered", signature) then return nil, "altered message verified" end
     return true
 end
-
 return M
 EOF
+printf 'lua_shared_dict standalone_test_locks 1m;\nlua_shared_dict standalone_test_limits 1m;\nlua_shared_dict standalone_hc 1m;\nupstream standalone_test_up {\n    server 127.0.0.1:18091;\n}\n' > "$W/ext-dicts.conf"
 
 # 1. 不带新参数安装附加包后，站点中的 Lua 指令应当失败
 if sudo bash "$W/lua/install.sh" > "$W/i1.log" 2>&1; then
@@ -201,6 +339,8 @@ stat_after=$(sudo stat -c '%U:%G %a' "$MAIN")
 [[ "$stat_before" == "$stat_after" ]] && ok "2 主配置属主与权限不变（$stat_after）" || bad "2 主配置属主或权限改变：$stat_before -> $stat_after"
 
 # 3. 站点配置校验通过，reload 后 Lua 输出生效
+# （共享内存字典 lua_shared_dict 只能在 http 级声明，放在单独的 conf.d 文件中，在启用之后、reload 之前安装）
+sudo install -m 0644 "$W/ext-dicts.conf" "$DICT" || die "无法写入共享字典配置"
 out=$(syedge_t); rc=$?
 reload
 if [[ $rc -eq 0 ]] && body_is /lua "standalone-lua-ok"; then
@@ -215,17 +355,54 @@ if sudo install -m 0644 "$W/hello.lua" "$PREFIX/lualib/hello.lua" && body_is /he
 else
   bad "4 <根目录>/lualib 中的模块未被加载"
 fi
-if sudo install -m 0644 "$W/rsa-check.lua" "$PREFIX/lualib/rsa-check.lua" && body_is /rsa "resty-rsa-ok"; then
-  ok "4b 独立模式可按 resty.mysql 用法完成 RSA 公钥加密/私钥解密与签名/验签"
-else
-  bad "4b 独立模式 resty.rsa 公钥加密/私钥解密或签名/验签失败"
-fi
 
 # 5. 验收用的四层阶段片段通过校验（只校验，不请求）
 sudo install -m 0644 "$HERE/standalone-lua-response-filter.conf" "$PREFIX/conf/current/conf.d/standalone-lua-response-filter.conf"
 out=$(syedge_t); rc=$?
 sudo rm -f -- "$PREFIX/conf/current/conf.d/standalone-lua-response-filter.conf"
 [[ $rc -eq 0 ]] && ok "5 response-filter 片段 syedge -t 通过" || bad "5 response-filter 片段校验失败：${out:0:200}"
+
+# 13-20. 启用期间附加包随带的 Lua 库（extlib）可用：00 文件的 lua_package_path 为三段（lualib、extlib、<根目录>/lualib）
+extok() { # <编号> <说明> <路径> <期望响应体>
+  if body_is "$3" "$4"; then ok "$1 $2"; else bad "$1 $2（响应：$(curl -s --max-time 3 "http://127.0.0.1:18090$3" | head -c 200)）"; fi
+}
+line13=$(sudo grep '^lua_package_path' "$NEWCONF")
+want13="lua_package_path   \"$PREFIX/modules/lua/lualib/?.lua;$PREFIX/modules/lua/extlib/?.lua;$PREFIX/lualib/?.lua\";"
+if [[ "$line13" == "$want13" ]]; then ok "13 00 文件的 lua_package_path 为三段：lualib、extlib、<根目录>/lualib"; else bad "13 lua_package_path 不是预期的三段：$line13"; fi
+extok 14 "resty.* 与 tablepool 共 20 个模块全部可 require" /ext-require "ext-modules-ok"
+extok 15 "resty.sha256 / md5 / sha1 对固定输入的摘要正确（resty.string.to_hex）" /ext-digest "ext-digest-ok"
+extok 16 "resty.aes 加解密往返" /ext-aes "ext-aes-ok"
+extok 17 "resty.random.bytes 返回指定长度" /ext-random "ext-random-ok"
+extok 18 "resty.lock 加锁与解锁" /ext-lock "ext-lock-ok"
+extok 19 "resty.limit.req 可创建对象并计数" /ext-limit "ext-limit-ok"
+extok 20 "tablepool fetch / release" /ext-tablepool "ext-tablepool-ok"
+
+# 21-28. D1 第二阶段的编译库与上游模块（只在独立模式可用）：00 文件的 lua_package_cpath 指向 extlib，
+# 主配置第三行加载 lua-upstream 模块，C 库、resty.signal 与 resty.upstream.healthcheck 在真实数据面上可用；resty.shell 不随附
+line21=$(sudo grep '^lua_package_cpath' "$NEWCONF")
+want21="lua_package_cpath  \"$PREFIX/modules/lua/extlib/?.so\";"
+if [[ "$line21" == "$want21" ]]; then ok "21 00 文件的 lua_package_cpath 为 extlib/?.so"; else bad "21 lua_package_cpath 不是预期值：$line21"; fi
+extok 22 "cjson.encode / decode 往返，cjson.safe 对坏输入返回 nil 与错误" /ext-cjson "ext-cjson-ok"
+extok 23 "redis.parser 的 build_query 与 parse_reply" /ext-redis "ext-redis-ok"
+extok 24 "rds.parser 可 require" /ext-rds "ext-rds-ok"
+extok 25 "resty.signal 的 signum(HUP) 与对本 worker 的 kill(pid, 0)" /ext-signal "ext-signal-ok"
+extok 26 "resty.shell 不随附（依赖的 ngx.pipe 在本核心上不可用），require 报找不到模块" /ext-shell "ext-shell-not-bundled"
+if sudo sed -n 3p "$MAIN" | grep -Eq '^load_module  .+/modules/lua/ngx_http_lua_upstream_module\.so;$'; then
+  extok 27 "lua-upstream 模块已加载，ngx.upstream 列出站点定义的 upstream" /ext-upstream "ext-upstream-ok"
+else
+  bad "27 主配置第三行应为 lua-upstream 模块的 load_module"
+fi
+extok 28 "resty.upstream.healthcheck 对该 upstream 的 spawn_checker 成功（共享字典 standalone_hc）" /ext-hc "ext-hc-ok"
+if sudo test -s "$PREFIX/modules/lua/extlib/resty/rsa.lua" && ! sudo test -e "$PREFIX/modules/lua/lualib/resty/rsa.lua"; then
+  ok "29 resty.rsa 仅安装在 extlib"
+else
+  bad "29 resty.rsa 未按预期安装到 extlib"
+fi
+if sudo install -m 0644 "$W/rsa-check.lua" "$PREFIX/lualib/rsa-check.lua" && body_is /rsa "resty-rsa-ok"; then
+  ok "30 resty.mysql 参数的 RSA 加解密及签名验签（含篡改拒绝）"
+else
+  bad "30 resty.rsa 加解密或签名验签失败（响应：$(curl -s --max-time 3 http://127.0.0.1:18090/rsa | head -c 300)）"
+fi
 
 # 6. 重复启用报错，文件不变
 sudo cp -- "$MAIN" "$W/main.before6" && sudo cp -- "$NEWCONF" "$W/new.before6"
@@ -257,7 +434,7 @@ out=$(syedge_t); rc=$?
 [[ $rc -eq 0 ]] && ok "8 恢复后 syedge -t 仍通过" || bad "8 恢复后 syedge -t 失败：${out:0:200}"
 
 # 9. 去掉 Lua 站点后停用并卸载：都成功，主配置与最初逐字节相同
-sudo rm -f -- "$SITE"
+sudo rm -f -- "$SITE" "$DICT"
 sudo bash "$W/lua/install.sh" --standalone-disable > "$W/i9.log" 2>&1; rc9=$?
 reload; sleep 2
 sudo bash "$W/lua/uninstall.sh" > "$W/u9.log" 2>&1; rc9u=$?

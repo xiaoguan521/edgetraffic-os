@@ -8,7 +8,8 @@
 # -t tongsuo：国密变体。铜锁按 dataplane/UPSTREAM 拉取发布标签并校验提交哈希，开启 NTLS 后静态链接（隐含 -S）；
 #     configure 带 --build=gmssl，syedge -V 显示 "(gmssl)" 与 enable-ntls，控制台据此识别国密节点。
 #     KEEP_TLS_CLI=<路径> 时把铜锁的命令行工具复制出来（CI 用它做国密握手测试，不进安装包）。
-# LUA_MODULES_OUT=<目录>：基础包打包后，用完全相同的 configure 参数再编译 Lua 附加包的两个动态模块
+# LUA_MODULES_OUT=<目录>：基础包打包后，用完全相同的 configure 参数再编译 Lua 附加包的三个动态模块
+#     （ndk_http_module、ngx_http_lua_module、ngx_http_lua_upstream_module；后者需要 LUA_UPSTREAM_SRC）
 #     （ngx_devel_kit、lua 模块，需要 NDK_SRC / LUA_MODULE_SRC / LUAJIT_INC / LUAJIT_LIB），只输出 .so，
 #     并核对模块需要的每个符号都由基础包或 ngx_devel_kit 导出（见 dataplane/lua/base-exports.txt）。由 build-syedge-lua.sh 调用。
 # -S：OpenSSL、PCRE2、zlib 按 dataplane/DEPS 下载源码并静态链接，二进制只依赖 glibc。
@@ -220,13 +221,15 @@ tar -C "$ROOT" --owner=0 --group=0 -czf "$PKG" "${PREFIX#/}"
 echo "BUILD OK: $PKG"
 
 if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
-  : "${NDK_SRC:?}" "${LUA_MODULE_SRC:?}" "${LUAJIT_INC:?}" "${LUAJIT_LIB:?}"
+  : "${NDK_SRC:?}" "${LUA_MODULE_SRC:?}" "${LUA_UPSTREAM_SRC:?}" "${LUAJIT_INC:?}" "${LUAJIT_LIB:?}"
   export LUAJIT_INC LUAJIT_LIB
+  # lua-upstream（ngx.upstream）是第三个动态模块：与 lua 模块同一次 configure，参数完全相同
   ./auto/configure "${CONF[@]}" --add-dynamic-module="$NDK_SRC" --add-dynamic-module="$LUA_MODULE_SRC" \
+    --add-dynamic-module="$LUA_UPSTREAM_SRC" \
     > "$WORK/configure-lua.log" 2>&1 || { ci_fail "$WORK/configure-lua.log" 15; exit 6; }
   make -j"$(nproc)" modules > "$WORK/make-lua.log" 2>&1 || { ci_fail "$WORK/make-lua.log" 20; exit 6; }
   mkdir -p "$LUA_MODULES_OUT"
-  for m in ndk_http_module ngx_http_lua_module; do
+  for m in ndk_http_module ngx_http_lua_module ngx_http_lua_upstream_module; do
     install -m 0644 "objs/$m.so" "$LUA_MODULES_OUT/$m.so"
     strip --strip-unneeded "$LUA_MODULES_OUT/$m.so"
   done
@@ -235,7 +238,7 @@ if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
   # Include symbols exported by each module's NEEDED libraries.  Some Kylin V10
   # binutils omit glibc version suffixes, which otherwise makes normal libc/
   # libgcc dependencies look like missing base exports.
-  nm -D -u "$LUA_MODULES_OUT"/*.so | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$WORK/needs"
+  nm -D -u "$LUA_MODULES_OUT/ndk_http_module.so" "$LUA_MODULES_OUT/ngx_http_lua_module.so" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$WORK/needs"
   : > "$WORK/runtime-exports"
   if command -v ldd >/dev/null 2>&1; then
     for module in "$LUA_MODULES_OUT/ndk_http_module.so" "$LUA_MODULES_OUT/ngx_http_lua_module.so"; do
@@ -272,6 +275,29 @@ if [[ -n "${LUA_MODULES_OUT:-}" ]]; then
   if [[ -n "${missing// }" ]]; then
     echo "Lua modules need symbols the base binary does not export: $missing" >&2
     [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::add to dataplane/lua/base-exports.txt: $missing"
+    exit 7
+  fi
+  # lua-upstream 模块（D1 第二阶段）：它的 lua_* API 与 ngx_http_lua_add_package_preload 由 lua 模块导出（lua 模块以 RTLD_GLOBAL 加载），
+  # 所以它的未定义符号可由基础包、ngx_devel_kit、运行时库或 lua 模块提供。
+  nm -D -u "$LUA_MODULES_OUT/ngx_http_lua_upstream_module.so" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$WORK/needs-upstream"
+  nm -D --defined-only "$LUA_MODULES_OUT/ngx_http_lua_module.so" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$WORK/lua-defined"
+  cat "$WORK/resolvable" "$WORK/lua-defined" | sort -u > "$WORK/resolvable-upstream"
+  missing=$(comm -23 "$WORK/needs-upstream" "$WORK/resolvable-upstream" | tr '\n' ' ')
+  if [[ -n "${missing// }" ]]; then
+    echo "lua-upstream module needs symbols nothing provides: $missing" >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=lua-upstream::unresolved: $missing"
+    exit 7
+  fi
+  # 附加库（extlib / lualib 中经 FFI 调用的 C 函数，见 base-exports.txt）：列出的每个符号都必须由基础包动态导出。
+  # 库是运行时经 dlsym 解析的，load_module 与 syedge -t 都不会触发，所以这里直接核对导出表（标准版与铜锁各执行一次）。
+  nm -D --defined-only "$O/sbin/$B" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$WORK/base-defined"
+  # 只核对 “# 附加库 extlib” 之后的条目：之前的条目供 Lua 模块链接用，其中个别在某些 TLS 库版本里是宏，由上面的核对负责。
+  awk '/^# 附加库 extlib/{on=1} on && !/^#/ && NF' "$HERE/lua/base-exports.txt" | sort -u > "$WORK/base-wanted"
+  [[ -s "$WORK/base-wanted" ]] || { echo "base-exports.txt: no extlib section found" >&2; exit 7; }
+  not_exported=$(comm -23 "$WORK/base-wanted" "$WORK/base-defined" | tr '\n' ' ')
+  if [[ -n "${not_exported// }" ]]; then
+    echo "base binary does not export symbols listed in base-exports.txt: $not_exported" >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=base exports::not exported by the base binary: $not_exported"
     exit 7
   fi
   echo "LUA MODULES OK: $LUA_MODULES_OUT"

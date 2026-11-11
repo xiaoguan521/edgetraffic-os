@@ -80,12 +80,12 @@ http {
   fastcgi_temp_path %s/fastcgi_temp;
   uwsgi_temp_path %s/uwsgi_temp;
   scgi_temp_path %s/scgi_temp;
-  lua_package_path '%s/lua/?.lua;%s/lualib/?.lua;%s/lualib/?/init.lua;;';
+  lua_package_path '%s/lua/?.lua;%s/lualib/?.lua;%s/lualib/?/init.lua;%s/extlib/?.lua;;';
   init_by_lua_file %s/lua/init.lua;
   %s
   server { listen 127.0.0.1:%d; location / { content_by_lua_file %s/lua/content.lua; } }
 }
-`, modules, modules, user, pidFile, logFile, root, root, root, root, root, rdir, modules, modules, rdir, bad, port, rdir)
+`, modules, modules, user, pidFile, logFile, root, root, root, root, root, rdir, modules, modules, modules, rdir, bad, port, rdir)
 	}
 	writeBaseline := filepath.Join(confRoot, "releases", "r000000")
 	if err := os.MkdirAll(filepath.Join(writeBaseline, "lua"), 0o755); err != nil {
@@ -122,7 +122,7 @@ http {
 		b := render.Repack(rev, map[string][]byte{
 			"syedge.conf":             []byte(makeConfig(rev, bad)),
 			"lua/init.lua":            []byte("legacy_init = true"),
-			"lua/content.lua":         []byte("local m = require('thirdparty'); ngx.say(m.value())"),
+			"lua/content.lua":         []byte("local m = require('thirdparty'); assert(require('resty.rsa').PADDING); ngx.say(m.value())"),
 			"lua/thirdparty.lua":      []byte(fmt.Sprintf("return {value = function() return %q end}", result)),
 			configbundle.LegacyMarker: []byte(markerBody),
 		})

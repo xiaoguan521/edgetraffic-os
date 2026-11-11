@@ -30,7 +30,6 @@ func luaPackage(t *testing.T, ver string, extra map[string]string) []byte {
 		"addon/gmssl/ndk_http_module.so":        "gm-ndk",
 		"addon/gmssl/ngx_http_lua_module.so":    "gm-lua",
 		"addon/lualib/resty/core.lua":           "return {}",
-		"addon/lualib/resty/rsa.lua":            "return {}",
 		"addon/lualib/etos/jwt.lua":             "return {}",
 		"addon/VERSION":                         fmt.Sprintf(`{"name":"syedge-lua","version":%q}`, ver),
 		"addon/NOTICE":                          "notice",
@@ -90,7 +89,7 @@ func TestPrepareLuaRejectsVariantCollision(t *testing.T) {
 	dir := t.TempDir()
 	p := Paths{Modules: filepath.Join(dir, "modules")}
 	ver := "1.30.6-1"
-	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "lualib/resty/rsa.lua", "BASE"} {
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "BASE"} {
 		path := filepath.Join(p.luaDir(ver), f)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -137,7 +136,7 @@ func TestHotUpgradeWithLuaAddon(t *testing.T) {
 		}
 	}
 	// 一个“已安装”的旧版本附加包（配置不加载模块，这里只验证软链切换；真实加载在 CI 的 lua 验收中）
-	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "lualib/resty/rsa.lua"} {
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua"} {
 		_ = os.WriteFile(filepath.Join(dir, "modules/lua-1.0.0", f), []byte("old"), 0o644)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "modules/lua-1.0.0/BASE"), []byte("standard\n"), 0o644)
@@ -252,5 +251,129 @@ http {
 	}
 	if link() != "lua-9.2.0" {
 		t.Fatalf("after commit link = %s", link())
+	}
+}
+
+// 附加包的 extlib（独立模式与原生兼容配置包可用的第三方纯 Lua 库，放在 modules/lua-<版本>/extlib/）：
+// 升级路径必须接受 addon/extlib 下的 .lua 文件，其他类型与形式仍拒绝。
+func TestLuaEntryPatternExtlib(t *testing.T) {
+	for _, n := range []string{"addon/extlib/resty/redis.lua", "addon/extlib/tablepool.lua", "addon/extlib/resty/limit/req.lua"} {
+		if !luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be accepted", n)
+		}
+	}
+	for _, n := range []string{"addon/extlib/resty/x.txt", "addon/extlibx/x.lua", "addon/extlib/resty/x.lua.sh"} {
+		if luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be rejected", n)
+		}
+	}
+}
+
+// D1 第二阶段：附加包可以携带 extlib 下的编译库（*.so，与基础变体无关）和标准版 / 国密版各一份的 lua-upstream 模块。
+// 其他路径、目录穿越、带点或横线的目录名与额外后缀一律拒绝。
+func TestLuaEntryPatternNativeModules(t *testing.T) {
+	for _, n := range []string{
+		"addon/standard/ngx_http_lua_upstream_module.so",
+		"addon/gmssl/ngx_http_lua_upstream_module.so",
+		"addon/extlib/cjson.so",
+		"addon/extlib/redis/parser.so",
+		"addon/extlib/rds/parser.so",
+		"addon/extlib/librestysignal.so",
+	} {
+		if !luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be accepted", n)
+		}
+	}
+	for _, n := range []string{
+		"addon/lualib/x.so",
+		"addon/extlib/../x.so",
+		"addon/extlib/a/../x.so",
+		"addon/extlib/a.b/x.so",
+		"addon/extlib/x-y.so",
+		"addon/extlib//x.so",
+		"addon/extlib/x.so.sh",
+		"addon/extlibx/x.so",
+		"addon/standard/other.so",
+		"addon/other/ngx_http_lua_upstream_module.so",
+		"addon/standard/ngx_http_lua_upstream_module.so.sh",
+		"addon/gmssl/ngx_http_lua_upstream_module.so/x",
+	} {
+		if luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be rejected", n)
+		}
+	}
+}
+
+// 附加包中的编译库随包安装到 modules/lua-<版本>/extlib/；上游模块只取与基础变体匹配的一份（另一份跳过）。
+func TestInstallLuaWithNativeModules(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Modules, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	ver := "1.30.6-1"
+	pkg := luaPackage(t, ver, map[string]string{
+		"addon/extlib/cjson.so":                          "cjson-so",
+		"addon/extlib/redis/parser.so":                   "redis-so",
+		"addon/standard/ngx_http_lua_upstream_module.so": "std-upstream",
+		"addon/gmssl/ngx_http_lua_upstream_module.so":    "gm-upstream",
+	})
+	dropLua(t, p, priv, ver, "lua", pkg)
+	if err := p.installLua(ver, "standard"); err != nil {
+		t.Fatalf("add-on with native modules rejected: %v", err)
+	}
+	want := map[string]string{
+		"extlib/cjson.so":                 "cjson-so",
+		"extlib/redis/parser.so":          "redis-so",
+		"ngx_http_lua_upstream_module.so": "std-upstream",
+	}
+	for f, body := range want {
+		b, err := os.ReadFile(filepath.Join(p.luaDir(ver), f))
+		if err != nil || string(b) != body {
+			t.Errorf("%s = %q, %v; want %q", f, b, err, body)
+		}
+	}
+	// 不带 extlib 的旧包仍可安装（TestInstallLuaAcceptsPackagedDefaultPrefix 覆盖）；带 .. 的路径被拒绝
+	ver2 := "1.30.7-1"
+	dropLua(t, p, priv, ver2, "lua", luaPackage(t, ver2, map[string]string{"addon/extlib/a/../x.so": "x"}))
+	if err := p.installLua(ver2, "standard"); err == nil {
+		t.Fatal("add-on entry with .. accepted")
+	}
+}
+
+func TestInstallLuaWithExtlib(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Modules, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	ver := "1.30.6-1"
+	pkg := luaPackage(t, ver, map[string]string{
+		"addon/extlib/resty/redis.lua": "return {}",
+		"addon/extlib/resty/rsa.lua":   "return {}",
+		"addon/extlib/tablepool.lua":   "return {}",
+	})
+	dropLua(t, p, priv, ver, "lua", pkg)
+	if err := p.installLua(ver, "standard"); err != nil {
+		t.Fatalf("add-on with extlib rejected: %v", err)
+	}
+	for _, f := range []string{"extlib/resty/redis.lua", "extlib/resty/rsa.lua", "extlib/tablepool.lua"} {
+		if _, err := os.Stat(filepath.Join(p.luaDir(ver), f)); err != nil {
+			t.Fatalf("%s not installed: %v", f, err)
+		}
 	}
 }

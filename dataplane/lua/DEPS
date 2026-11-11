@@ -1,6 +1,6 @@
 # syedge-lua 附加包依赖（P10）：全部按发布标签 + 完整提交哈希锁定，克隆后校验提交哈希
 # （提交哈希是整个源码树内容的密码学摘要）。升级任一依赖时同时更新标签与提交哈希，并重新跑 CI 的 lua 验收。
-# 版本配套：lua-resty-core v0.1.32R1 要求 lua 模块 0.10.29（ngx_lua_version 10029）。许可：LuaJIT / lua-resty-rsa MIT，其余 BSD-2-Clause。
+# 版本配套：lua-resty-core v0.1.32R1 要求 lua 模块 0.10.29（ngx_lua_version 10029）。许可：LuaJIT MIT，其余 BSD-2-Clause。
 LUAJIT_GIT=https://github.com/openresty/luajit2.git
 LUAJIT_TAG=v2.1-20261023
 LUAJIT_COMMIT=5d8d0a27bfa4595b24b8ed36123555fcd2bb2f8c
@@ -16,6 +16,60 @@ RESTY_CORE_COMMIT=3ad8ab4b01758c0a03b534026c31cbfa9fc203a5
 LRUCACHE_GIT=https://github.com/openresty/lua-resty-lrucache.git
 LRUCACHE_TAG=v0.15
 LRUCACHE_COMMIT=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b
+# 第三方 lua-resty-rsa（MIT）：供 resty.mysql 的 RSA 认证路径使用，仅放入 extlib。
 RESTY_RSA_GIT=https://github.com/spacewander/lua-resty-rsa.git
 RESTY_RSA_TAG=v1.1.1
 RESTY_RSA_COMMIT=c048d749997c0af73035a27ab0c5ad670a5f8a29
+# 附加库 extlib（D1 第一阶段，纯 Lua，全部来自 github.com/openresty/，许可均为 BSD-2-Clause，README 中的 “licensed under the BSD license” 声明在构建时校验）。
+# 标签为各仓库截至 2026-11-11 的最新正式发布标签（不取 rc）；提交哈希为该标签指向的提交（轻量标签，ls-remote 与克隆后 rev-parse HEAD 一致）。
+# 第二阶段（D1）：编译库与 lua-upstream 动态模块。许可在克隆后校验：cjson 为 MIT（LICENSE），其余 README 声明 BSD。
+# 编译库（cjson、redis/rds parser、resty.signal 的 librestysignal.so）只依赖 LuaJIT 头文件，直接用 cc 编译，不链接 libluajit。
+# lua-upstream-nginx-module 与 lua 模块同一次 configure 编译为第三个动态模块（同一套 configure 参数）。
+CJSON_GIT=https://github.com/openresty/lua-cjson.git
+CJSON_TAG=2.1.0.20
+CJSON_COMMIT=5f53e878d0441e1555f53060178c61d161079e06
+REDIS_PARSER_GIT=https://github.com/openresty/lua-redis-parser.git
+REDIS_PARSER_TAG=v0.13
+REDIS_PARSER_COMMIT=2c5a4e960da7870ab29dd6001ba6a2828ce77760
+RDS_PARSER_GIT=https://github.com/openresty/lua-rds-parser.git
+RDS_PARSER_TAG=v0.06
+RDS_PARSER_COMMIT=621e6b978983b4779435a56480ea636eae93d65d
+RESTY_SIGNAL_GIT=https://github.com/openresty/lua-resty-signal.git
+RESTY_SIGNAL_TAG=v0.05
+RESTY_SIGNAL_COMMIT=42319006723c104e47d6922db17459c95e4db224
+RESTY_UPSTREAM_HC_GIT=https://github.com/openresty/lua-resty-upstream-healthcheck.git
+RESTY_UPSTREAM_HC_TAG=v0.10
+RESTY_UPSTREAM_HC_COMMIT=71b878c8d66e3c475d744314d83ed53512613ebc
+LUA_UPSTREAM_GIT=https://github.com/openresty/lua-upstream-nginx-module.git
+LUA_UPSTREAM_TAG=v0.08
+LUA_UPSTREAM_COMMIT=ad49f606989f91a514a7568eb45deb2642dd3e86
+RESTY_REDIS_GIT=https://github.com/openresty/lua-resty-redis.git
+RESTY_REDIS_TAG=v0.34
+RESTY_REDIS_COMMIT=0d014dd1c7ca16e2e7570e04d16421e3df0d3b36
+RESTY_MYSQL_GIT=https://github.com/openresty/lua-resty-mysql.git
+RESTY_MYSQL_TAG=v0.31
+RESTY_MYSQL_COMMIT=3af1b39d9f96579efe14d6a447c3d2c163a71b7d
+RESTY_MEMCACHED_GIT=https://github.com/openresty/lua-resty-memcached.git
+RESTY_MEMCACHED_TAG=v0.18
+RESTY_MEMCACHED_COMMIT=98bf47d7a48105c2e5ad5437cda0922a9c02fef6
+RESTY_DNS_GIT=https://github.com/openresty/lua-resty-dns.git
+RESTY_DNS_TAG=v0.24
+RESTY_DNS_COMMIT=b68eaecbf7997ac71c08ba56032b1f45438bd758
+RESTY_STRING_GIT=https://github.com/openresty/lua-resty-string.git
+RESTY_STRING_TAG=v0.19
+RESTY_STRING_COMMIT=282590f58d4c927226492e0211b974d72b759329
+RESTY_UPLOAD_GIT=https://github.com/openresty/lua-resty-upload.git
+RESTY_UPLOAD_TAG=v0.11
+RESTY_UPLOAD_COMMIT=03704aee42f7135e7782688d8a9af63a16015edc
+RESTY_WEBSOCKET_GIT=https://github.com/openresty/lua-resty-websocket.git
+RESTY_WEBSOCKET_TAG=v0.16
+RESTY_WEBSOCKET_COMMIT=ece7d0dddf676d2427fb8d95c2588eee6e2eae5f
+RESTY_LOCK_GIT=https://github.com/openresty/lua-resty-lock.git
+RESTY_LOCK_TAG=v0.09
+RESTY_LOCK_COMMIT=9dc550e56b6f3b1a2f1a31bb270a91813b5b6861
+RESTY_LIMIT_TRAFFIC_GIT=https://github.com/openresty/lua-resty-limit-traffic.git
+RESTY_LIMIT_TRAFFIC_TAG=v0.09
+RESTY_LIMIT_TRAFFIC_COMMIT=e80969b79afcc94856b095fe6163ace21387c6b6
+TABLEPOOL_GIT=https://github.com/openresty/lua-tablepool.git
+TABLEPOOL_TAG=v0.03
+TABLEPOOL_COMMIT=94d3a5f43df6526fbaeb0f06873862f964766683

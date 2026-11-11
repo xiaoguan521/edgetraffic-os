@@ -136,3 +136,30 @@ func TestLuaStr(t *testing.T) {
 		t.Fatalf("luaStr = %s", got)
 	}
 }
+
+// 控制台托管的配置不引用附加库目录 extlib（它只属于独立模式与原生兼容配置包），受限环境保持不变。
+func TestManagedLuaConfigHasNoExtlib(t *testing.T) {
+	b, err := Render(luaInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range b.Files {
+		if strings.Contains(string(data), "extlib") {
+			t.Errorf("managed config file %s references extlib", name)
+		}
+		// 上游模块与编译库只属于独立模式与原生兼容配置包：托管配置不加载它们，也不改 cpath
+		if strings.Contains(string(data), "ngx_http_lua_upstream_module") || strings.Contains(string(data), "librestysignal") {
+			t.Errorf("managed config file %s loads a native add-on module", name)
+		}
+	}
+	main := string(b.Files["syedge.conf"])
+	if !strings.Contains(main, `lua_package_path   "/opt/syedge/modules/lua/lualib/?.lua";`) {
+		t.Fatal("managed lua_package_path changed")
+	}
+	if !strings.Contains(main, `lua_package_cpath  "/opt/syedge/modules/lua/lualib/?.disabled";`) {
+		t.Fatal("managed lua_package_cpath changed")
+	}
+	if strings.Count(main, "load_module") != 2 {
+		t.Fatalf("managed config must load exactly the two base modules:\n%s", main[:300])
+	}
+}

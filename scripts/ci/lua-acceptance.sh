@@ -190,6 +190,8 @@ check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / strin
 check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500"
 sleep 0.3
 check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 "$LOG_DIR/error.log")" "lua-script-boom"
+check "托管脚本 require resty.redis / resty.mysql / cjson 失败（附加库目录 extlib 不在托管环境中）" "$(req -H "$H" http://127.0.0.1/lua-ext)$(body)" "200false false true false true"
+if [[ "$(sudo grep -c extlib "$ROOT/conf/releases/r900100/syedge.conf" || true)" == 0 ]]; then ok "托管配置不引用 extlib（lua_package_path 与受限环境不变）"; else bad "托管配置引用了 extlib"; fi
 check "脚本之外的路由不受影响" "$(req -H "$H" http://127.0.0.1/)$(body)" "200backend"
 # 语法错误：syedge -t 不执行 init 阶段，错误在 reload 时出现。master 不加载新配置、继续以当前配置服务，
 # error.log 中的 init_by_lua error 指出脚本与行号（agent 据此立即回滚，见 internal/agent/apply 的 badLog）

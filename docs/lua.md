@@ -41,13 +41,11 @@ sudo bash install.sh --standalone-disable  # 停用（只停用，不卸载附�
 启用会做的事：
 
 - 在主配置最前面插入两行 `load_module`，分别加载 `R/modules/lua/ndk_http_module.so` 与 `R/modules/lua/ngx_http_lua_module.so`（先 ndk 后 lua）；
-- 新建 `conf.d/00-lua-standalone.conf`，设置 `lua_package_path` 与 `lua_package_cpath`；
+- 新建 `conf.d/00-lua-standalone.conf`，设置 `lua_package_path`（依次为附加包的 `lualib`、`extlib` 与 `R/lualib`）与指向 `extlib` 的 `lua_package_cpath`；
 - 创建 `R/lualib/`（已存在则不动），用于放自己的 Lua 文件；
 - 用真实的 `syedge -t` 校验，失败则恢复主配置并删除新建的文件。
 
 自己的 Lua 文件放在 `R/lualib/` 下，例如 `R/lualib/hello.lua`，站点里 `require("hello")`。具名实例用 `--instance <实例名>`，其 `R` 为 `R/instances/<实例名>`，reload 时使用 `syedge@<实例名>`。`R` 是安装根目录，见[安装维护手册的路径约定](install-maintenance.md#路径约定)。
-
-附加包中的 `resty.rsa` 只用于独立模式和原生兼容配置；控制台托管的受限 Lua 脚本不能加载它。`resty.mysql` 及其数据库驱动仍不随附。
 
 停用前先删除站点里的 Lua 指令（如 `access_by_lua_block`），否则停用的校验会失败并恢复原状。停用会删除上述两行 `load_module` 与 `conf.d/00-lua-standalone.conf`，但保留 `R/lualib/`。独立模式 Lua 仍启用时，`uninstall.sh` 会拒绝卸载并提示先执行 `--standalone-disable`。
 
@@ -90,7 +88,7 @@ sudo bash install.sh --standalone-disable  # 停用（只停用，不卸载附�
 - LuaJIT 2.1（OpenResty 分支）；
 - ngx_devel_kit、OpenResty 的 lua 模块（动态模块）；
 - lua-resty-core、lua-resty-lrucache；
-- 第三方 `resty.rsa`（lua-resty-rsa v1.1.1，MIT）；
+- 随附的 Lua 库与编译库（见下文「随附的 Lua 库」）；
 - 审核过的规则库 `etos`（JSON 解析、JWT 校验、初始化与沙箱）。
 
 版本与提交哈希锁定在 `dataplane/lua/DEPS`。syedge 核心与改名 patch 不变。
@@ -147,6 +145,68 @@ sudo bash uninstall.sh --instance blue
    - 任何一步失败都恢复原状。
 
 未装附加包的节点升级流程不变。
+
+## 随附的 Lua 库
+
+第一阶段随附 10 个 OpenResty 官方纯 Lua 库；第二阶段增加 6 个库和一个动态模块（lua-upstream）。另随附 `resty.mysql` 使用的第三方库 `spacewander/lua-resty-rsa`。
+标签与提交哈希锁定在 `dataplane/lua/DEPS`，每个库的名称、标签与许可写在附加包的 `NOTICE` 中（构建时校验 BSD 许可声明及 cjson、lua-resty-rsa 的 MIT 授权）。
+库安装在 `R/modules/lua/extlib/`，与 `lualib` 同级。第二阶段的编译库（cjson、redis / rds parser、resty.signal 的 `librestysignal.so`）用 `cc` 编译，只依赖 LuaJIT 头文件，不链接 libluajit；
+它们与标准版、国密版基础包都兼容，只装一份。
+
+| 库 | 版本标签 | 主要模块 | 许可 | 适用范围 |
+| --- | --- | --- | --- | --- |
+| lua-resty-redis | v0.34 | `resty.redis` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-mysql | v0.31 | `resty.mysql`（依赖 `resty.sha256`、`resty.sha512`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-rsa | v1.1.1 | `resty.rsa`（第三方库，非 OpenResty 发行版组件） | MIT | 独立模式、原生兼容配置包 |
+| lua-resty-memcached | v0.18 | `resty.memcached` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-dns | v0.24 | `resty.dns.resolver` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-string | v0.19 | `resty.string`、`resty.md5`、`resty.sha1`、`resty.sha224`、`resty.sha256`、`resty.sha384`、`resty.sha512`、`resty.aes`、`resty.random` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-upload | v0.11 | `resty.upload` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-websocket | v0.16 | `resty.websocket.server`、`resty.websocket.client` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-lock | v0.09 | `resty.lock` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-limit-traffic | v0.09 | `resty.limit.req`、`resty.limit.conn`、`resty.limit.count`、`resty.limit.traffic` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-tablepool | v0.03 | `tablepool` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-cjson | 2.1.0.20 | `cjson`、`cjson.safe`（编译库 `extlib/cjson.so`） | MIT | 独立模式、原生兼容配置包 |
+| lua-redis-parser | v0.13 | `redis.parser`（编译库 `extlib/redis/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-rds-parser | v0.06 | `rds.parser`（编译库 `extlib/rds/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-signal | v0.05 | `resty.signal`（编译库 `extlib/librestysignal.so`，由 resty.signal 按 `package.cpath` 查找） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-upstream-healthcheck | v0.10 | `resty.upstream.healthcheck`（依赖 `ngx.upstream`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-upstream-nginx-module | v0.08 | 动态模块 `modules/lua/ngx_http_lua_upstream_module.so`，提供 `ngx.upstream` | BSD-2-Clause | 同上：只在独立模式与原生兼容配置包中加载 |
+
+**使用方式**
+
+- 独立模式：启用后直接在站点 Lua 中 `require "resty.redis"` 等即可。自己的 Lua 文件仍放在 `R/lualib/`。
+  启用时 `conf.d/00-lua-standalone.conf` 的 `lua_package_path` 为 `lualib`、`extlib`、`R/lualib` 三段，`lua_package_cpath` 为 `R/modules/lua/extlib/?.so`（编译库由它加载）。
+  附加包带有 `ngx_http_lua_upstream_module.so` 时，主配置前三行中多一行 `load_module`，加载 lua-upstream 模块（`ngx.upstream`）。`--standalone-disable` 删除这些行与 00 文件。
+- 原生兼容配置包：兼容包自己的主配置可以把 `R/modules/lua/extlib/?.lua` 写进 `lua_package_path`（`R` 为安装根目录，见安装维护手册的路径约定）。
+- 已经用旧版附加包独立启用过的节点，旧的 `00-lua-standalone.conf` 不含 `extlib` 路径。升级附加包后需要先 `sudo bash install.sh --standalone-disable`（站点不再使用 Lua 时），再 `sudo bash install.sh --standalone`，然后 reload。`--standalone` 对“已启用”的节点仍会拒绝，这是已有行为，本阶段没有改为“刷新路径”。
+
+**控制台托管的环境不可用**
+
+控制台托管（managed）环境的 `lua_package_path` 只包含 `lualib`，`lua_package_cpath` 仍是 `lualib/?.disabled`，`extlib` 不出现在渲染出的配置中，托管配置也不加载 lua-upstream 模块与编译库；托管的自定义脚本只能 `require "etos.json"`。
+这是有意的边界：托管 Lua 只允许审核过的规则库与受限环境（本文第 5 节），托管配置不能使用这些附加库。
+该边界由 lua 工作流验证：`scripts/ci/lua-acceptance.sh` 中托管脚本 `require "resty.redis"` / `resty.mysql` / `resty.rsa` 必须失败，渲染出的配置不含 `extlib`；`internal/render` 的单元测试也校验托管配置不含 `extlib`。
+
+**与 mysql 的限制**
+
+- `resty.rsa` 为 `caching_sha2_password` 和 `sha256_password` 的非 TLS RSA 认证提供所需加密。验收覆盖与 `resty.mysql` 相同的公钥加密参数、私钥解密和签名验签，不代替真实数据库的端到端认证验证。
+- ed25519 认证插件需要 `resty.openssl`，未随附。
+
+**resty.shell 与 ngx.pipe 不可用**
+
+`resty.shell` 没有随附，`ngx.pipe` 也不可用：Lua 模块只在核心带有 OpenResty 的 socket CLOEXEC 补丁时才编译这部分代码，而 syedge 核心只打改名补丁（见 CLAUDE.md 数据面规则）。
+现网脚本用到 `resty.shell` 或 `ngx.pipe` 执行外部命令的，需要改为其他方式（例如由外部程序定时生成文件，Lua 只读取）。`scripts/ci/lua-standalone.sh` 第 26 项断言 `require "resty.shell"` 报找不到模块。
+
+**本阶段不随附**
+
+- 其他 OpenResty C 模块（headers-more、echo、set-misc、srcache 等），stream 级 Lua，drizzle / postgres / iconv。
+- 其他不在 OpenResty 官方库中的第三方库（例如 lua-resty-http）。
+- 第三方依赖的库 `resty.openssl` 仍未随附（见上文 mysql 的限制）。
+
+**FFI 符号**
+
+`resty.string` 和 `resty.rsa` 通过 FFI 调用 OpenSSL / 铜锁的函数，前者还调用 nginx 核心的 `ngx_hex_dump` / `ngx_atoi`。这些符号列在 `dataplane/lua/base-exports.txt`，
+标准版与国密版基础包都必须动态导出（`build-syedge.sh` 构建时核对）。Lua 工作流在真实数据面分别验收两个变体。
 
 ## JWT 规则
 

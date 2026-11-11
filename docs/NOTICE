@@ -33,3 +33,36 @@ pinned upstream release (dataplane/UPSTREAM) during P0.
 
 Other third-party components (Go modules, npm packages, Tongsuo/OpenSSL) are
 listed in the SBOM generated for each release.
+
+Lua 附加包随附的第三方库（纯 Lua，未修改；许可均为 BSD-2-Clause，版本与提交哈希见 dataplane/lua/DEPS）：
+
+  lua-resty-redis          v0.34   Copyright (C) 2012-2017, by Yichun Zhang (agentzh), OpenResty Inc.
+  lua-resty-mysql          v0.31   Copyright (C) 2012-2018, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-memcached      v0.18   Copyright (C) 2012-2017, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-dns            v0.24   Copyright (C) 2012-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-string         v0.19   Copyright (C) 2012-2018, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-upload         v0.11   Copyright (C) 2012-2017, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-websocket      v0.16   Copyright (C) 2013-2017, by Yichun Zhang (agentzh), OpenResty Inc.
+  lua-resty-lock           v0.09   Copyright (C) 2013-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-resty-limit-traffic  v0.09   Copyright (C) 2015-2019, by Yichun "agentzh" Zhang, OpenResty Inc.
+  lua-tablepool            v0.03   Copyright (C) 2016-2021, by Yichun "agentzh" Zhang, OpenResty Inc.
+
+每个库的完整版权声明与 BSD-2-Clause 许可条文，随附加包的 NOTICE 文件一同分发（构建时从各库 README 的 “Copyright and License” 一节提取）。
+
+Lua 附加包第二阶段随附的第三方组件（未修改；版本与提交哈希见 dataplane/lua/DEPS）：
+
+  lua-cjson                2.1.0.20  Copyright (c) 2010-2012 Mark Pulford <mark@kyne.com.au>   MIT（编译库 extlib/cjson.so，LICENSE 全文随 NOTICE 分发）
+  lua-redis-parser         v0.13     Copyright (C) 2009-2017, by Yichun "agentzh" Zhang (章亦春), OpenResty Inc.   BSD-2-Clause（编译库 extlib/redis/parser.so）
+  lua-rds-parser           v0.06     Copyright (C) 2011, Zhang "agentzh" Yichun (章亦春).   BSD-2-Clause（编译库 extlib/rds/parser.so）
+  lua-resty-signal         v0.05     Copyright (C) 2018-2019, OpenResty Inc.   BSD-2-Clause（Lua 文件与编译库 extlib/librestysignal.so）
+  lua-resty-upstream-healthcheck v0.10  Copyright (C) 2014-2017, by Yichun "agentzh" Zhang, OpenResty Inc.   BSD-2-Clause
+  lua-upstream-nginx-module v0.08    Copyright (C) 2014-2017, by Yichun "agentzh" Zhang, OpenResty Inc.   BSD-2-Clause（动态模块 ngx_http_lua_upstream_module.so，按与 lua 模块相同的 configure 参数编译）
+
+上述组件的 BSD-2-Clause 许可条文（或 MIT 许可全文）随附加包的 NOTICE 文件一同分发。
+
+Lua 附加包另随附第三方组件 lua-resty-rsa v1.1.1（MIT，未修改）：
+
+  Copyright (C) 2014-2018, by Dejiang Zhu (doujiang24)
+  Copyright (C) 2018-, by Zexuan Luo (spacewander)
+
+完整 MIT 许可文本随附加包的 NOTICE 文件一同分发。
