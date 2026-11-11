@@ -63,6 +63,7 @@ local function add(v) r[#r + 1] = type(v) end
 add(io) add(os.execute) add(load) add(loadstring) add(ngx.socket) add(getmetatable)
 add(string.dump) add(debug) add(package) add(jit) add(rawset) add(setfenv)
 r[#r + 1] = tostring(pcall(require, "ffi"))
+r[#r + 1] = tostring(pcall(require, "resty.rsa"))
 r[#r + 1] = tostring(pcall(require, "string.buffer"))
 r[#r + 1] = tostring(pcall(function() leak = 1 end))
 r[#r + 1] = tostring(pcall(function() string.rep = nil end))

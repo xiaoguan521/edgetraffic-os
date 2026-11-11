@@ -92,6 +92,9 @@ echo "master pid $MASTER"
 
 # 断言 9 的基准：开始时保存主配置
 sudo cp -- "$MAIN" "$W/main.orig" || die "无法保存主配置副本"
+(umask 077; openssl genrsa -traditional 2048 > "$W/rsa.key" 2>/dev/null) || die "无法生成 RSA 私钥"
+openssl rsa -in "$W/rsa.key" -pubout -out "$W/rsa.pub" 2>/dev/null || die "无法生成 RSA 公钥"
+sudo chgrp syedge "$W/rsa.key" && chmod 0640 "$W/rsa.key" && chmod 0644 "$W/rsa.pub" || die "无法设置 RSA 测试密钥权限"
 cat > "$W/site-lua.conf" <<'EOF'
 server {
     listen       127.0.0.1:18090;
@@ -102,9 +105,20 @@ server {
     location = /hello {
         content_by_lua_block { ngx.say(require("hello").text) }
     }
+    location = /rsa {
+        content_by_lua_block {
+            local ok, err = require("rsa-check").roundtrip()
+            if not ok then
+                ngx.status = 500
+                ngx.say(err or "resty-rsa-check-failed")
+                return
+            end
+            ngx.say("resty-rsa-ok")
+        }
+    }
     location = /ext-require {
         content_by_lua_block {
-            local mods = { "resty.redis", "resty.mysql", "resty.memcached", "resty.dns.resolver", "resty.string",
+            local mods = { "resty.redis", "resty.mysql", "resty.rsa", "resty.memcached", "resty.dns.resolver", "resty.string",
                 "resty.md5", "resty.sha1", "resty.sha256", "resty.aes", "resty.random", "resty.upload",
                 "resty.websocket.server", "resty.websocket.client", "resty.lock", "resty.limit.req",
                 "resty.limit.conn", "resty.limit.count", "resty.limit.traffic", "tablepool" }
@@ -240,6 +254,61 @@ server {
 }
 EOF
 printf 'return { text = "standalone-lualib-ok" }\n' > "$W/hello.lua"
+cat > "$W/rsa-check.lua" <<EOF
+local rsa = require "resty.rsa"
+
+local function read(path)
+    local f, err = io.open(path, "rb")
+    if not f then return nil, err end
+    local value = f:read("*a")
+    f:close()
+    return value
+end
+
+local public_key, err = read("$W/rsa.pub")
+if not public_key then error("read public key: " .. tostring(err)) end
+local private_key, err = read("$W/rsa.key")
+if not private_key then error("read private key: " .. tostring(err)) end
+
+local M = {}
+function M.roundtrip()
+    local message = "resty.mysql RSA password"
+    -- 与 resty.mysql 的 _encrypt_password 使用完全相同的参数。
+    local pub, err = rsa:new({
+        public_key = public_key,
+        key_type = rsa.KEY_TYPE.PKCS8,
+        padding = rsa.PADDING.RSA_PKCS1_OAEP_PADDING,
+        algorithm = "sha1",
+    })
+    if not pub then return nil, "new public key: " .. tostring(err) end
+    local encrypted, err = pub:encrypt(message)
+    if not encrypted then return nil, "encrypt: " .. tostring(err) end
+
+    local priv, err = rsa:new({
+        private_key = private_key,
+        padding = rsa.PADDING.RSA_PKCS1_OAEP_PADDING,
+    })
+    if not priv then return nil, "new private key: " .. tostring(err) end
+    local decrypted, err = priv:decrypt(encrypted)
+    if decrypted ~= message then return nil, "decrypt: " .. tostring(err or "round-trip mismatch") end
+
+    local signer, err = rsa:new({ private_key = private_key, algorithm = "SHA256" })
+    if not signer then return nil, "new signer: " .. tostring(err) end
+    local signature, err = signer:sign(message)
+    if not signature then return nil, "sign: " .. tostring(err) end
+    local verifier, err = rsa:new({
+        public_key = public_key,
+        key_type = rsa.KEY_TYPE.PKIX,
+        algorithm = "SHA256",
+    })
+    if not verifier then return nil, "new verifier: " .. tostring(err) end
+    local verified, err = verifier:verify(message, signature)
+    if not verified then return nil, "verify: " .. tostring(err) end
+    if verifier:verify(message .. " altered", signature) then return nil, "altered message verified" end
+    return true
+end
+return M
+EOF
 printf 'lua_shared_dict standalone_test_locks 1m;\nlua_shared_dict standalone_test_limits 1m;\nlua_shared_dict standalone_hc 1m;\nupstream standalone_test_up {\n    server 127.0.0.1:18091;\n}\n' > "$W/ext-dicts.conf"
 
 # 1. 不带新参数安装附加包后，站点中的 Lua 指令应当失败
@@ -300,7 +369,7 @@ extok() { # <编号> <说明> <路径> <期望响应体>
 line13=$(sudo grep '^lua_package_path' "$NEWCONF")
 want13="lua_package_path   \"$PREFIX/modules/lua/lualib/?.lua;$PREFIX/modules/lua/extlib/?.lua;$PREFIX/lualib/?.lua\";"
 if [[ "$line13" == "$want13" ]]; then ok "13 00 文件的 lua_package_path 为三段：lualib、extlib、<根目录>/lualib"; else bad "13 lua_package_path 不是预期的三段：$line13"; fi
-extok 14 "resty.* 与 tablepool 共 19 个模块全部可 require" /ext-require "ext-modules-ok"
+extok 14 "resty.* 与 tablepool 共 20 个模块全部可 require" /ext-require "ext-modules-ok"
 extok 15 "resty.sha256 / md5 / sha1 对固定输入的摘要正确（resty.string.to_hex）" /ext-digest "ext-digest-ok"
 extok 16 "resty.aes 加解密往返" /ext-aes "ext-aes-ok"
 extok 17 "resty.random.bytes 返回指定长度" /ext-random "ext-random-ok"
@@ -324,6 +393,16 @@ else
   bad "27 主配置第三行应为 lua-upstream 模块的 load_module"
 fi
 extok 28 "resty.upstream.healthcheck 对该 upstream 的 spawn_checker 成功（共享字典 standalone_hc）" /ext-hc "ext-hc-ok"
+if sudo test -s "$PREFIX/modules/lua/extlib/resty/rsa.lua" && ! sudo test -e "$PREFIX/modules/lua/lualib/resty/rsa.lua"; then
+  ok "29 resty.rsa 仅安装在 extlib"
+else
+  bad "29 resty.rsa 未按预期安装到 extlib"
+fi
+if sudo install -m 0644 "$W/rsa-check.lua" "$PREFIX/lualib/rsa-check.lua" && body_is /rsa "resty-rsa-ok"; then
+  ok "30 resty.mysql 参数的 RSA 加解密及签名验签（含篡改拒绝）"
+else
+  bad "30 resty.rsa 加解密或签名验签失败（响应：$(curl -s --max-time 3 http://127.0.0.1:18090/rsa | head -c 300)）"
+fi
 
 # 6. 重复启用报错，文件不变
 sudo cp -- "$MAIN" "$W/main.before6" && sudo cp -- "$NEWCONF" "$W/new.before6"

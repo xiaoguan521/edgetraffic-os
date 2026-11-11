@@ -364,13 +364,14 @@ func TestInstallLuaWithExtlib(t *testing.T) {
 	ver := "1.30.6-1"
 	pkg := luaPackage(t, ver, map[string]string{
 		"addon/extlib/resty/redis.lua": "return {}",
+		"addon/extlib/resty/rsa.lua":   "return {}",
 		"addon/extlib/tablepool.lua":   "return {}",
 	})
 	dropLua(t, p, priv, ver, "lua", pkg)
 	if err := p.installLua(ver, "standard"); err != nil {
 		t.Fatalf("add-on with extlib rejected: %v", err)
 	}
-	for _, f := range []string{"extlib/resty/redis.lua", "extlib/tablepool.lua"} {
+	for _, f := range []string{"extlib/resty/redis.lua", "extlib/resty/rsa.lua", "extlib/tablepool.lua"} {
 		if _, err := os.Stat(filepath.Join(p.luaDir(ver), f)); err != nil {
 			t.Fatalf("%s not installed: %v", f, err)
 		}

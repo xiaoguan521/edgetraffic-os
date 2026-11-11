@@ -52,6 +52,7 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 - `lua-resty-core`、`lua-resty-lrucache`；
 - 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`；
 - 第一阶段随附的 10 个纯 Lua 库（安装在 `R/modules/lua/extlib/`）：`resty.redis`、`resty.mysql`、`resty.memcached`、`resty.dns.resolver`、`resty.string` 及 `resty.md5` / `resty.sha*` / `resty.aes` / `resty.random`、`resty.upload`、`resty.websocket.*`、`resty.lock`、`resty.limit.*`、`tablepool`；
+- 第三方 `resty.rsa`（lua-resty-rsa v1.1.1，MIT），同样安装在 `extlib`，供 `resty.mysql` 的 RSA 认证使用；
 - 第二阶段随附：`cjson`（含 `cjson.safe`）、`redis.parser`、`rds.parser`、`resty.signal`、`resty.upstream.healthcheck`，以及动态模块 `ngx_http_lua_upstream_module.so`（提供 `ngx.upstream`）。编译库安装在 `R/modules/lua/extlib/`。
   `resty.shell` 与 `ngx.pipe` 不可用，也没有随附（需要核心的 socket CLOEXEC 补丁，见 [docs/lua.md](lua.md)）。
 清单、版本与许可见 [docs/lua.md](lua.md) 的“随附的 Lua 库”一节。这些库只对独立模式与原生兼容配置包可用，控制台托管的环境不可用。
@@ -60,8 +61,7 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 
 - 其他 OpenResty C 模块，例如 headers-more（`more_set_headers`）、echo、set-misc、srcache 等；
 - stream 的 Lua 模块，以及 drizzle、postgres、iconv 模块；
-- OpenResty 官方库之外的第三方库，例如 `resty.http`；
-- `resty.rsa`、`resty.openssl`：未随附。因此 `lua-resty-mysql` 的非 TLS `caching_sha2_password` 完整认证与 ed25519 认证不可用，请使用 TLS 连接；
+- 除 `resty.rsa` 外的非 OpenResty 官方第三方库，例如 `resty.http`、`resty.openssl`；因此 `lua-resty-mysql` 的 ed25519 认证不可用；
 - `resty` 命令行与 `opm`。
 
 **两种使用方式的区别：**

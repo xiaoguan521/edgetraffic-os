@@ -16,6 +16,10 @@ RESTY_CORE_COMMIT=3ad8ab4b01758c0a03b534026c31cbfa9fc203a5
 LRUCACHE_GIT=https://github.com/openresty/lua-resty-lrucache.git
 LRUCACHE_TAG=v0.15
 LRUCACHE_COMMIT=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b
+# 第三方 lua-resty-rsa（MIT）：供 resty.mysql 的 RSA 认证路径使用，仅放入 extlib。
+RESTY_RSA_GIT=https://github.com/spacewander/lua-resty-rsa.git
+RESTY_RSA_TAG=v1.1.1
+RESTY_RSA_COMMIT=c048d749997c0af73035a27ab0c5ad670a5f8a29
 # 附加库 extlib（D1 第一阶段，纯 Lua，全部来自 github.com/openresty/，许可均为 BSD-2-Clause，README 中的 “licensed under the BSD license” 声明在构建时校验）。
 # 标签为各仓库截至 2026-11-11 的最新正式发布标签（不取 rc）；提交哈希为该标签指向的提交（轻量标签，ls-remote 与克隆后 rev-parse HEAD 一致）。
 # 第二阶段（D1）：编译库与 lua-upstream 动态模块。许可在克隆后校验：cjson 为 MIT（LICENSE），其余 README 声明 BSD。

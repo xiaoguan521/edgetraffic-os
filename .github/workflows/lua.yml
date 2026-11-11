@@ -114,19 +114,19 @@ jobs:
           rm -rf "$d/addon/lualib/etos"; cp -r dataplane/lua/lualib/etos "$d/addon/lualib/"
           install -m 0755 dataplane/lua/install.sh dataplane/lua/uninstall.sh "$d/"
           tar -C "$d" --owner=0 --group=0 -czf "$p" install.sh uninstall.sh addon
-      - name: tools (wrk, CI package key, wrapper, license server)
-        run: |
-          sudo apt-get install -y -qq wrk >/dev/null
-          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
-          /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
-          pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
-          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$SYEDGE_PREFIX" ./cmd/syedge-wrapper
       - name: Lua custom system root and named instances (${{ matrix.base }})
         run: bash scripts/ci/lua-custom-prefix.sh dist-lua ${{ matrix.base }}
       - name: Lua shared and independent instance selection (${{ matrix.base }})
         run: bash scripts/ci/lua-instance-targets.sh dist-lua ${{ matrix.base }}
       - name: Lua standalone enable and disable (${{ matrix.base }})
         run: bash scripts/ci/lua-standalone.sh dist-lua ${{ matrix.base }}
+      # 以上验收不依赖压测工具或签名密钥；外部软件源故障不应阻止独立模式验证。
+      - name: tools (CI package key, wrapper, license server)
+        run: |
+          go build -mod=vendor -o /tmp/lic ./cmd/syedge-license-server
+          /tmp/lic keygen -kid etos-ci-pkg-ephemeral -out /tmp/keys > /tmp/pkgkey.txt
+          pkgpub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/pkgkey.txt | tail -1 | tr -d '"')
+          CGO_ENABLED=0 go build -mod=vendor -o /tmp/syedge-wrapper -ldflags "-X github.com/xiaoguan521/edgetraffic-os/internal/pkgsig.ciKey=$pkgpub -X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$SYEDGE_PREFIX" ./cmd/syedge-wrapper
       - name: GM and Lua multi-instance upgrade and rollback
         if: matrix.base == 'standard'
         run: |
@@ -146,7 +146,12 @@ jobs:
             SYEDGE_TEST_LUA_PACKAGE="$GITHUB_WORKSPACE/$lua" \
             SYEDGE_TEST_LUA_UPGRADE_PACKAGE="$work/syedge-lua-$ver-${{ matrix.arch }}.tar.gz" \
             go test -mod=vendor -count=1 -v -run TestGMWithLuaMultiInstanceRollback ./internal/wrapper/
+      - name: install performance test tool
+        # 即使软件源不可用，也运行后续功能验收；P10 脚本会将缺少 wrk 明确记为失败。
+        continue-on-error: true
+        run: sudo apt-get install -y -qq wrk >/dev/null
       - name: P10 acceptance (${{ matrix.base }} / ${{ matrix.arch }})
+        id: p10
         env:
           PKG_KEY: /tmp/keys/etos-ci-pkg-ephemeral.key
           PKG_KID: etos-ci-pkg-ephemeral
@@ -156,6 +161,7 @@ jobs:
           PERF_GATE: ${{ matrix.arch == 'x86_64' && '1' || '0' }}
         run: scripts/ci/lua-acceptance.sh dist-lua ${{ matrix.base }}
       - name: Native Lua publish and rollback (${{ matrix.base }} / ${{ matrix.arch }})
+        if: ${{ !cancelled() && steps.p10.outcome != 'skipped' }}
         run: |
           sudo env "PATH=$PATH" \
             SYEDGE_LEGACY_IT_BIN="$SYEDGE_PREFIX/sbin/syedge" \

@@ -50,6 +50,10 @@ LUA_MODULE_SRC=$(pin lua-module "$LUA_MODULE_GIT" "$LUA_MODULE_TAG" "$LUA_MODULE
 LUA_UPSTREAM_SRC=$(pin lua-upstream "$LUA_UPSTREAM_GIT" "$LUA_UPSTREAM_TAG" "$LUA_UPSTREAM_COMMIT")
 RESTY_CORE_SRC=$(pin resty-core "$RESTY_CORE_GIT" "$RESTY_CORE_TAG" "$RESTY_CORE_COMMIT")
 LRUCACHE_SRC=$(pin lrucache "$LRUCACHE_GIT" "$LRUCACHE_TAG" "$LRUCACHE_COMMIT")
+RESTY_RSA_SRC=$(pin resty-rsa "$RESTY_RSA_GIT" "$RESTY_RSA_TAG" "$RESTY_RSA_COMMIT")
+grep -q '^The MIT License (MIT)' "$RESTY_RSA_SRC/LICENSE" \
+  && grep -q 'Permission is hereby granted, free of charge' "$RESTY_RSA_SRC/LICENSE" \
+  || { echo "lua-resty-rsa: license is not MIT" >&2; exit 4; }
 
 # LuaJIT：只要静态库，-fPIC 以便链入共享模块；模块构建直接使用源码目录的头文件
 make -C "$LUAJIT_SRC" -j"$(nproc)" BUILDMODE=static CFLAGS="-fPIC -O2" > "$WORK/luajit.log" 2>&1 \
@@ -96,15 +100,19 @@ register() { # <名称> <标签> <许可> <许可文件>：版本清单、NOTICE
   { echo "---- $1 $2"; notice_text "$4"; echo; } >> "$EXT_NOTICE"
   EXT_TAGS+="$1 $2, "
 }
-ext_add() { # <名称> <标签> <源码目录>：复制 lib/ 下的 .lua（BSD）并登记
-  local src="$3" rel f
-  bsd_check "$1" "$src"
+ext_copy() { # <名称> <源码目录>：复制 lib/ 下的 .lua，拒绝模块名冲突
+  local src="$2" rel f
   while IFS= read -r -d '' f; do
     rel="${f#"$src/lib/"}"
     [[ ! -e "$A/extlib/$rel" && ! -e "$A/lualib/$rel" ]] || { echo "$1: module $rel is already provided" >&2; exit 4; }
     mkdir -p "$A/extlib/$(dirname "$rel")"
     cp "$f" "$A/extlib/$rel"
   done < <(find "$src/lib" -type f -name '*.lua' -print0)
+}
+ext_add() { # <名称> <标签> <源码目录>：复制 lib/ 下的 .lua（BSD）并登记
+  local src="$3"
+  bsd_check "$1" "$src"
+  ext_copy "$1" "$src"
   register "$1" "$2" BSD-2-Clause "$(readme_of "$src")"
 }
 ext_lib() { # <名称> <git> <标签> <提交>（纯 Lua 库，第一阶段）
@@ -122,6 +130,9 @@ ext_lib lua-resty-websocket "$RESTY_WEBSOCKET_GIT" "$RESTY_WEBSOCKET_TAG" "$REST
 ext_lib lua-resty-lock "$RESTY_LOCK_GIT" "$RESTY_LOCK_TAG" "$RESTY_LOCK_COMMIT"
 ext_lib lua-resty-limit-traffic "$RESTY_LIMIT_TRAFFIC_GIT" "$RESTY_LIMIT_TRAFFIC_TAG" "$RESTY_LIMIT_TRAFFIC_COMMIT"
 ext_lib lua-tablepool "$TABLEPOOL_GIT" "$TABLEPOOL_TAG" "$TABLEPOOL_COMMIT"
+# lua-resty-rsa 来自 spacewander，许可已在构建开始时核验。
+ext_copy lua-resty-rsa "$RESTY_RSA_SRC"
+register lua-resty-rsa "$RESTY_RSA_TAG" MIT "$RESTY_RSA_SRC/LICENSE"
 
 # 编译库（D1 第二阶段）：直接用 cc 编译，只依赖 LuaJIT 头文件（$LUAJIT_INC），不链接 libluajit。
 # Lua API 符号在加载时由 ngx_http_lua_module.so 解析（nginx 以 RTLD_GLOBAL 加载它，LuaJIT 静态链入其中）。
@@ -220,7 +231,7 @@ install -m 0755 "$HERE/lua/uninstall.sh" "$WORK/pkg/uninstall.sh"
 for v in standard gmssl; do
   for m in ndk_http_module ngx_http_lua_module ngx_http_lua_upstream_module; do [[ -s "$A/$v/$m.so" ]] || { echo "missing $v/$m.so" >&2; exit 4; }; done
 done
-for f in cjson.so redis/parser.so rds/parser.so librestysignal.so; do [[ -s "$A/extlib/$f" ]] || { echo "missing extlib/$f" >&2; exit 4; }; done
+for f in cjson.so redis/parser.so rds/parser.so librestysignal.so resty/rsa.lua; do [[ -s "$A/extlib/$f" ]] || { echo "missing extlib/$f" >&2; exit 4; }; done
 if grep -rqi 'ngi''nx' "$A/lualib/etos" "$WORK/pkg/install.sh" "$WORK/pkg/uninstall.sh" "$A/VERSION"; then
   echo "upstream name in add-on scripts or etos library" >&2; exit 4
 fi

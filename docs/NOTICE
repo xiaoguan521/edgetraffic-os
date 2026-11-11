@@ -59,3 +59,10 @@ Lua 附加包第二阶段随附的第三方组件（未修改；版本与提交�
   lua-upstream-nginx-module v0.08    Copyright (C) 2014-2017, by Yichun "agentzh" Zhang, OpenResty Inc.   BSD-2-Clause（动态模块 ngx_http_lua_upstream_module.so，按与 lua 模块相同的 configure 参数编译）
 
 上述组件的 BSD-2-Clause 许可条文（或 MIT 许可全文）随附加包的 NOTICE 文件一同分发。
+
+Lua 附加包另随附第三方组件 lua-resty-rsa v1.1.1（MIT，未修改）：
+
+  Copyright (C) 2014-2018, by Dejiang Zhu (doujiang24)
+  Copyright (C) 2018-, by Zexuan Luo (spacewander)
+
+完整 MIT 许可文本随附加包的 NOTICE 文件一同分发。
