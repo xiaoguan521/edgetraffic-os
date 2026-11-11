@@ -195,3 +195,15 @@ if [[ -n "$FW_FROM" ]]; then
 elif systemctl is-enabled -q syedge-firewall.service 2>/dev/null; then
   systemctl reload syedge-firewall.service   # 已启用：保持原规则
 fi
+
+# 全部步骤成功后打印摘要（任何失败都已在上面 exit，不会走到这里）
+echo
+printf '%s\n' \
+  "== 安装完成" \
+  "安装根目录   $R" \
+  "主配置       $R/conf/current/syedge.conf" \
+  "站点配置目录 $R/conf/current/conf.d/" \
+  "错误日志     $LOG_DIR/error.log" \
+  "校验配置     sudo $R/sbin/syedge -p $R -c $R/conf/current/syedge.conf -e stderr -t" \
+  "平滑重载     sudo systemctl reload syedge" \
+  "独立模式说明 $R/share/doc/STANDALONE.txt"

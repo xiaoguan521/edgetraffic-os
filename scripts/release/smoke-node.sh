@@ -38,6 +38,21 @@ install_node() {
     sudo "$D/install.sh" "$@"
   fi
 }
+# install.sh 末尾的安装摘要：标题与“校验配置”行必须存在，且该行的命令在本机（安装所在环境）实际执行通过。
+# 命令按空格切分后直接执行（不经 sh -c / eval）。
+summary_check() {
+  local text=$1 label=$2 line
+  local -a cmd=()
+  expect "$label 打印安装摘要" "$text" "== 安装完成"
+  expect "$label 摘要含校验配置" "$text" "校验配置"
+  line=$(printf '%s\n' "$text" | sed -n 's/^ *校验配置 *//p' | head -1)
+  read -ra cmd <<< "$line"
+  if [[ ${#cmd[@]} -gt 0 && "${cmd[0]}" == sudo ]] && "${cmd[@]}" >"$W/verify.out" 2>&1; then
+    ok "$label 摘要中的校验命令执行通过"
+  else
+    bad "$label 摘要中的校验命令执行失败：${line:-（摘要中没有校验配置行）} $(tail -5 "$W/verify.out" 2>/dev/null)"
+  fi
+}
 cleanup() {
   [[ -n "${CPID:-}" ]] && kill "$CPID" 2>/dev/null
   [[ -z "${HOME_PROBE:-}" ]] || sudo rm -rf "$HOME_PROBE"
@@ -72,6 +87,7 @@ if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
   sudo touch "$HOME_PROBE/probe" "$ROOT_PROBE/probe"
 fi
 if out=$(install_node "${PREFIX_ARGS[@]}" 2>&1); then ok "install.sh 安装成功"; else bad "install.sh 安装失败：$(echo "$out" | tail -12)"; diag; fi
+summary_check "$out" "首次安装"
 if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
   expect "安装保留已有根目录权限" "$(stat -c %a "$ROOT")" "${SMOKE_ROOT_MODE#0}"
 fi
@@ -150,6 +166,7 @@ echo "== install.sh 带注册参数重复执行"
 e=$("${C[@]}" -X POST "$B/node-groups/1/enroll")
 srv=$(echo "$e" | j "d['server']"); tok=$(echo "$e" | j "d['token']"); fp=$(echo "$e" | j "d['ca_fingerprint']")
 if out=$(install_node "${PREFIX_ARGS[@]}" --server "$srv" --token "$tok" --ca-fingerprint "$fp" 2>&1); then ok "注册安装成功"; else bad "注册安装失败：$(echo "$out" | tail -12)"; diag; fi
+summary_check "$out" "注册安装"
 if [[ -n "${SMOKE_ROOT_MODE:-}" ]]; then
   expect "重复安装保留根目录权限" "$(stat -c %a "$ROOT")" "${SMOKE_ROOT_MODE#0}"
 fi
