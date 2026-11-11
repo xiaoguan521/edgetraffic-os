@@ -1,3 +1,9 @@
 # 文件<TAB>必须包含的固定字符串（scripts/ci/docs-check.sh 读取，grep -F 匹配）
 docs/NOTICE	based on NGINX Open Source (BSD-2-Clause)
 README.md	docs/install-maintenance.md
+docs/quickstart.md	## 2. 独立模式
+docs/quickstart.md	## 3. 接入控制台
+docs/quickstart.md	syedge-instance prefix
+docs/build-from-source.md	build-syedge.sh
+README.md	docs/quickstart.md
+docs/install-maintenance.md	build-from-source.md
