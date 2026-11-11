@@ -165,7 +165,11 @@ ext_add lua-resty-upstream-healthcheck "$RESTY_UPSTREAM_HC_TAG" "$RESTY_UPSTREAM
 native_check() { # <so>
   local so="$1" v missing
   nm -D -u "$so" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$WORK/nc-needs"
-  ldd "$so" | awk '$2 == "=>" && $3 ~ /^\// {print $3}' | sort -u | while IFS= read -r l; do
+  # 动态加载器本身也导出符号（aarch64 的 __stack_chk_guard 在 ld-linux-aarch64.so.1 中）；ldd 把它列为不带 “=>” 的一行，
+  # 个别环境不列出，所以再按固定位置补上
+  { ldd "$so" | awk '$1 ~ /^\// {print $1} $2 == "=>" && $3 ~ /^\// {print $3}'
+    for l in /lib/ld-linux*.so.* /lib64/ld-linux*.so.* /lib/*/ld-linux*.so.*; do if [[ -f "$l" ]]; then printf '%s\n' "$l"; fi; done
+  } | sort -u | while IFS= read -r l; do
     nm -D --defined-only "$l" 2>/dev/null | awk '{print $NF}' | sed 's/@.*//'
   done | sort -u > "$WORK/nc-runtime"
   for v in standard gmssl; do
