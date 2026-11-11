@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
-import { api, errMsg } from '../api/client'
+import { api, errMsg, http } from '../api/client'
+import { brand } from '../brand'
 import { useSession } from '../stores/session'
 import ReleaseLanes from '../components/ReleaseLanes.vue'
 import DiffView from '../components/DiffView.vue'
@@ -27,6 +28,12 @@ const pendingReq = ref<any>(null) // 当前组待审批的申请（含差异）
 const reqFiles = ref<string[]>([])
 const reviewComment = ref('')
 const reviewing = ref(false)
+const legacyFile = ref<File | null>(null)
+const legacyAcknowledged = ref(false)
+const legacyAllowRoot = ref(false)
+const legacyHost = ref('')
+const legacyPath = ref('/')
+const legacyHTTPS = ref(false)
 const recentReqs = ref<any[]>([])
 const canaries = ref<any[]>([])
 const canaryOpen = ref(false)
@@ -65,9 +72,9 @@ async function batchPublish() {
 }
 let canaryPoll: number | undefined
 const canaryStatus: Record<string, { t: string; c: string }> = {
-  running: { t: '进行中', c: 'processing' }, done: { t: '已完成', c: 'green' }, rolled_back: { t: '已自动回滚', c: 'orange' }, failed: { t: '失败', c: 'red' },
+  running: { t: '进行中', c: 'processing' }, done: { t: '已完成', c: 'green' }, rolled_back: { t: '已自动回滚', c: 'orange' }, failed: { t: '失败', c: 'red' }, rollback_failed: { t: '回滚失败', c: 'red' },
 }
-const batchStatus: Record<string, string> = { pending: '等待', deploying: '发布中', observing: '观察中', passed: '通过', failed: '失败', rolled_back: '已回滚', skipped: '未执行' }
+const batchStatus: Record<string, string> = { pending: '等待', deploying: '发布中', observing: '观察中', passed: '通过', failed: '失败', rolled_back: '已回滚', rollback_failed: '回滚失败', skipped: '未执行' }
 
 async function loadGroups() {
   groups.value = await api.get('/node-groups')
@@ -145,7 +152,8 @@ async function publish() {
 async function review(action: 'approve' | 'reject' | 'cancel') {
   reviewing.value = true
   try {
-    const r = await api.post(`/release-requests/${pendingReq.value.id}/${action}`, { comment: reviewComment.value })
+    const endpoint = pendingReq.value.legacy && action === 'approve' ? 'legacy-approve' : action
+    const r = await api.post(`/release-requests/${pendingReq.value.id}/${endpoint}`, { comment: reviewComment.value })
     reviewComment.value = ''
     if (action === 'approve') {
       active.value = r
@@ -158,6 +166,53 @@ async function review(action: 'approve' | 'reject' | 'cancel') {
   } finally {
     reviewing.value = false
     await Promise.all([loadApproval(), loadPreview()])
+  }
+}
+
+async function submitLegacy() {
+  if (!legacyFile.value || !legacyAcknowledged.value) return
+  publishing.value = true
+  try {
+    const form = new FormData()
+    form.append('file', legacyFile.value)
+    if (legacyAllowRoot.value) form.append('allow_root_master', 'true')
+    form.append('note', note.value)
+    if (legacyHost.value.trim()) form.append('checks', JSON.stringify([{ host: legacyHost.value.trim(), path: legacyPath.value || '/', https: legacyHTTPS.value }]))
+    await api.post(`/node-groups/${gid.value}/legacy-requests`, form)
+    legacyFile.value = null
+    legacyAcknowledged.value = false
+    legacyAllowRoot.value = false
+    note.value = ''
+    message.success('兼容配置已冻结，等待另一位管理员审批')
+    await Promise.all([loadApproval(), loadHistory()])
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    publishing.value = false
+  }
+}
+
+async function downloadLegacyReview() {
+  try {
+    const r = await http.get(`/release-requests/${pendingReq.value.id}/legacy-bundle`, { responseType: 'blob' })
+    const url = URL.createObjectURL(r.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${brand.id}-review-${pendingReq.value.id}.tar.gz`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
+async function requestLegacyRollback(rev: string) {
+  try {
+    await api.post(`/node-groups/${gid.value}/legacy-rollback-requests`, { revision_id: rev, note: `回退到 ${rev}` })
+    message.success('回退申请已提交，等待另一位管理员审批')
+    await loadApproval()
+  } catch (e) {
+    message.error(errMsg(e))
   }
 }
 const mine = computed(() => pendingReq.value?.requested_by === session.username)
@@ -226,8 +281,10 @@ function lastDeploy(rev: string) {
     </div>
     <a-alert v-if="group?.management_mode === 'observe'" type="warning" show-icon style="margin-bottom: 16px"
       message="当前节点组是观察接入" description="预览仍可用，但发布、灰度、回滚和审批下发已暂停，不会覆盖节点本地配置。完成导入核对后，请到“节点”页切回控制台托管。" />
-    <a-alert v-else-if="group?.management_mode === 'legacy'" type="info" show-icon style="margin-bottom: 16px"
-      message="当前节点组是兼容配置" description="原生 Lua 配置由节点本地维护；本页只保留版本分析和历史记录，不会下发渲染配置。" />
+    <a-alert v-else-if="group?.management_mode === 'legacy'" type="warning" show-icon style="margin-bottom: 16px"
+      message="当前节点组是原生兼容配置" description="原生配置及 Lua 可执行任意代码，部分节点可能以 root 执行。管理员提交、另一位管理员检查并审批后才下发；普通站点草稿不会下发。" />
+    <a-alert v-if="group?.handoff_pending" type="warning" show-icon style="margin-bottom: 16px"
+      message="接管尚未发布" description="本页预览仅比较控制台保存的版本，不能代表节点上的完整独立配置。确认迁移和备份后显式发布；在此之前节点重连不会自动对齐。" />
 
     <section class="panel req" v-if="pendingReq">
       <div class="phead">
@@ -237,6 +294,8 @@ function lastDeploy(rev: string) {
       <a-alert v-if="pendingReq.stale" type="warning" show-icon style="margin-bottom: 12px"
         message="提交后线上版本已变化（例如有人回滚），批准时会被拒绝；请撤回后重新提交。" />
       <p class="hint">批准后下发的就是提交时冻结的版本 {{ pendingReq.revision_id }}；提交之后草稿里的修改不会混进来。</p>
+      <p v-if="pendingReq.legacy" class="hint">页面只展示文件哈希；管理员请下载冻结包，核对配置、Lua 与依赖后再审批。下载包中的私钥只给出 SHA-256，其余文件仍可能包含敏感信息。发布说明中带有“允许在 master 以 root 运行的节点上加载”时，请确认确有必要。</p>
+      <a-button v-if="pendingReq.legacy && session.can('admin')" @click="downloadLegacyReview">下载冻结包进行审核</a-button>
       <a-collapse v-model:active-key="reqFiles" :bordered="false" class="files">
         <a-collapse-panel v-for="f in pendingReq.files" :key="f.path">
           <template #header>
@@ -251,21 +310,35 @@ function lastDeploy(rev: string) {
         <a-input v-model:value="reviewComment" placeholder="审批意见（可选，写入审计）" :maxlength="200" />
         <template v-if="!mine">
           <a-button danger :loading="reviewing" @click="review('reject')">驳回</a-button>
-          <a-button type="primary" :loading="reviewing" :disabled="!session.writable || group?.management_mode !== 'managed' || pendingReq.stale" @click="review('approve')">批准并发布</a-button>
+          <a-button type="primary" :loading="reviewing" :disabled="pendingReq.stale || (pendingReq.legacy ? !session.can('admin') || group?.management_mode !== 'legacy' || (!pendingReq.legacy_rollback && !session.writable) : !session.writable || group?.management_mode !== 'managed')" @click="review('approve')">批准并发布</a-button>
         </template>
         <a-button v-if="mine || session.can('admin')" :loading="reviewing" @click="review('cancel')">撤回</a-button>
       </div>
-      <div v-if="mine" class="hint">提交人不能审批自己的申请，请另一位发布员审批。</div>
+      <div v-if="mine" class="hint">提交人不能审批自己的申请，请另一位{{ pendingReq.legacy ? '管理员' : '发布员' }}审批。</div>
     </section>
 
-    <section class="panel">
+    <section v-if="group?.management_mode === 'legacy'" class="panel">
+      <h2>提交原生兼容配置</h2>
+      <p class="hint">准备 tar.gz，根目录包含 {{ brand.id }}.conf 及所需配置、Lua 和第三方库；版本内的路径可用 @{{ brand.id.toUpperCase() }}_RELEASE@ 指向本版本目录。节点的服务启动命令必须显式用 -c 指向受管的 conf/current/{{ brand.id }}.conf，并提前备份现网配置。兼容包不支持符号链接。</p>
+      <p class="hint">可选探活使用节点档案的 HTTP/HTTPS 端口；不设置时只检查配置及加载结果，不能证明业务正常。节点须升级 Agent 并安装匹配的 Lua 和国密模块；启用内置防火墙时还需更新节点包中的防火墙刷新单元。</p>
+      <template v-if="session.can('admin')">
+        <input type="file" accept=".tar.gz,.tgz,application/gzip" @change="legacyFile = ($event.target as HTMLInputElement).files?.[0] || null" />
+        <div class="pub"><a-input v-model:value="note" placeholder="本次变更说明" :maxlength="120" /></div>
+        <div class="pub"><a-input v-model:value="legacyHost" placeholder="探活域名（可选，例如 example.com）" /><a-input v-model:value="legacyPath" placeholder="探活路径" /><a-checkbox v-model:checked="legacyHTTPS">HTTPS</a-checkbox></div>
+        <div class="pub"><a-checkbox v-model:checked="legacyAllowRoot">允许在 master 以 root 运行的节点上加载（脚本不受沙箱约束，将拥有 root 权限；不勾选时这类节点会拒绝本配置包）</a-checkbox></div>
+        <div class="pub"><a-checkbox v-model:checked="legacyAcknowledged">我已备份并确认节点允许执行此配置及全部脚本和库</a-checkbox></div>
+        <a-button type="primary" :loading="publishing" :disabled="!session.writable || !hasFeature('lua') || !legacyFile || !legacyAcknowledged || !!pendingReq" @click="submitLegacy">提交管理员审批</a-button>
+      </template>
+    </section>
+
+    <section v-if="group?.management_mode !== 'legacy'" class="panel">
       <div class="phead">
         <h2>待发布变更</h2>
         <span class="cur">线上版本 <b class="num">{{ group?.current_revision_id || '无' }}</b>，{{ group?.online ?? 0 }} / {{ group?.nodes ?? 0 }} 个节点在线</span>
       </div>
       <a-alert v-if="previewErr" type="error" :message="previewErr" show-icon />
       <template v-else-if="preview">
-        <a-empty v-if="!preview.changed" :description="`草稿与线上版本一致，没有需要发布的变更`" />
+        <a-empty v-if="!preview.changed && !group?.handoff_pending" :description="`草稿与线上版本一致，没有需要发布的变更`" />
         <template v-else>
           <a-collapse v-model:active-key="openFiles" :bordered="false" class="files">
             <a-collapse-panel v-for="f in preview.files" :key="f.path">
@@ -334,6 +407,9 @@ function lastDeploy(rev: string) {
           <template v-else-if="column.key === 'ops'">
             <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
               <a-button size="small">回滚到此版本</a-button>
+            </a-popconfirm>
+            <a-popconfirm v-if="session.can('admin') && group?.management_mode === 'legacy' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`申请回退到兼容版本 ${record.id}？需要另一位管理员审批。`" ok-text="提交申请" @confirm="requestLegacyRollback(record.id)">
+              <a-button size="small" :disabled="!!pendingReq">申请回退</a-button>
             </a-popconfirm>
           </template>
         </template>

@@ -36,6 +36,8 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
@@ -49,6 +51,7 @@ type Server struct {
 	Lic    *licsvc.Service
 	Audit  *audit.Logger
 	Log    *slog.Logger
+	Box    *secretbox.Box
 	// OnOnline 在节点上线（收到 Hello）后调用，用于自动对齐版本。
 	OnOnline func(nodeID uint)
 	// Ready 为 false 时（高可用备控制台）拒绝所有节点请求，节点会重连到 VIP 上的主控制台。
@@ -66,6 +69,7 @@ type session struct {
 	nodeID  uint
 	out     chan *agentv1.ServerMessage
 	mu      sync.Mutex
+	native  bool
 	waiters map[string]chan *agentv1.CommandResult
 	done    chan struct{}
 }
@@ -326,6 +330,14 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 	now := time.Now()
 	switch b := m.Body.(type) {
 	case *agentv1.AgentMessage_Hello:
+		sess.mu.Lock()
+		sess.native = false
+		for _, c := range b.Hello.Capabilities {
+			if c == configbundle.Capability {
+				sess.native = true
+			}
+		}
+		sess.mu.Unlock()
 		ver := strings.SplitN(strings.TrimSpace(b.Hello.SyappVersionOutput), "\n", 2)[0]
 		agentVer, arch := ParseAgentVersion(b.Hello.AgentVersion)
 		nd := s.q().Node
@@ -391,6 +403,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 
 // ErrOffline 表示节点当前没有连接。
 var ErrOffline = errors.New("node offline")
+var ErrLegacyAgentUnsupported = errors.New("节点 Agent 版本不支持安全托管原生兼容配置，请先升级 Agent")
 
 // Online 报告节点是否在线。
 func (s *Server) Online(nodeID uint) bool {
@@ -401,11 +414,41 @@ func (s *Server) Online(nodeID uint) bool {
 
 // Send 签名并下发一条指令，等待结果。
 func (s *Server) Send(ctx context.Context, nodeID uint, m *agentv1.ServerMessage, timeout time.Duration) (*agentv1.CommandResult, error) {
+	return s.send(ctx, nodeID, m, timeout, false)
+}
+
+func (s *Server) nodeIsNative(nodeID uint) bool {
+	s.mu.Lock()
+	sess := s.sessions[nodeID]
+	s.mu.Unlock()
+	if sess == nil {
+		return false
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return sess.native
+}
+
+// SendLegacy checks the capability of the exact active connection used for
+// delivery. Older agents must not receive packages containing credentials.
+func (s *Server) SendLegacy(ctx context.Context, nodeID uint, m *agentv1.ServerMessage, timeout time.Duration) (*agentv1.CommandResult, error) {
+	return s.send(ctx, nodeID, m, timeout, true)
+}
+
+func (s *Server) send(ctx context.Context, nodeID uint, m *agentv1.ServerMessage, timeout time.Duration, requireNative bool) (*agentv1.CommandResult, error) {
 	s.mu.Lock()
 	sess := s.sessions[nodeID]
 	s.mu.Unlock()
 	if sess == nil {
 		return nil, ErrOffline
+	}
+	if requireNative {
+		sess.mu.Lock()
+		supported := sess.native
+		sess.mu.Unlock()
+		if !supported {
+			return nil, ErrLegacyAgentUnsupported
+		}
 	}
 	id := make([]byte, 12)
 	_, _ = rand.Read(id)
@@ -454,16 +497,35 @@ func (s *Server) FetchBundle(req *agentv1.FetchBundleRequest, stream agentv1.Age
 	if rev.GroupID != node.GroupID {
 		return status.Error(codes.PermissionDenied, "revision belongs to another node group")
 	}
-	const chunk = 256 << 10
-	for off := 0; off < len(rev.Bundle) || off == 0; off += chunk {
-		end := off + chunk
-		if end > len(rev.Bundle) {
-			end = len(rev.Bundle)
+	if configbundle.IsLegacy(rev.Bundle) {
+		rr := s.q().ReleaseRequest
+		count, err := rr.WithContext(stream.Context()).Where(rr.GroupID.Eq(node.GroupID), rr.RevisionID.Eq(rev.ID), rr.Status.Eq("approved")).Count()
+		if err != nil {
+			return status.Error(codes.Internal, "could not verify legacy approval")
 		}
-		if err := stream.Send(&agentv1.BundleChunk{Data: rev.Bundle[off:end], Offset: int64(off), Last: end == len(rev.Bundle)}); err != nil {
+		if count == 0 {
+			return status.Error(codes.PermissionDenied, "legacy revision has not been approved")
+		}
+		// Same gate as SendLegacy: only an agent whose live session announced the
+		// capability may download a native package, which can contain credentials.
+		if !s.nodeIsNative(node.ID) {
+			return status.Error(codes.PermissionDenied, "agent does not support native configuration packages")
+		}
+	}
+	bundle, err := configbundle.Open(s.Box, rev.Bundle)
+	if err != nil {
+		return status.Error(codes.Internal, "could not decrypt revision")
+	}
+	const chunk = 256 << 10
+	for off := 0; off < len(bundle) || off == 0; off += chunk {
+		end := off + chunk
+		if end > len(bundle) {
+			end = len(bundle)
+		}
+		if err := stream.Send(&agentv1.BundleChunk{Data: bundle[off:end], Offset: int64(off), Last: end == len(bundle)}); err != nil {
 			return err
 		}
-		if end == len(rev.Bundle) {
+		if end == len(bundle) {
 			break
 		}
 	}
@@ -504,6 +566,17 @@ func (s *Server) saveDrift(ctx context.Context, nodeID uint, r *agentv1.DriftRep
 	if r == nil || len(r.Files) == 0 || len(r.Files) > 200 {
 		return
 	}
+	q := s.q()
+	nd, rv := q.Node, q.Revision
+	node, err := nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).First()
+	if err != nil {
+		return
+	}
+	rev, err := rv.WithContext(ctx).Where(rv.ID.Eq(r.RevisionId), rv.GroupID.Eq(node.GroupID)).First()
+	if err != nil {
+		return
+	}
+	redact := configbundle.IsLegacy(rev.Bundle)
 	var files []DriftFileView
 	total := 0
 	for _, f := range r.Files {
@@ -519,16 +592,15 @@ func (s *Server) saveDrift(ctx context.Context, nodeID uint, r *agentv1.DriftRep
 		default:
 			v.Change = "modified"
 		}
-		if !strings.HasSuffix(f.Path, ".key") && len(f.Content) <= 256<<10 && total+len(f.Content) <= 2<<20 {
+		if !redact && !strings.HasSuffix(f.Path, ".key") && len(f.Content) <= 256<<10 && total+len(f.Content) <= 2<<20 {
 			v.Content = string(f.Content)
 			total += len(f.Content)
-		} else if len(f.Content) > 0 {
+		} else if redact || len(f.Content) > 0 {
 			v.Omitted = true
 		}
 		files = append(files, v)
 	}
 	fj, _ := json.Marshal(files)
-	q := s.q()
 	prev, _ := q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(nodeID)).First()
 	row := &store.NodeDrift{NodeID: nodeID, RevisionID: r.RevisionId, TreeHash: r.TreeHash, Files: string(fj), ReportedAt: time.Now()}
 	if err := q.NodeDrift.WithContext(ctx).Save(row); err != nil {

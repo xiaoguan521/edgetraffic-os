@@ -140,6 +140,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/node-groups/:id/publish", role(store.RoleReleaser), s.writable, s.publish)
 	a.POST("/node-groups/:id/rollback", role(store.RoleReleaser), s.rollback) // 过期状态下仍可用
 	a.POST("/node-groups/:id/release-requests", role(store.RoleReleaser), s.writable, s.requestRelease)
+	a.POST("/node-groups/:id/legacy-requests", role(store.RoleAdmin), s.writable, s.feature(license.FeatureLua), s.requestLegacy)
+	// 回退申请不挂 writable / feature：EXPIRED / INVALID 下回滚必须可用；仍需管理员提交、另一位管理员批准。
+	a.POST("/node-groups/:id/legacy-rollback-requests", role(store.RoleAdmin), s.requestLegacyRollback)
 	a.POST("/node-groups/:id/canary", role(store.RoleReleaser), s.writable, s.feature(license.FeatureCanary), s.startCanary)
 	a.GET("/canaries", s.listCanaries)
 	a.POST("/releases/batch", role(store.RoleReleaser), s.writable, s.feature(license.FeatureBatchRelease), s.batchPublish)
@@ -180,6 +183,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/release-requests", s.listReleaseRequests)
 	a.GET("/release-requests/:id", s.getReleaseRequest)
 	a.POST("/release-requests/:id/approve", role(store.RoleReleaser), s.writable, s.approveRelease)
+	// 批准同时用于新包与回退：授权检查在 approveLegacy 内按请求类型进行（新包要求可写与 lua 授权，回退不要求）。
+	a.POST("/release-requests/:id/legacy-approve", role(store.RoleAdmin), s.approveLegacy)
+	a.GET("/release-requests/:id/legacy-bundle", role(store.RoleAdmin), s.reviewLegacyBundle)
 	a.POST("/release-requests/:id/reject", role(store.RoleReleaser), s.rejectRelease)
 	a.POST("/release-requests/:id/cancel", role(store.RoleReleaser), s.cancelRelease)
 
@@ -323,6 +329,12 @@ func failErr(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "NO_CHANGES", err.Error())
 	case errors.Is(err, deploy.ErrConfigManagementPaused):
 		fail(c, http.StatusConflict, "CONFIG_MANAGEMENT_PAUSED", err.Error())
+	case errors.Is(err, deploy.ErrHandoffPending):
+		fail(c, http.StatusConflict, "CONFIG_HANDOFF_PENDING", err.Error())
+	case errors.Is(err, deploy.ErrLegacyAdminRequired):
+		fail(c, http.StatusForbidden, "LEGACY_ADMIN_REQUIRED", "原生兼容配置必须由另一位管理员审批")
+	case errors.Is(err, deploy.ErrLegacyModeRequired):
+		fail(c, http.StatusConflict, "LEGACY_MODE_REQUIRED", "该操作需要兼容配置模式和兼容版本")
 	case errors.Is(err, deploy.ErrInvalidManagementMode):
 		fail(c, http.StatusBadRequest, "INVALID_MANAGEMENT_MODE", err.Error())
 	case errors.Is(err, deploy.ErrApprovalRequired):

@@ -41,6 +41,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/cmdsig"
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/version"
 )
@@ -358,7 +359,7 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 
 func (a *Agent) hello(ctx context.Context) *agentv1.Hello {
 	h := &agentv1.Hello{AgentVersion: version.Version + " linux/" + runtime.GOARCH, AppliedRevisionId: a.applier.Current(), MachineFingerprint: machineFingerprint(),
-		Instance: instanceInfo(a.C.Profile), Brand: brand.ID(), RunningVersion: a.runningVersion(ctx)}
+		Instance: instanceInfo(a.C.Profile), Brand: brand.ID(), RunningVersion: a.runningVersion(ctx), Capabilities: []string{configbundle.Capability}}
 	if out, err := exec.CommandContext(ctx, a.C.DataplaneBin, "-V").CombinedOutput(); err == nil {
 		h.SyappVersionOutput = string(out)
 	}
@@ -495,6 +496,8 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 			switch {
 			case restore && a.sameAsApproved(b.Apply.RevisionId, bundle):
 				a.log.Info("license is read-only; allowing drift restore", "revision", b.Apply.RevisionId)
+			case !restore && a.approvedDigest(b.Apply.RevisionId) != "" && a.sameAsApproved(b.Apply.RevisionId, bundle):
+				a.log.Info("license is read-only; allowing verified rollback", "revision", b.Apply.RevisionId)
 			case !restore && a.certOnly(bundle):
 				a.log.Info("license is read-only; allowing certificate-only release", "revision", b.Apply.RevisionId)
 			default:

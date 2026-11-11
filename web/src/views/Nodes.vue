@@ -270,7 +270,8 @@ function mb(b: number) {
         <span v-if="managementMode">接入方式 <a-tag :color="managementMode.mode === 'managed' ? 'green' : managementMode.mode === 'legacy' ? 'purple' : 'gold'">{{ managementMode.label }}</a-tag></span>
       </div>
       <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon message="观察接入：节点上线和心跳不会触发配置下发；导入内容只会进入控制台草稿。确认配置后，请在节点组设置切回“控制台托管”，再手动预览、审批和发布。" style="margin-bottom: 14px" />
-      <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：保留节点本地的原生配置、Lua 脚本和第三方依赖；控制台只做导入分析、审计和漂移观察，不会发布渲染配置。" style="margin-bottom: 14px" />
+      <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：原生配置包由管理员提交，经另一位管理员审批后才会下发；控制台不会自动发布站点草稿。" style="margin-bottom: 14px" />
+      <a-alert v-if="managementMode?.mode === 'managed' && managementMode?.handoff_pending" type="warning" show-icon message="等待首次接管发布：节点重连不会自动对齐。核对并备份现网配置后，请显式发布。" style="margin-bottom: 14px" />
       <a-table :columns="columns" :data-source="nodes" row-key="id" :pagination="false">
         <template #emptyText>
           <a-empty description="这个节点组还没有节点。点击“添加节点”生成一次性注册命令。" />
@@ -321,13 +322,17 @@ function mb(b: number) {
           新服务器请先解压 user 模式节点包，用 <span class="code">./install-user.sh {{ enroll.root }} --http {{ enroll.http_port }} --https {{ enroll.https_port }} --status {{ enroll.status_port }} --console {{ enroll.server }} --token &lt;令牌&gt; --ca-fingerprint &lt;指纹&gt;</span> 一步安装并注册。</p>
         <p v-else-if="enroll.instance">在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令：按节点组的实例档案创建实例 <b>{{ enroll.instance }}</b>（HTTP {{ enroll.http_port }} / HTTPS {{ enroll.https_port }}）并注册。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
         <p v-else>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+        <p class="sub">新建节点或实例：</p>
         <pre class="cmd code">{{ enroll.command }}</pre>
-        <a-button type="primary" @click="copy(enroll.command)">复制命令</a-button>
+        <a-button @click="copy(enroll.command)">复制新建命令</a-button>
+        <p class="sub" style="margin-top: 16px">实例已经存在且有独立配置：</p>
+        <pre class="cmd code">{{ enroll.existing_command }}</pre>
+        <a-button type="primary" @click="copy(enroll.existing_command)">复制已有实例注册命令</a-button>
         <a-descriptions :column="1" size="small" style="margin-top: 20px">
           <a-descriptions-item label="控制台地址"><span class="code">{{ enroll.server }}</span></a-descriptions-item>
           <a-descriptions-item label="控制台 CA 指纹"><span class="code">{{ enroll.ca_fingerprint }}</span></a-descriptions-item>
         </a-descriptions>
-        <p class="sub">节点首次连接时用 CA 指纹确认控制台身份，之后全程使用双向证书认证。<template v-if="managementMode?.mode === 'managed'">节点上线后会自动同步到节点组的当前版本；如果本机已有独立配置，请先导入并确认，或在注册命令末尾追加 <span class="code">-replace-local-config</span>（会先备份）。</template><template v-else>当前是“{{ managementMode?.label }}”：节点上线不会自动同步或覆盖本地配置。如果 Agent 因检测到独立配置而拒绝注册，请在命令末尾追加 <span class="code">-replace-local-config</span>，它会先备份到 Agent 状态目录；完成核对后再切回“控制台托管”并手动发布。</template></p>
+        <p class="sub">节点首次连接时用 CA 指纹确认控制台身份，之后使用双向证书认证。已有实例注册时，检测到改动的当前版本目录会被备份；实际主配置、目录外的 include、证书和 Lua 依赖可用 agent 的 backup-config 命令另行备份。<template v-if="managementMode?.mode === 'managed'">节点上线后可能自动同步节点组当前版本，请先确认接入方式。</template><template v-else>当前是“{{ managementMode?.label }}”，节点上线不会自动同步配置。</template></p>
       </template>
     </a-modal>
 
@@ -372,7 +377,7 @@ function mb(b: number) {
           </a-radio-group>
         </a-form-item>
         <a-divider orientation="left" style="font-size: 13px">配置接管方式</a-divider>
-        <a-form-item label="节点配置来源" extra="观察接入或兼容配置下不会自动下发、回滚或恢复节点配置。切回控制台托管后也不会自动发布，需人工确认导入报告并显式发布。">
+        <a-form-item label="节点配置来源" extra="观察接入不会下发配置；兼容配置需经两位管理员提交和审批后下发。切换模式后需显式发布才会自动对齐。">
           <a-radio-group v-model:value="modeForm">
             <a-radio value="managed">控制台托管</a-radio>
             <a-radio value="observe">观察接入</a-radio>

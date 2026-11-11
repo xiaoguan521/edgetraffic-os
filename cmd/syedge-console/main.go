@@ -123,7 +123,7 @@ func run(log *slog.Logger, o options) error {
 		return fmt.Errorf("migrate site certificates: %w", err)
 	}
 
-	gw := &gateway.Server{Store: st, CA: ca, CmdKey: cmdKey, Lic: lic, Audit: aud, Log: log}
+	gw := &gateway.Server{Store: st, CA: ca, CmdKey: cmdKey, Lic: lic, Audit: aud, Log: log, Box: box}
 	dep := &deploy.Service{Store: st, Certs: crt, GW: gw, Audit: aud, Log: log, MimeTypes: render.DefaultMimeTypes(), Box: box}
 	gw.OnOnline = dep.Align
 	gw.CheckHost = func(groupID uint, hostKey string) error { return dep.CheckEnrollHost(groupID, hostKey, 0) }

@@ -89,6 +89,52 @@ func TestLocalConfigCheck(t *testing.T) {
 	}
 }
 
+func TestLocalConfigBackupsRemainDistinctWithinOneSecond(t *testing.T) {
+	ap := baselineNode(t)
+	config := filepath.Join(ap.C.ConfRoot, "current", "syedge.conf")
+	f, err := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n# changed\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	bk := t.TempDir()
+	now := time.Date(2026, 10, 29, 13, 0, 0, 0, time.UTC)
+	first, err := localConfigCheck(ap, true, bk, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := localConfigCheck(ap, true, bk, now)
+	if err != nil || first == second {
+		t.Fatalf("backup collision: first=%q second=%q err=%v", first, second, err)
+	}
+	after, err := os.ReadFile(first)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("previous backup was removed or changed: %v", err)
+	}
+}
+
+func TestTarDirPreservesExistingArchive(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(root, "existing.tar.gz")
+	if err := os.WriteFile(out, []byte("previous backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarDir(root, out); err == nil {
+		t.Fatal("existing backup was accepted")
+	}
+	data, err := os.ReadFile(out)
+	if err != nil || string(data) != "previous backup" {
+		t.Fatalf("previous backup changed: %q, %v", data, err)
+	}
+}
+
 func TestRepairPackageBaselinePreservesStandaloneConfiguration(t *testing.T) {
 	for _, custom := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pristine", true: "customized"}[custom], func(t *testing.T) {

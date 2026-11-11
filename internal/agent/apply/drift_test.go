@@ -6,12 +6,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 func TestDriftReport(t *testing.T) {
 	root := t.TempDir()
 	checkDriftReport(t, root)
+}
+
+func TestLegacyDriftOmitsEveryFileContent(t *testing.T) {
+	root := t.TempDir()
+	a := &Applier{C: Config{ConfRoot: root}}
+	rel := filepath.Join(root, "releases", "r000001")
+	if err := os.MkdirAll(rel, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := render.Repack("r000001", map[string][]byte{"syedge.conf": []byte("old secret"), configbundle.LegacyMarker: []byte("{}")})
+	for name, data := range b.Files {
+		if err := os.WriteFile(filepath.Join(rel, name), data, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(rel, filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "syedge.conf"), []byte("new secret"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "password.txt"), []byte("secret"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	r, err := a.Drift()
+	if err != nil || r == nil || len(r.Files) != 2 {
+		t.Fatalf("drift = %+v, %v", r, err)
+	}
+	for _, f := range r.Files {
+		if !f.Omitted || len(f.Content) != 0 {
+			t.Fatalf("legacy drift disclosed content: %+v", f)
+		}
+	}
 }
 
 func TestDriftReportWithSymlinkedRoot(t *testing.T) {

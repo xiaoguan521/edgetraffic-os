@@ -14,6 +14,11 @@ on:
       - "internal/instance/**"
       - "cmd/syedge-instance/**"
       - "internal/wrapper/lua*"
+      - "internal/agent/apply/**"
+      - "internal/agent/conn/**"
+      - "internal/console/deploy/**"
+      - "internal/console/gateway/**"
+      - "internal/pkg/configbundle/**"
       - "scripts/ci/lua-acceptance.sh"
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
@@ -29,6 +34,11 @@ on:
       - "internal/instance/**"
       - "cmd/syedge-instance/**"
       - "internal/wrapper/lua*"
+      - "internal/agent/apply/**"
+      - "internal/agent/conn/**"
+      - "internal/console/deploy/**"
+      - "internal/console/gateway/**"
+      - "internal/pkg/configbundle/**"
       - "scripts/ci/lua-acceptance.sh"
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
@@ -141,3 +151,10 @@ jobs:
           # GitHub arm64 共享机器的吞吐抖动过大，QPS 门槛只在 x86_64 上拦截；arm64 只报告，性能验收在专用实机上做
           PERF_GATE: ${{ matrix.arch == 'x86_64' && '1' || '0' }}
         run: scripts/ci/lua-acceptance.sh dist-lua ${{ matrix.base }}
+      - name: Native Lua publish and rollback (${{ matrix.base }} / ${{ matrix.arch }})
+        run: |
+          sudo env "PATH=$PATH" \
+            SYEDGE_LEGACY_IT_BIN="$SYEDGE_PREFIX/sbin/syedge" \
+            SYEDGE_LEGACY_IT_MODULES="$SYEDGE_PREFIX/modules/lua" \
+            SYEDGE_LEGACY_IT_REQUIRED=1 \
+            go test -mod=vendor -count=1 -v -run '^TestLegacyLuaLiveLifecycle$' ./internal/agent/apply/

@@ -21,6 +21,18 @@
   （2026-11-07 决定，docs/lua.md 第 5 节）：仅管理员提交、另一位管理员批准，需要 lua 授权与附加包；脚本文本只写入版本目录的
   lua/script-*.lua，配置中只有固定调用；在 etos.init 收紧环境前按文本编译（syedge -t 不执行 init，语法错误在 reload 时由 agent 识别并回滚），运行在受限环境（无 io / os.execute / load / 模块 /
   FFI / debug / ngx.socket，不能写全局变量）。任何放宽受限环境的改动都必须在 lua-acceptance.sh 中有对应用例。
+- 原生兼容配置包（2026-11-11 决定，docs/legacy-config-management.md）是上一条的唯一例外，用于接管现网已有的原生配置与 Lua：
+  - 只在节点组接管方式为 legacy 时可用；managed 节点组的配置与 Lua 仍只由 internal/render 生成，受限环境不变。
+  - 包内的配置与脚本不经 internal/render、不在受限环境中运行，拥有数据面进程的全部权限。因此只允许管理员提交、
+    另一位管理员批准；批准绑定冻结包的摘要，批准后内容不可替换；回退同样需要复核并按摘要校验。
+  - 提交需要 lua 授权；回退申请在 EXPIRED/INVALID 下仍可用。
+  - 包只接受普通文件（无软链接、无特殊文件），有压缩后、解压后与文件数上限；节点上只写入本实例前缀下的
+    conf/releases/<版本>/。agent 协议不因此增加任何指令；只有当前连接声明了该能力的 agent 才能收到或下载兼容包。
+  - master 以 root 运行的节点默认拒绝兼容包（agent 按运行中 master 的实际用户判断）：只有提交人显式声明、声明随包冻结
+    并由另一位管理员批准后才允许，声明写审计并显示在发布说明中。
+  - 控制台加密保存兼容包；比较、漂移、审计、日志只出现文件路径与哈希，不出现内容。
+  - 该例外的每一条边界都必须有自动用例；真实数据面的发布与回退用例在 lua 工作流中运行，且不得被跳过
+    （SYEDGE_LEGACY_IT_REQUIRED）。
 - 永远不得 restart syedge；任何代码路径（含授权失效）不得停止 syedge。
 - 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行，只带 CAP_NET_BIND_SERVICE
   （单元的 AmbientCapabilities；wrapper 为文件能力，只允许 syedge 组执行）；防火墙的开机加载与刷新以 syedge-firewall 运行，
@@ -46,6 +58,8 @@
   sudoers 每个子命令单独一行（共 7 行，以 (syedge) 身份运行），只有 test 与 upgrade-start 带参数通配，参数安全由 wrapper 校验；
   另有一行 `Defaults:<agent 用户> !requiretty`（agent 无终端，CentOS 7 的 sudo 默认 requiretty），不授予任何命令。
 - 私钥、凭据、License 签名私钥不得出现在代码、日志、前端响应中。
+  唯一例外：管理员为复核原生兼容包而下载冻结包（包内配置与脚本可能含凭据）。只限管理员、每次下载写审计、响应不可缓存；
+  包内的私钥文件（*.key 或含 PEM 私钥）在下载包中只给出哈希，不给出内容。
 - 数据库访问只用参数化查询；MVP 阶段集中在 internal/console/store 封装，正式版迁移到 gorm/gen。每个写接口写审计。
 
 ## 授权

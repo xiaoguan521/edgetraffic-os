@@ -7,6 +7,8 @@ Type=oneshot
 # 运行时不使用 root（设计 0001 D5）：防火墙专用用户，只带 CAP_NET_ADMIN；只读各实例的配置
 User=syedge-firewall
 Group=syedge-firewall
+# 版本文件对数据面组可读；仅刷新服务需要读取实例配置以确定监听端口。
+SupplementaryGroups=syedge
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=yes

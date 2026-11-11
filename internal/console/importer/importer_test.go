@@ -191,6 +191,33 @@ func TestImportInventoriesLegacyLuaAssets(t *testing.T) {
 	}
 }
 
+func TestLuaReferenceReportsUncertainPathsAndDependencies(t *testing.T) {
+	r, err := FromFiles([]conf.File{
+		{Name: "conf/syedge.conf", Body: []byte(`http { server { listen 80; server_name lua.example.com; location / { access_by_lua_file lua/secure/access.lua; proxy_pass http://10.0.0.2:8080; } } }`)},
+		{Name: "lua/other/access.lua", Body: []byte("local mysql = require('resty.mysql')\n")},
+	}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := r.Lua.References[0]
+	if ref.Resolved != "" || ref.Candidate != "/lua/other/access.lua" || ref.Resolution != "unverified" {
+		t.Fatalf("same-name script was reported as an exact match: %+v", ref)
+	}
+	if len(r.Lua.Dependencies) != 1 || r.Lua.Dependencies[0].Target != "resty.mysql" || r.Lua.Dependencies[0].Status != "unverified" {
+		t.Fatalf("Lua dependency was not reported as unverified: %+v", r.Lua.Dependencies)
+	}
+}
+
+func TestLuaDumpWithoutFilesDoesNotClaimVerified(t *testing.T) {
+	r, err := FromDump([]byte("# configuration file /tmp/syedge.conf:\nhttp { init_by_lua_file lua/init.lua; }\n"), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Lua.References) != 1 || r.Lua.References[0].Resolution != "unverified" {
+		t.Fatalf("dump-only reference needs verification: %+v", r.Lua.References)
+	}
+}
+
 func selfSigned(t *testing.T, cn string) (string, string) {
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn}, DNSNames: []string{cn},

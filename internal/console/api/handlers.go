@@ -323,16 +323,17 @@ func (s *Server) listGroups(c *gin.Context) {
 		Online         int64  `json:"online"`
 		Sites          int64  `json:"sites"`
 		ManagementMode string `json:"management_mode"`
+		HandoffPending bool   `json:"handoff_pending"`
 	}
 	out := make([]row, 0, len(gs))
 	for _, g := range gs {
 		r := row{NodeGroup: *g}
-		mode, err := s.Deploy.ManagementMode(g.ID)
+		mode, err := s.Deploy.ManagementModeView(g.ID)
 		if err != nil {
 			failErr(c, err)
 			return
 		}
-		r.ManagementMode = mode
+		r.ManagementMode, r.HandoffPending = mode.Mode, mode.HandoffPending
 		nd := q.Node
 		r.Nodes, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked")).Count()
 		r.Online, _ = nd.WithContext(ctx).Where(nd.GroupID.Eq(g.ID), nd.Status.Eq("online")).Count()
@@ -509,9 +510,33 @@ func (s *Server) enrollToken(c *gin.Context) {
 		mode = "system"
 	}
 	c.JSON(http.StatusOK, gin.H{"token": tok, "expires_at": exp, "server": s.GRPCAddr, "ca_fingerprint": s.CAFingerprint,
-		"command": enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint), "mode": mode, "instance": prof.Instance, "root": prof.Root,
+		"command":          enrollCommand(prof, s.GRPCAddr, tok, s.CAFingerprint),
+		"existing_command": enrollExistingCommand(prof, s.GRPCAddr, tok, s.CAFingerprint), "mode": mode, "instance": prof.Instance, "root": prof.Root,
 		"http_port": prof.HTTP(), "https_port": prof.HTTPS(), "status_port": prof.Status(),
 		"management_mode": management.Mode, "management_label": management.Label, "management_description": management.Description})
+}
+
+// enrollExistingCommand registers an already-created instance without trying to
+// create it again. The local configuration flag belongs to the agent command,
+// before any shell chaining.
+func enrollExistingCommand(p render.Profile, server, token, caFP string) string {
+	reg := fmt.Sprintf("-server %s -token %s -ca-fingerprint %s -replace-local-config", server, token, caFP)
+	if p.Mode == "user" {
+		instance := ""
+		if p.Instance != "" {
+			instance = " -instance " + p.Instance
+		}
+		return fmt.Sprintf("%s/bin/%s enroll -root %s%s %s && %s/bin/%s-instance --root %s ensure",
+			p.Root, brand.Agent(), p.Root, instance, reg, p.Root, brand.ID(), p.Root)
+	}
+	if p.Instance == "" {
+		return fmt.Sprintf("sudo %s enroll %s && sudo systemctl enable %s && sudo systemctl start %s",
+			brand.Agent(), reg, brand.Agent(), brand.Agent())
+	}
+	l := layout.SystemAt(p.Root, p.Instance)
+	unit := strings.TrimSuffix(l.AgentUnit(), ".service")
+	return fmt.Sprintf("sudo runuser -u %s -- %s enroll -instance %s %s && sudo systemctl enable %s && sudo systemctl start %s",
+		l.AgentUser(), l.AgentBin(), p.Instance, reg, unit, unit)
 }
 
 // enrollCommand 返回在节点上执行的注册命令：默认实例注册已安装的 agent；
@@ -1167,7 +1192,8 @@ func (s *Server) preview(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "RENDER_FAILED", err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"files": diffs, "digest": digest, "changed": len(diffs) > 0})
+	c.JSON(http.StatusOK, gin.H{"files": diffs, "digest": digest, "changed": len(diffs) > 0,
+		"comparison_basis": "console_revision"})
 }
 
 func (s *Server) publish(c *gin.Context) {

@@ -105,6 +105,21 @@ func TestEnrollCommand(t *testing.T) {
 	}
 }
 
+func TestExistingInstanceEnrollCommand(t *testing.T) {
+	for _, tc := range []struct {
+		profile render.Profile
+		want    string
+	}{
+		{render.Profile{}, "sudo syedge-agent enroll -server c:9443 -token tok -ca-fingerprint fp -replace-local-config && sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent"},
+		{render.Profile{Instance: "blue"}, "sudo runuser -u syedge-agent-blue -- /usr/bin/syedge-agent enroll -instance blue -server c:9443 -token tok -ca-fingerprint fp -replace-local-config && sudo systemctl enable syedge-agent@blue && sudo systemctl start syedge-agent@blue"},
+		{render.Profile{Mode: "user", Root: "/home/ops/edge", Instance: "blue"}, "/home/ops/edge/bin/syedge-agent enroll -root /home/ops/edge -instance blue -server c:9443 -token tok -ca-fingerprint fp -replace-local-config && /home/ops/edge/bin/syedge-instance --root /home/ops/edge ensure"},
+	} {
+		if got := enrollExistingCommand(tc.profile, "c:9443", "tok", "fp"); got != tc.want {
+			t.Fatalf("profile %+v: got %q, want %q", tc.profile, got, tc.want)
+		}
+	}
+}
+
 func TestBrandEndpoint(t *testing.T) {
 	f := newImportHTTP(t)
 	w := f.request("", http.MethodGet, "/brand", nil, "", false) // 不需要登录

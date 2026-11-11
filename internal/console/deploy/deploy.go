@@ -22,6 +22,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"gorm.io/gen/field"
@@ -261,13 +262,23 @@ func (d *Service) Preview(groupID uint) ([]FileDiff, string, error) {
 		return nil, "", err
 	}
 	old := map[string][]byte{}
+	redact := false
 	g, _ := store.First[store.NodeGroup](d.Store, groupID)
 	if g != nil && g.CurrentRevisionID != "" {
 		if rev, err := d.revision(g.CurrentRevisionID, 0); err == nil {
-			old, _ = render.ReadTarGz(rev.Bundle)
+			old, err = d.revisionFiles(rev)
+			if err != nil {
+				return nil, "", err
+			}
+			redact = isLegacyRevision(rev)
 		}
 	}
-	out := diffFiles(old, b.Files) // 无变更时序列化为 []，不是 null
+	var out []FileDiff
+	if redact {
+		out = diffFilesByHash(old, b.Files)
+	} else {
+		out = diffFiles(old, b.Files)
+	}
 	return out, b.Manifest.Digest, nil
 }
 
@@ -333,7 +344,12 @@ func (d *Service) Publish(groupID uint, note, user, ip string) (*store.Deploymen
 		lk.Unlock()
 		return nil, err
 	}
-	if g.CurrentRevisionID != "" {
+	pending, err := d.handoffPending(groupID)
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if g.CurrentRevisionID != "" && !pending {
 		if cur, err := d.revision(g.CurrentRevisionID, 0); err == nil && cur.Digest == digest {
 			lk.Unlock()
 			return nil, ErrNoChanges
@@ -393,6 +409,10 @@ func (d *Service) RenewalRefresh(groupID, certID uint, user, ip string) (*store.
 		return nil, err
 	}
 	if err := d.ensureConfigManaged(groupID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureHandoffComplete(groupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -552,6 +572,10 @@ func (d *Service) Restore(nodeID uint, user, ip string) (*store.Deployment, erro
 		lk.Unlock()
 		return nil, err
 	}
+	if err := d.ensureHandoffComplete(g.ID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
 	rev, err := d.revision(n.AppliedRevision, g.ID)
 	if err != nil {
 		lk.Unlock()
@@ -574,6 +598,10 @@ func (d *Service) Rollback(groupID uint, revID, user, ip string) (*store.Deploym
 		return nil, err
 	}
 	if err := d.ensureConfigManaged(groupID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if err := d.ensureHandoffComplete(groupID); err != nil {
 		lk.Unlock()
 		return nil, err
 	}
@@ -601,7 +629,7 @@ func (d *Service) Align(nodeID uint) {
 	if !lk.TryLock() {
 		return // 正在发布，结束后节点会被包含在发布中或下次上线再对齐
 	}
-	if err := d.ensureConfigManaged(g.ID); err != nil {
+	if pending, err := d.handoffPending(g.ID); err != nil || pending {
 		lk.Unlock()
 		return
 	}
@@ -610,13 +638,38 @@ func (d *Service) Align(nodeID uint) {
 		lk.Unlock()
 		return
 	}
-	_, _ = d.start(lk, g, rev, "align", "节点上线自动对齐", "system", []uint{nodeID})
+	if isLegacyRevision(rev) {
+		_, _ = d.startLegacy(lk, g, rev, "align", "节点上线自动对齐已批准的兼容版本", "system", []uint{nodeID}, nil)
+	} else {
+		_, _ = d.start(lk, g, rev, "align", "节点上线自动对齐", "system", []uint{nodeID})
+	}
 }
 
 func (d *Service) start(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision, kind, note, user string, only []uint) (*store.Deployment, error) {
-	if err := d.ensureConfigManaged(g.ID); err != nil {
+	return d.startWithMode(lk, g, rev, kind, note, user, only, false, nil)
+}
+
+func (d *Service) startLegacy(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision, kind, note, user string, only []uint, before func(uint) error) (*store.Deployment, error) {
+	return d.startWithMode(lk, g, rev, kind, note, user, only, true, before)
+}
+
+func (d *Service) startWithMode(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision, kind, note, user string, only []uint, legacy bool, before func(uint) error) (*store.Deployment, error) {
+	mode, err := d.ManagementMode(g.ID)
+	if err != nil {
 		lk.Unlock()
 		return nil, err
+	}
+	if legacy {
+		if mode != ManagementModeLegacy || !isLegacyRevision(rev) {
+			lk.Unlock()
+			return nil, ErrLegacyModeRequired
+		}
+	} else if mode != ManagementModeManaged || isLegacyRevision(rev) {
+		lk.Unlock()
+		if isLegacyRevision(rev) {
+			return nil, ErrLegacyAdminRequired
+		}
+		return nil, configManagementError(mode)
 	}
 	nd := d.q().Node
 	sel := nd.WithContext(bg).Where(nd.GroupID.Eq(g.ID), nd.Status.Neq("revoked"))
@@ -639,6 +692,14 @@ func (d *Service) start(lk *sync.Mutex, g *store.NodeGroup, rev *store.Revision,
 	if err := d.q().Deployment.WithContext(bg).Create(dep); err != nil {
 		lk.Unlock()
 		return nil, err
+	}
+	if before != nil {
+		if err := before(dep.ID); err != nil {
+			dp := d.q().Deployment
+			_, _ = dp.WithContext(bg).Where(dp.ID.Eq(dep.ID)).UpdateSimple(dp.Status.Value("FAILED"), dp.FinishedAt.Value(time.Now()))
+			lk.Unlock()
+			return nil, err
+		}
 	}
 	go func() {
 		defer lk.Unlock()
@@ -686,22 +747,37 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 				return
 			}
 			var res *agentv1.CommandResult
-			if dep.Kind == "rollback" {
+			if dep.Kind == "rollback" && !isLegacyRevision(rev) {
 				// 回滚优先切换节点本地已有的版本：不依赖授权状态，过期时也可用（规格书 8.6）
 				res, err = ag.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: rev.ID}}}, ApplyTimeout)
 				if err == nil && res.Status == agentv1.CommandResult_REJECTED && strings.Contains(res.Message, "not present") {
 					res = nil // 本地没有该版本：退回到重新下发
 				}
 			}
+			// Native versions must always use the signed digest in Apply. A local
+			// rollback alone could execute files modified after the review.
 			if res == nil && err == nil {
-				res, err = ag.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
+				msg := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
 					RevisionId: rev.ID, ParentRevisionId: cur.AppliedRevision, BundleSha256: rev.Digest, PostChecks: checks, TimeoutSeconds: int32(ApplyTimeout / time.Second),
-				}}}, ApplyTimeout)
+				}}}
+				if isLegacyRevision(rev) {
+					if safe, ok := ag.(interface {
+						SendLegacy(context.Context, uint, *agentv1.ServerMessage, time.Duration) (*agentv1.CommandResult, error)
+					}); ok {
+						res, err = safe.SendLegacy(context.Background(), n.ID, msg, ApplyTimeout)
+					} else {
+						err = gateway.ErrLegacyAgentUnsupported
+					}
+				} else {
+					res, err = ag.Send(context.Background(), n.ID, msg, ApplyTimeout)
+				}
 			}
 			if err != nil {
 				st := "TIMEOUT"
 				if errors.Is(err, gateway.ErrOffline) {
 					st = "OFFLINE"
+				} else if errors.Is(err, gateway.ErrLegacyAgentUnsupported) {
+					st = "REJECTED"
 				}
 				upd(st, err.Error(), "", true)
 				return
@@ -741,11 +817,27 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 		}
 	}
 	q := d.q()
-	dp, ng := q.Deployment, q.NodeGroup
-	_, _ = dp.WithContext(bg).Where(dp.ID.Eq(dep.ID)).UpdateSimple(dp.Status.Value(status), dp.FinishedAt.Value(time.Now()))
+	dp := q.Deployment
 	if (status == "APPLIED" || status == "PENDING_NODES") && dep.Kind != "align" && dep.Kind != "restore" && dep.Kind != "canary" {
-		_, _ = ng.WithContext(bg).Where(ng.ID.Eq(g.ID)).Update(ng.CurrentRevisionID, rev.ID)
+		err := q.Transaction(func(tx *query.Query) error {
+			ng := tx.NodeGroup
+			if _, err := ng.WithContext(bg).Where(ng.ID.Eq(g.ID)).Update(ng.CurrentRevisionID, rev.ID); err != nil {
+				return err
+			}
+			if dep.Kind == "publish" || (dep.Kind == "rollback" && isLegacyRevision(rev)) {
+				kv := tx.SystemKV
+				if _, err := kv.WithContext(bg).Where(kv.Key.Eq(handoffPendingKey(g.ID))).Delete(); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			status = "FAILED"
+			d.Log.Error("failed to record deployed revision", "group", g.ID, "revision", rev.ID, "err", err)
+		}
 	}
+	_, _ = dp.WithContext(bg).Where(dp.ID.Eq(dep.ID)).UpdateSimple(dp.Status.Value(status), dp.FinishedAt.Value(time.Now()))
 	d.Log.Info("deployment finished", "id", dep.ID, "kind", dep.Kind, "revision", rev.ID, "status", status, "applied", applied, "failed", failed)
 	_ = d.Audit.Write(audit.Entry{Username: dep.CreatedBy, Action: "release.result", ObjectType: "deployment", ObjectID: fmt.Sprint(dep.ID),
 		Result: strings.ToLower(status), Detail: map[string]any{"revision": rev.ID, "kind": dep.Kind, "applied": applied, "failed": failed}})
@@ -753,9 +845,16 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 
 // postChecks 为每个站点生成本机探活：请求首个域名的 /，只要求非 5xx。
 func (d *Service) postChecks(rev *store.Revision) []*agentv1.PostCheck {
-	files, err := render.ReadTarGz(rev.Bundle)
+	files, err := d.revisionFiles(rev)
 	if err != nil {
 		return nil
+	}
+	if isLegacyRevision(rev) {
+		var metadata legacyMetadata
+		if json.Unmarshal(files[configbundle.LegacyMarker], &metadata) != nil {
+			return nil
+		}
+		return metadata.Checks
 	}
 	var out []*agentv1.PostCheck
 	for name, content := range files {

@@ -43,6 +43,16 @@ func main() {
 	if cmd == "firewall" {
 		os.Exit(firewallMain(args, os.Stdout, os.Stderr))
 	}
+	if cmd == "backup-config" {
+		if err := backupConfig(args, os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintln(os.Stderr, brand.Agent()+":", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if cmd == "package-defaults" { // 打包时使用：写入初始版本与独立模式文件
 		if len(args) != 2 || args[0] != "-out" {
 			fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" package-defaults -out <安装根目录的暂存目录>")
@@ -85,7 +95,7 @@ func main() {
 		Server: o.server, StateDir: o.stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
 		StatusURL: lay.StatusURL(prof.Status()), VersionURL: lay.VersionURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
-			ConfRoot: o.confRoot, PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
+			ConfRoot: o.confRoot, Prefix: lay.RuntimeRoot(), PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
 			LockFile: lay.AgentLock(), Wrapper: strings.Fields(o.wrapper),
 			HTTPPort: prof.HTTP(), HTTPSPort: prof.HTTPS(),
 		},
@@ -113,13 +123,13 @@ func main() {
 		// 例如节点被吊销后重新添加。新身份只在控制台接受后才替换旧身份，失败时旧身份保持不变。
 		a := conn.New(cfg, log)
 		had := a.Enrolled()
-		if !had {
+		if !had || o.replaceLocal {
 			bk, err := localConfigCheck(&apply.Applier{C: cfg.Apply}, o.replaceLocal, filepath.Join(o.stateDir, "backups"), time.Now())
 			if err != nil {
 				fatal(log, "enroll", err)
 			}
 			if bk != "" {
-				log.Warn("local standalone configuration backed up; it keeps running until the first publish from the console", "backup", bk)
+				log.Warn("current configuration directory backed up; external includes and dependencies require a separate backup-config snapshot", "backup", bk)
 			}
 		}
 		if err := a.Enroll(ctx, o.token, o.caFP); err != nil {
@@ -196,7 +206,7 @@ func fatal(log *slog.Logger, what string, err error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run [-c <配置文件>] | version | firewall render|covers ...")
+	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run [-c <配置文件>] | backup-config --config <主配置> --source <文件或目录> --output <备份> | version | firewall render|covers ...")
 	os.Exit(2)
 }
 

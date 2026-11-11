@@ -87,7 +87,11 @@ func (d *Service) RequestRelease(groupID uint, note, user, ip string) (*store.Re
 	if err != nil {
 		return nil, err
 	}
-	if g.CurrentRevisionID != "" {
+	pending, err := d.handoffPending(groupID)
+	if err != nil {
+		return nil, err
+	}
+	if g.CurrentRevisionID != "" && !pending {
 		if cur, err := d.revision(g.CurrentRevisionID, 0); err == nil && cur.Digest == digest {
 			return nil, ErrNoChanges
 		}
@@ -109,9 +113,11 @@ func (d *Service) RequestRelease(groupID uint, note, user, ip string) (*store.Re
 // RequestDetail 是审批详情：请求本身加上冻结版本相对提交时线上版本的差异。
 type RequestDetail struct {
 	*store.ReleaseRequest
-	GroupName string     `json:"group_name"`
-	Files     []FileDiff `json:"files"`
-	Stale     bool       `json:"stale"` // 待审批但线上版本已变化
+	GroupName      string     `json:"group_name"`
+	Files          []FileDiff `json:"files"`
+	Stale          bool       `json:"stale"` // 待审批但线上版本已变化
+	Legacy         bool       `json:"legacy"`
+	LegacyRollback bool       `json:"legacy_rollback"`
 }
 
 // GetRequest 返回审批详情。
@@ -130,17 +136,33 @@ func (d *Service) GetRequest(id uint) (*RequestDetail, error) {
 	if err != nil {
 		return nil, err
 	}
-	nb, err := render.ReadTarGz(rev.Bundle)
+	nb, err := d.revisionFiles(rev)
 	if err != nil {
 		return nil, err
 	}
 	old := map[string][]byte{}
-	if req.BaseRevisionID != "" {
-		if base, err := d.revision(req.BaseRevisionID, req.GroupID); err == nil {
-			old, _ = render.ReadTarGz(base.Bundle)
+	redact := isLegacyRevision(rev)
+	out.Legacy = redact
+	if redact && req.Status == ApprovalPending {
+		out.LegacyRollback, err = d.LegacyRequestIsRollback(id)
+		if err != nil {
+			return nil, err
 		}
 	}
-	out.Files = diffFiles(old, nb)
+	if req.BaseRevisionID != "" {
+		if base, err := d.revision(req.BaseRevisionID, req.GroupID); err == nil {
+			old, err = d.revisionFiles(base)
+			if err != nil {
+				return nil, err
+			}
+			redact = redact || isLegacyRevision(base)
+		}
+	}
+	if redact {
+		out.Files = diffFilesByHash(old, nb)
+	} else {
+		out.Files = diffFiles(old, nb)
+	}
 	return out, nil
 }
 
@@ -194,6 +216,13 @@ func (d *Service) Approve(id uint, comment, user, ip string) (*store.Deployment,
 	}
 	if req.RequestedBy == user {
 		return nil, ErrSelfApproval
+	}
+	target, err := d.revision(req.RevisionID, req.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	if isLegacyRevision(target) {
+		return nil, ErrLegacyAdminRequired
 	}
 	if d.canaryRunning(req.GroupID) {
 		return nil, ErrCanaryRunning

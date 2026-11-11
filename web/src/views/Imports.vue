@@ -243,7 +243,10 @@ const statusTag: Record<string, { t: string; c: string }> = {
           message="请逐项核对未转换内容；包含问题的站点可能处于停用状态，应用为草稿并不代表迁移完成。" />
         <a-alert v-if="rep.lua?.requires_legacy" type="warning" show-icon style="margin-top: 12px"
           :message="`检测到 ${rep.lua.references?.length || 0} 项原生 Lua 配置：不能直接转为受限托管脚本`"
-          :description="`报告已记录 ${rep.lua.assets?.length || 0} 个 Lua / 依赖文件及其 SHA-256。${rep.lua.missing?.length ? `缺失引用：${rep.lua.missing.join('、')}。` : ''}请在“兼容配置”模式下保留节点本地运行时，或逐项迁移到受限 Lua 插入点。`" />
+          :description="`报告已记录 ${rep.lua.assets?.length || 0} 个文件。未精确匹配的引用和 ${rep.lua.dependencies?.length || 0} 项脚本依赖线索需要人工确认节点路径及运行环境。${rep.lua.missing?.length ? `上传内容中未找到：${rep.lua.missing.join('、')}。` : ''}`" />
+        <div v-if="rep.lua?.references?.some((r: any) => r.resolution === 'unverified')" class="sub" style="margin-top: 8px">
+          待确认引用：{{ rep.lua.references.filter((r: any) => r.resolution === 'unverified').map((r: any) => r.target + (r.candidate ? `（可能是 ${r.candidate}）` : '')).filter(Boolean).join('、') }}
+        </div>
         <div v-if="rep.summary.issues" class="issue-groups">
           <div class="sub">按问题类型筛选（数字为导入时的报告条目，不会因编辑草稿自动消失）：</div>
           <a-space wrap>
