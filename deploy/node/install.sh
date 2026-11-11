@@ -200,10 +200,10 @@ fi
 echo
 printf '%s\n' \
   "== 安装完成" \
-  "   安装根目录   $R" \
-  "   主配置       $R/conf/current/syedge.conf" \
-  "   站点配置目录 $R/conf/current/conf.d/" \
-  "   错误日志     $LOG_DIR/error.log" \
-  "   校验配置     sudo $R/sbin/syedge -p $R -c $R/conf/current/syedge.conf -e stderr -t" \
-  "   平滑重载     sudo systemctl reload syedge" \
-  "   独立模式说明 $R/share/doc/STANDALONE.txt"
+  "安装根目录   $R" \
+  "主配置       $R/conf/current/syedge.conf" \
+  "站点配置目录 $R/conf/current/conf.d/" \
+  "错误日志     $LOG_DIR/error.log" \
+  "校验配置     sudo $R/sbin/syedge -p $R -c $R/conf/current/syedge.conf -e stderr -t" \
+  "平滑重载     sudo systemctl reload syedge" \
+  "独立模式说明 $R/share/doc/STANDALONE.txt"
