@@ -207,9 +207,14 @@ server {
     }
     location = /ext-shell {
         content_by_lua_block {
-            local shell = require "resty.shell"
-            local ok, stdout, stderr, reason = shell.run({ "echo", "hi" })
-            ngx.say((ok and stdout == "hi\n") and "ext-shell-ok" or ("ext-shell-bad " .. tostring(stderr) .. " " .. tostring(reason)))
+            local ok, err = pcall(require, "resty.shell")
+            if not ok and string.find(tostring(err), "pipe API is not supported", 1, true) then
+                ngx.say("ext-shell-expected-unsupported")
+            elseif ok then
+                ngx.say("ext-shell-unexpectedly-loaded")
+            else
+                ngx.say("ext-shell-bad " .. tostring(err))
+            end
         }
     }
     location = /ext-upstream {
@@ -314,7 +319,7 @@ extok 22 "cjson.encode / decode 往返，cjson.safe 对坏输入返回 nil 与�
 extok 23 "redis.parser 的 build_query 与 parse_reply" /ext-redis "ext-redis-ok"
 extok 24 "rds.parser 可 require" /ext-rds "ext-rds-ok"
 extok 25 "resty.signal 的 signum(HUP) 与对本 worker 的 kill(pid, 0)" /ext-signal "ext-signal-ok"
-extok 26 "resty.shell 运行 echo hi 并返回标准输出 hi" /ext-shell "ext-shell-ok"
+extok 26 "resty.shell 当前不可用：ngx.pipe 需要核心的 socket CLOEXEC 补丁，syedge 核心没有，require 报出该平台错误" /ext-shell "ext-shell-expected-unsupported"
 if sudo sed -n 3p "$MAIN" | grep -Eq '^load_module  .+/modules/lua/ngx_http_lua_upstream_module\.so;$'; then
   extok 27 "lua-upstream 模块已加载，ngx.upstream 列出站点定义的 upstream" /ext-upstream "ext-upstream-ok"
 else

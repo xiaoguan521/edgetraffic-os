@@ -148,8 +148,10 @@ sudo bash uninstall.sh --instance blue
 
 ## 随附的 Lua 库
 
-第一阶段随附 10 个 OpenResty 官方纯 Lua 库。源码取自 `github.com/openresty/` 的正式发布标签，标签与提交哈希锁定在 `dataplane/lua/DEPS`，
-每个库的名称、标签与许可写在附加包的 `NOTICE` 中（构建时校验 README 中的 BSD 许可声明）。库安装在 `R/modules/lua/extlib/`，与 `lualib` 同级。
+第一阶段随附 10 个 OpenResty 官方纯 Lua 库；第二阶段增加 6 个库和一个动态模块（lua-upstream）。源码取自 `github.com/openresty/` 的正式发布标签，
+标签与提交哈希锁定在 `dataplane/lua/DEPS`，每个库的名称、标签与许可写在附加包的 `NOTICE` 中（构建时校验 README 中的 BSD 许可声明，cjson 校验 LICENSE 中的 MIT 授权）。
+库安装在 `R/modules/lua/extlib/`，与 `lualib` 同级。第二阶段的编译库（cjson、redis / rds parser、resty.signal 的 `librestysignal.so`）用 `cc` 编译，只依赖 LuaJIT 头文件，不链接 libluajit；
+它们与标准版、国密版基础包都兼容，只装一份。
 
 | 库 | 版本标签 | 主要模块 | 许可 | 适用范围 |
 | --- | --- | --- | --- | --- |
@@ -163,16 +165,25 @@ sudo bash uninstall.sh --instance blue
 | lua-resty-lock | v0.09 | `resty.lock` | BSD-2-Clause | 独立模式、原生兼容配置包 |
 | lua-resty-limit-traffic | v0.09 | `resty.limit.req`、`resty.limit.conn`、`resty.limit.count`、`resty.limit.traffic` | BSD-2-Clause | 独立模式、原生兼容配置包 |
 | lua-tablepool | v0.03 | `tablepool` | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-cjson | 2.1.0.20 | `cjson`、`cjson.safe`（编译库 `extlib/cjson.so`） | MIT | 独立模式、原生兼容配置包 |
+| lua-redis-parser | v0.13 | `redis.parser`（编译库 `extlib/redis/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-rds-parser | v0.06 | `rds.parser`（编译库 `extlib/rds/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-signal | v0.05 | `resty.signal`（编译库 `extlib/librestysignal.so`，由 resty.signal 按 `package.cpath` 查找） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-resty-shell | v0.03 | `resty.shell`（依赖 `ngx.pipe`；**当前在 syedge 上不可用**，见下文） | BSD-2-Clause | 随附文件，但 require 会报错；启用后执行命令的权限见下文 |
+| lua-resty-upstream-healthcheck | v0.10 | `resty.upstream.healthcheck`（依赖 `ngx.upstream`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
+| lua-upstream-nginx-module | v0.08 | 动态模块 `modules/lua/ngx_http_lua_upstream_module.so`，提供 `ngx.upstream` | BSD-2-Clause | 同上：只在独立模式与原生兼容配置包中加载 |
 
 **使用方式**
 
 - 独立模式：启用后直接在站点 Lua 中 `require "resty.redis"` 等即可。自己的 Lua 文件仍放在 `R/lualib/`。
+  启用时 `conf.d/00-lua-standalone.conf` 的 `lua_package_path` 为 `lualib`、`extlib`、`R/lualib` 三段，`lua_package_cpath` 为 `R/modules/lua/extlib/?.so`（编译库由它加载）。
+  附加包带有 `ngx_http_lua_upstream_module.so` 时，主配置前三行中多一行 `load_module`，加载 lua-upstream 模块（`ngx.upstream`）。`--standalone-disable` 删除这些行与 00 文件。
 - 原生兼容配置包：兼容包自己的主配置可以把 `R/modules/lua/extlib/?.lua` 写进 `lua_package_path`（`R` 为安装根目录，见安装维护手册的路径约定）。
 - 已经用旧版附加包独立启用过的节点，旧的 `00-lua-standalone.conf` 不含 `extlib` 路径。升级附加包后需要先 `sudo bash install.sh --standalone-disable`（站点不再使用 Lua 时），再 `sudo bash install.sh --standalone`，然后 reload。`--standalone` 对“已启用”的节点仍会拒绝，这是已有行为，本阶段没有改为“刷新路径”。
 
 **控制台托管的环境不可用**
 
-控制台托管（managed）环境的 `lua_package_path` 只包含 `lualib`，`extlib` 不出现在渲染出的配置中；托管的自定义脚本只能 `require "etos.json"`。
+控制台托管（managed）环境的 `lua_package_path` 只包含 `lualib`，`lua_package_cpath` 仍是 `lualib/?.disabled`，`extlib` 不出现在渲染出的配置中，托管配置也不加载 lua-upstream 模块与编译库；托管的自定义脚本只能 `require "etos.json"`。
 这是有意的边界：托管 Lua 只允许审核过的规则库与受限环境（本文第 5 节），第三方库不经审核，不下发到托管节点。
 该边界由 lua 工作流验证：`scripts/ci/lua-acceptance.sh` 中托管脚本 `require "resty.redis"` / `resty.mysql` 必须失败，渲染出的配置不含 `extlib`；`internal/render` 的单元测试也校验托管配置不含 `extlib`。
 
@@ -181,10 +192,20 @@ sudo bash uninstall.sh --instance blue
 - `resty.rsa` 未随附：`caching_sha2_password` 的非 TLS 完整认证需要它，请使用 TLS 连接（`ssl`）。
 - ed25519 认证插件需要 `resty.openssl`，未随附。
 
+**resty.shell 与 ngx.pipe**
+
+- **`resty.shell` 当前不可用。** 它通过 `ngx.pipe` 启动子进程，而 `ngx.pipe` 只在 nginx 核心带有 OpenResty 的 socket CLOEXEC 补丁（`HAVE_SOCKET_CLOEXEC_PATCH`）时可用。
+  syedge 核心只打改名补丁，不能为此改动核心结构（见 CLAUDE.md 数据面规则），因此 `require "resty.shell"` 会报 “pipe API is not supported”。
+  文件仍随附，便于日后核心补丁获批后启用；在此之前不要在站点中使用它。`scripts/ci/lua-standalone.sh` 第 26 项断言这一当前行为。
+  启用后它会以数据面用户（`syedge`）的权限运行子进程，只适用于独立模式与原生兼容配置包。
+- `ngx.pipe` 的 lua 模块实现在 `ngx_http_lua_module` 配置阶段即屏蔽 SIGCHLD 并用 `waitpid(-1)` 回收子进程，即使 `resty.shell` 不可用，这段代码仍在数据面中运行。
+  本阶段没有验证它对 worker 异常退出后重新拉起的影响；启用独立模式前需要在目标环境确认。
+
 **本阶段不随附**
 
-- 第二阶段（需要编译 C 库）：lua-cjson、lua-redis-parser、lua-rds-parser、lua-resty-signal、lua-resty-shell。
-- 不提供：lua-resty-upstream-healthcheck（依赖第三方 C 模块，属于 D7 的决定事项）。
+- 其他 OpenResty C 模块（headers-more、echo、set-misc、srcache 等），stream 级 Lua，drizzle / postgres / iconv。
+- 不在 OpenResty 官方库中的第三方库（例如 lua-resty-http）。
+- 第三方依赖的库 `resty.rsa` 与 `resty.openssl` 仍未随附（见上文 mysql 的限制）。
 
 **FFI 符号**
 

@@ -116,6 +116,10 @@ IPREFIX="$ROOT"
 if [[ "$SELECTED" != default ]]; then IPREFIX="$BASE_ROOT/instances/$SELECTED"; fi
 SA_REAL=""; SA_DIR=""; SA_NEW=""; SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_LIB=""
 SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0
+# 独立模式写入主配置的 load_module 行（启用与停用共用，停用时按完全相同的文本删除）。upstream 行只在附加包带有该模块时写入。
+SA_LOAD_NDK="load_module  $ROOT/modules/lua/ndk_http_module.so;"
+SA_LOAD_LUA="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
+SA_LOAD_UPSTREAM="load_module  $ROOT/modules/lua/ngx_http_lua_upstream_module.so;"
 
 # agent 状态目录，规则与 internal/layout/layout.go 的 Layout.AgentState 一致：
 # 用户模式（SYEDGE_ROOT）与非历史根目录为 <实例前缀>/agent；历史根目录 /opt/syedge 下默认实例为
@@ -168,11 +172,12 @@ standalone_precheck() {
   [[ ! -e "$IPREFIX/conf/current/conf.d/00-lua-standalone.conf" ]] || die "已存在 conf.d/00-lua-standalone.conf，独立模式 Lua 已启用，未做任何改动"
 }
 
-# 启用：主配置前面插入两行 load_module，新建 conf.d/00-lua-standalone.conf，创建 lualib，然后用真实 syedge -t 校验。
+# 启用：主配置前面插入 load_module 行（ndk、lua；附加包带有 lua-upstream 模块时再加一行），新建 conf.d/00-lua-standalone.conf，
+# 创建 lualib，然后用真实 syedge -t 校验。
 standalone_enable() {
-  local conf="$IPREFIX/conf/current/syedge.conf" l1 l2 out
-  l1="load_module  $ROOT/modules/lua/ndk_http_module.so;"
-  l2="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
+  local conf="$IPREFIX/conf/current/syedge.conf" out
+  local -a loads=("$SA_LOAD_NDK" "$SA_LOAD_LUA")
+  if [[ -f "$ROOT/modules/lua/ngx_http_lua_upstream_module.so" ]]; then loads+=("$SA_LOAD_UPSTREAM"); fi
   SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0; SA_LIB=""
   SA_REAL=$(readlink -f "$conf") || die "无法解析主配置的真实路径"
   SA_DIR=$(dirname "$SA_REAL")
@@ -181,7 +186,7 @@ standalone_enable() {
   cp -- "$SA_REAL" "$SA_BAK" || sa_fail "无法备份主配置"
   same_attrs "$SA_REAL" "$SA_BAK" || sa_fail "无法设置备份文件的属主与权限"
   SA_TMP=$(mktemp "$SA_DIR/.syedge-conf.new.XXXXXX") || sa_fail "无法创建临时文件"
-  { printf '%s\n' "$l1" "$l2"; cat -- "$SA_BAK"; } > "$SA_TMP" || sa_fail "无法生成新主配置"
+  { printf '%s\n' "${loads[@]}"; cat -- "$SA_BAK"; } > "$SA_TMP" || sa_fail "无法生成新主配置"
   same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置新主配置的属主与权限"
   SA_MAIN=1
   mv -f -- "$SA_TMP" "$SA_REAL" || sa_fail "无法写入主配置"
@@ -192,7 +197,7 @@ standalone_enable() {
   {
     printf '%s\n' "# 独立模式 Lua（install.sh --standalone 生成）。自己的 Lua 文件放在 $IPREFIX/lualib/ 下。"
     printf '%s\n' "lua_package_path   \"$ROOT/modules/lua/lualib/?.lua;$ROOT/modules/lua/extlib/?.lua;$IPREFIX/lualib/?.lua\";"
-    printf '%s\n' "lua_package_cpath  \"$ROOT/modules/lua/lualib/?.disabled\";"
+    printf '%s\n' "lua_package_cpath  \"$ROOT/modules/lua/extlib/?.so\";"
   } > "$SA_TMP" || sa_fail "无法生成 conf.d/00-lua-standalone.conf"
   same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置 00 文件的属主与权限"
   mv -f -- "$SA_TMP" "$SA_NEW" || sa_fail "无法写入 conf.d/00-lua-standalone.conf"
@@ -209,16 +214,14 @@ standalone_enable() {
 
 # 停用：删除与启用时写入内容完全相同的两行 load_module 与 00 文件，然后校验；失败则恢复原状。
 standalone_disable() {
-  local conf="$IPREFIX/conf/current/syedge.conf" l1 l2 out rc=0 had_new=0 had_load=0
-  l1="load_module  $ROOT/modules/lua/ndk_http_module.so;"
-  l2="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
+  local conf="$IPREFIX/conf/current/syedge.conf" out rc=0 had_new=0 had_load=0
   [[ -f "$conf" ]] || die "缺少主配置：$conf"
   SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0; SA_LIB=""
   SA_REAL=$(readlink -f "$conf") || die "无法解析主配置的真实路径"
   SA_DIR=$(dirname "$SA_REAL")
   SA_NEW="$SA_DIR/conf.d/00-lua-standalone.conf"
   if [[ -e "$SA_NEW" ]]; then had_new=1; fi
-  if grep -qxF -e "$l1" -e "$l2" -- "$SA_REAL"; then had_load=1; fi
+  if grep -qxF -e "$SA_LOAD_NDK" -e "$SA_LOAD_LUA" -e "$SA_LOAD_UPSTREAM" -- "$SA_REAL"; then had_load=1; fi
   if [[ $had_new -eq 0 && $had_load -eq 0 ]]; then echo "独立模式 Lua 未启用，无需停用。"; return 0; fi
   SA_BAK=$(mktemp "$SA_DIR/.syedge-conf.bak.XXXXXX") || sa_fail "无法创建备份文件"
   cp -- "$SA_REAL" "$SA_BAK" || sa_fail "无法备份主配置"
@@ -229,7 +232,7 @@ standalone_disable() {
     same_attrs "$SA_REAL" "$SA_NBAK" || sa_fail "无法设置 00 文件备份的属主与权限"
   fi
   SA_TMP=$(mktemp "$SA_DIR/.syedge-conf.new.XXXXXX") || sa_fail "无法创建临时文件"
-  grep -vxF -e "$l1" -e "$l2" -- "$SA_BAK" > "$SA_TMP" || rc=$?
+  grep -vxF -e "$SA_LOAD_NDK" -e "$SA_LOAD_LUA" -e "$SA_LOAD_UPSTREAM" -- "$SA_BAK" > "$SA_TMP" || rc=$?
   [[ $rc -le 1 ]] || sa_fail "无法读取主配置"
   same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置新主配置的属主与权限"
   SA_MAIN=1
@@ -269,6 +272,8 @@ mkdir -p "$M"
 dest="$M/lua-$pkg"; tmp="$M/.lua-$pkg.tmp"
 rm -rf "$tmp"; mkdir -p "$tmp"
 install -m 0644 "$HERE/addon/$base/ndk_http_module.so" "$HERE/addon/$base/ngx_http_lua_module.so" "$tmp/"
+# lua-upstream 动态模块（D1 第二阶段）：旧版附加包没有该文件，不报错
+if [[ -f "$HERE/addon/$base/ngx_http_lua_upstream_module.so" ]]; then install -m 0644 "$HERE/addon/$base/ngx_http_lua_upstream_module.so" "$tmp/"; fi
 cp -r "$HERE/addon/lualib" "$tmp/lualib"
 # 附加库 extlib（D1 第一阶段，纯 Lua）：旧版附加包没有该目录，不报错。只有独立模式与原生兼容配置包的配置引用它
 if [[ -d "$HERE/addon/extlib" ]]; then cp -r "$HERE/addon/extlib" "$tmp/extlib"; fi
@@ -290,11 +295,14 @@ restore() {
 
 # 自检：加载模块与附加包的 Lua 库
 T=$(mktemp -d)
+up_load=""
+if [[ -f "$M/lua/ngx_http_lua_upstream_module.so" ]]; then up_load="load_module  $M/lua/ngx_http_lua_upstream_module.so;"; fi
 cat > "$T/t.conf" <<CONF
 pid        $T/t.pid;
 error_log  stderr  warn;
 load_module  $M/lua/ndk_http_module.so;
 load_module  $M/lua/ngx_http_lua_module.so;
+$up_load
 events { worker_connections 16; }
 http {
     access_log  off;

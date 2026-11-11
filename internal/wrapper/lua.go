@@ -26,7 +26,9 @@ import (
 // upgrade-abort 在让旧 master 重新加载配置（HUP）之前先把软链切回，旧 master 加载的仍是旧版本模块。
 // 未装附加包的节点完全不受影响。
 
-var luaEntryRe = regexp.MustCompile(`^addon/((standard|gmssl)/(ndk_http_module|ngx_http_lua_module)\.so|(lualib|extlib)/[A-Za-z0-9_][A-Za-z0-9_/.-]*\.lua|VERSION|NOTICE|PREFIX)$`)
+// 附加包条目（路径形式固定，其余一律拒绝）：标准版 / 国密版各一份的动态模块（含 lua-upstream，D1 第二阶段）；
+// lualib 与 extlib 下的 Lua 文件；extlib 下的编译库（不含点、横线或 .. 的目录名与文件名）；说明文件。
+var luaEntryRe = regexp.MustCompile(`^addon/((standard|gmssl)/(ndk_http_module|ngx_http_lua_module|ngx_http_lua_upstream_module)\.so|(lualib|extlib)/[A-Za-z0-9_][A-Za-z0-9_/.-]*\.lua|extlib/([A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.so|VERSION|NOTICE|PREFIX)$`)
 
 const maxLuaEntries = 4000
 
@@ -130,7 +132,8 @@ func (p Paths) installLua(ver, base string) error {
 			return fail("add-on entry %q not allowed", h.Name)
 		}
 		rel := strings.TrimPrefix(name, "addon/")
-		if strings.HasSuffix(rel, ".so") {
+		// 只有 standard/ 与 gmssl/ 下的模块与基础变体相关；extlib 下的编译库与两个变体共用
+		if strings.HasPrefix(rel, "standard/") || strings.HasPrefix(rel, "gmssl/") {
 			if !strings.HasPrefix(rel, base+"/") {
 				continue // 另一种基础变体的模块
 			}

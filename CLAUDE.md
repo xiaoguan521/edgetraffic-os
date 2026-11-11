@@ -13,7 +13,7 @@
 - 信号：reload=HUP，quit=QUIT，stop=TERM，reopen=USR1；USR2 与 WINCH 仅用于二进制热升级流程
   （USR2 发给当前 master 启动新版，WINCH 只发给旧 master `syedge.pid.oldbin` 让旧 worker 退出），均由 wrapper 发出。
 - Lua 发行变体（P10）：lua-nginx-module、ngx_devel_kit、LuaJIT 以动态模块形式放在安装根目录的 modules/ 下（默认为 /opt/syedge），
-  不改 syedge 核心与改名 patch。只有该目录下的 Lua 模块文件免于“二进制无上游名”检查；进程名、命令、日志、包名仍须为 syedge。随附的纯 Lua 库放在 modules/lua/extlib/，只对独立模式与原生兼容配置包可用，托管渲染的 lua_package_path 不引用它（lua 工作流用例验证该边界）。
+  不改 syedge 核心与改名 patch。只有该目录下的 Lua 模块文件免于“二进制无上游名”检查；进程名、命令、日志、包名仍须为 syedge。第三个动态模块 ngx_http_lua_upstream_module.so（lua-upstream）同目录、同一例外，同样只在独立模式与原生兼容配置包中加载，托管渲染从不加载。随附的库放在 modules/lua/extlib/（纯 Lua 库与由 cc 编译、只依赖 LuaJIT 头文件的 C 库），只对独立模式与原生兼容配置包可用，托管渲染的 lua_package_path 与 lua_package_cpath 不引用它（lua 工作流用例验证该边界）。
 - 国密发行变体（P8）：`build-syedge.sh -t tongsuo` 只把 OpenSSL 换成铜锁（开启 NTLS），不改 syedge 源码与改名 patch；
   国密双证书只通过 syedge 已有的 `ssl_conf_command`（Enable_ntls / SignCertificate / EncCertificate …）由 internal/render 生成，
   路径写本版本目录的绝对路径（见 docs/gm.md）。
