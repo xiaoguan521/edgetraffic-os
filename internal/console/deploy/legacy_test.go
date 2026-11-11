@@ -15,7 +15,9 @@ import (
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
 func legacyArchive(t *testing.T, files map[string]string) []byte {
@@ -59,7 +61,7 @@ func TestLegacyRequestNeedsSecondAdministratorAndEncryptsBundle(t *testing.T) {
 		"syedge.conf":  `events {} http { init_by_lua_file @SYEDGE_RELEASE@/lua/init.lua; }`,
 		"lua/init.lua": `local secret = "do-not-expose"`,
 	})
-	req, err := d.RequestLegacy(g.ID, "migration", data, nil, "admin-a", "")
+	req, err := d.RequestLegacy(g.ID, "migration", data, nil, LegacyOptions{}, "admin-a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +142,7 @@ func TestLegacyRollbackRequiresNewApprovalAndVerifiesDigest(t *testing.T) {
 	d.Agents = ag
 	var revisions []string
 	for _, value := range []string{"one", "two"} {
-		req, err := d.RequestLegacy(g.ID, value, legacyArchive(t, map[string]string{"syedge.conf": value}), nil, "a", "")
+		req, err := d.RequestLegacy(g.ID, value, legacyArchive(t, map[string]string{"syedge.conf": value}), nil, LegacyOptions{}, "a", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,5 +184,102 @@ func TestLegacyArchiveRejectsUnsafeOrDuplicatePaths(t *testing.T) {
 		if _, err := readLegacyArchive(legacyArchive(t, files)); err == nil {
 			t.Fatalf("unsafe archive accepted: %v", files)
 		}
+	}
+}
+
+func TestLegacyRootMasterDeclarationIsFrozenAndVisible(t *testing.T) {
+	d, g := newTestService(t)
+	box, err := secretbox.LoadOrCreate(filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Box = box
+	if err := d.SetManagementMode(g.ID, ManagementModeLegacy, "admin-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	policyOf := func(opts LegacyOptions) (configbundle.LegacyPolicy, *store.ReleaseRequest) {
+		t.Helper()
+		req, err := d.RequestLegacy(g.ID, "migration", legacyArchive(t, map[string]string{"syedge.conf": "events {}"}), nil, opts, "admin-a", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rev, err := d.revision(req.RevisionID, g.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files, err := d.revisionFiles(rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := configbundle.ParseLegacyPolicy(files[configbundle.LegacyMarker])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.close(d.q(), req.ID, ApprovalRejected, "admin-b", "", 0); err != nil {
+			t.Fatal(err)
+		}
+		return p, req
+	}
+	if p, req := policyOf(LegacyOptions{}); p.AllowRootMaster || strings.Contains(req.Note, legacyRootMasterNote) {
+		t.Fatalf("root masters allowed without a declaration: %+v, note %q", p, req.Note)
+	}
+	if p, req := policyOf(LegacyOptions{AllowRootMaster: true}); !p.AllowRootMaster || !strings.Contains(req.Note, legacyRootMasterNote) {
+		t.Fatalf("declaration not frozen into the bundle or not shown to the approver: %+v, note %q", p, req.Note)
+	}
+}
+
+func TestLegacyReviewDownloadHidesPrivateKeys(t *testing.T) {
+	d, g := newTestService(t)
+	box, err := secretbox.LoadOrCreate(filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Box = box
+	if err := d.SetManagementMode(g.ID, ManagementModeLegacy, "admin-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	pem := "-----BEGIN EC PRIVATE KEY-----\nKEYMATERIAL-ONE\n-----END EC PRIVATE KEY-----\n"
+	req, err := d.RequestLegacy(g.ID, "migration", legacyArchive(t, map[string]string{
+		"syedge.conf":    "events {}",
+		"lua/init.lua":   "local reviewed = true",
+		"certs/site.key": "KEYMATERIAL-TWO",
+		"certs/site.pem": pem,
+		"certs/site.crt": "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----\n",
+	}), nil, LegacyOptions{}, "admin-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := d.LegacyRequestBundle(req.ID, "admin-b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := render.ReadTarGz(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if bytes.Contains(body, []byte("KEYMATERIAL")) {
+			t.Errorf("%s: private key content in the review download", name)
+		}
+	}
+	for _, name := range []string{"certs/site.key", "certs/site.pem"} {
+		if !bytes.Contains(files[name], []byte("SHA-256: ")) {
+			t.Errorf("%s: no hash placeholder: %q", name, files[name])
+		}
+	}
+	if string(files["lua/init.lua"]) != "local reviewed = true" || !bytes.Contains(files["certs/site.crt"], []byte("PUBLIC")) {
+		t.Errorf("reviewable files were altered: %q", files)
+	}
+	// The stored, approved bundle itself is untouched.
+	rev, err := d.revision(req.RevisionID, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := d.revisionFiles(rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored["certs/site.key"]) != "KEYMATERIAL-TWO" || string(stored["certs/site.pem"]) != pem {
+		t.Fatal("redaction changed the frozen bundle")
 	}
 }

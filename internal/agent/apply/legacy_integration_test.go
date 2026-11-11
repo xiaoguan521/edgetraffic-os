@@ -23,6 +23,9 @@ import (
 func TestLegacyLuaLiveLifecycle(t *testing.T) {
 	bin, modules := os.Getenv("SYEDGE_LEGACY_IT_BIN"), os.Getenv("SYEDGE_LEGACY_IT_MODULES")
 	if bin == "" || modules == "" {
+		if os.Getenv("SYEDGE_LEGACY_IT_REQUIRED") != "" {
+			t.Fatal("SYEDGE_LEGACY_IT_REQUIRED is set but SYEDGE_LEGACY_IT_BIN / SYEDGE_LEGACY_IT_MODULES are missing: the native Lua lifecycle must not be skipped here")
+		}
 		t.Skip("set SYEDGE_LEGACY_IT_BIN and SYEDGE_LEGACY_IT_MODULES")
 	}
 	for _, mode := range []string{"default", "named-shared", "named-independent"} {
@@ -108,13 +111,20 @@ http {
 	}
 	a := &Applier{C: Config{ConfRoot: confRoot, Prefix: root, PidFile: pidFile, ErrorLog: logFile, LockFile: filepath.Join(root, "apply.lock"), Wrapper: []string{wrapper}, HTTPPort: port, ConfirmWait: 10 * time.Second}}
 	checks := []PostCheck{{Host: "legacy.example", Path: "/", ExpectStatus: []int{200}}}
+	// The CI matrix runs as root, so the test master is root: bundles need the
+	// frozen root-master declaration, and one without it must be refused.
+	rootMaster := os.Geteuid() == 0
+	markerBody := "{}"
+	if rootMaster {
+		markerBody = `{"allow_root_master":true}`
+	}
 	makeBundle := func(rev, result string, bad bool) ([]byte, string) {
 		b := render.Repack(rev, map[string][]byte{
 			"syedge.conf":             []byte(makeConfig(rev, bad)),
 			"lua/init.lua":            []byte("legacy_init = true"),
 			"lua/content.lua":         []byte("local m = require('thirdparty'); ngx.say(m.value())"),
 			"lua/thirdparty.lua":      []byte(fmt.Sprintf("return {value = function() return %q end}", result)),
-			configbundle.LegacyMarker: []byte("{}"),
+			configbundle.LegacyMarker: []byte(markerBody),
 		})
 		data, err := b.TarGz()
 		if err != nil {
@@ -136,6 +146,18 @@ http {
 		return strings.TrimSpace(string(b))
 	}
 	ctx := context.Background()
+	if rootMaster {
+		declared := markerBody
+		markerBody = "{}"
+		b0, d0 := makeBundle("r000009", "undeclared", false)
+		markerBody = declared
+		if r := a.Apply(ctx, "r000009", "r000000", b0, d0, checks); r.Status != Rejected || !strings.Contains(r.Message, "root") {
+			t.Fatalf("undeclared bundle on a root master: %+v", r)
+		}
+		if got := get(); got != "baseline" || a.Current() != "r000000" {
+			t.Fatalf("refused bundle changed the node: %q, current %s", got, a.Current())
+		}
+	}
 	b1, d1 := makeBundle("r000001", "first", false)
 	if r := a.Apply(ctx, "r000001", "r000000", b1, d1, checks); r.Status != Applied {
 		t.Fatalf("first apply: %+v", r)

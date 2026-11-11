@@ -417,6 +417,18 @@ func (s *Server) Send(ctx context.Context, nodeID uint, m *agentv1.ServerMessage
 	return s.send(ctx, nodeID, m, timeout, false)
 }
 
+func (s *Server) nodeIsNative(nodeID uint) bool {
+	s.mu.Lock()
+	sess := s.sessions[nodeID]
+	s.mu.Unlock()
+	if sess == nil {
+		return false
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return sess.native
+}
+
 // SendLegacy checks the capability of the exact active connection used for
 // delivery. Older agents must not receive packages containing credentials.
 func (s *Server) SendLegacy(ctx context.Context, nodeID uint, m *agentv1.ServerMessage, timeout time.Duration) (*agentv1.CommandResult, error) {
@@ -493,6 +505,11 @@ func (s *Server) FetchBundle(req *agentv1.FetchBundleRequest, stream agentv1.Age
 		}
 		if count == 0 {
 			return status.Error(codes.PermissionDenied, "legacy revision has not been approved")
+		}
+		// Same gate as SendLegacy: only an agent whose live session announced the
+		// capability may download a native package, which can contain credentials.
+		if !s.nodeIsNative(node.ID) {
+			return status.Error(codes.PermissionDenied, "agent does not support native configuration packages")
 		}
 	}
 	bundle, err := configbundle.Open(s.Box, rev.Bundle)

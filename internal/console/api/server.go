@@ -141,6 +141,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/node-groups/:id/rollback", role(store.RoleReleaser), s.rollback) // 过期状态下仍可用
 	a.POST("/node-groups/:id/release-requests", role(store.RoleReleaser), s.writable, s.requestRelease)
 	a.POST("/node-groups/:id/legacy-requests", role(store.RoleAdmin), s.writable, s.feature(license.FeatureLua), s.requestLegacy)
+	// 回退申请不挂 writable / feature：EXPIRED / INVALID 下回滚必须可用；仍需管理员提交、另一位管理员批准。
 	a.POST("/node-groups/:id/legacy-rollback-requests", role(store.RoleAdmin), s.requestLegacyRollback)
 	a.POST("/node-groups/:id/canary", role(store.RoleReleaser), s.writable, s.feature(license.FeatureCanary), s.startCanary)
 	a.GET("/canaries", s.listCanaries)
@@ -182,6 +183,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/release-requests", s.listReleaseRequests)
 	a.GET("/release-requests/:id", s.getReleaseRequest)
 	a.POST("/release-requests/:id/approve", role(store.RoleReleaser), s.writable, s.approveRelease)
+	// 批准同时用于新包与回退：授权检查在 approveLegacy 内按请求类型进行（新包要求可写与 lua 授权，回退不要求）。
 	a.POST("/release-requests/:id/legacy-approve", role(store.RoleAdmin), s.approveLegacy)
 	a.GET("/release-requests/:id/legacy-bundle", role(store.RoleAdmin), s.reviewLegacyBundle)
 	a.POST("/release-requests/:id/reject", role(store.RoleReleaser), s.rejectRelease)

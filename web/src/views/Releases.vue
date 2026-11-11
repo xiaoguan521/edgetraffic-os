@@ -30,6 +30,7 @@ const reviewComment = ref('')
 const reviewing = ref(false)
 const legacyFile = ref<File | null>(null)
 const legacyAcknowledged = ref(false)
+const legacyAllowRoot = ref(false)
 const legacyHost = ref('')
 const legacyPath = ref('/')
 const legacyHTTPS = ref(false)
@@ -174,11 +175,13 @@ async function submitLegacy() {
   try {
     const form = new FormData()
     form.append('file', legacyFile.value)
+    if (legacyAllowRoot.value) form.append('allow_root_master', 'true')
     form.append('note', note.value)
     if (legacyHost.value.trim()) form.append('checks', JSON.stringify([{ host: legacyHost.value.trim(), path: legacyPath.value || '/', https: legacyHTTPS.value }]))
     await api.post(`/node-groups/${gid.value}/legacy-requests`, form)
     legacyFile.value = null
     legacyAcknowledged.value = false
+    legacyAllowRoot.value = false
     note.value = ''
     message.success('兼容配置已冻结，等待另一位管理员审批')
     await Promise.all([loadApproval(), loadHistory()])
@@ -291,7 +294,7 @@ function lastDeploy(rev: string) {
       <a-alert v-if="pendingReq.stale" type="warning" show-icon style="margin-bottom: 12px"
         message="提交后线上版本已变化（例如有人回滚），批准时会被拒绝；请撤回后重新提交。" />
       <p class="hint">批准后下发的就是提交时冻结的版本 {{ pendingReq.revision_id }}；提交之后草稿里的修改不会混进来。</p>
-      <p v-if="pendingReq.legacy" class="hint">页面只展示文件哈希；管理员请下载冻结包，核对配置、Lua、依赖与密钥后再审批。下载文件可能包含敏感信息。</p>
+      <p v-if="pendingReq.legacy" class="hint">页面只展示文件哈希；管理员请下载冻结包，核对配置、Lua 与依赖后再审批。下载包中的私钥只给出 SHA-256，其余文件仍可能包含敏感信息。发布说明中带有“允许在 master 以 root 运行的节点上加载”时，请确认确有必要。</p>
       <a-button v-if="pendingReq.legacy && session.can('admin')" @click="downloadLegacyReview">下载冻结包进行审核</a-button>
       <a-collapse v-model:active-key="reqFiles" :bordered="false" class="files">
         <a-collapse-panel v-for="f in pendingReq.files" :key="f.path">
@@ -322,6 +325,7 @@ function lastDeploy(rev: string) {
         <input type="file" accept=".tar.gz,.tgz,application/gzip" @change="legacyFile = ($event.target as HTMLInputElement).files?.[0] || null" />
         <div class="pub"><a-input v-model:value="note" placeholder="本次变更说明" :maxlength="120" /></div>
         <div class="pub"><a-input v-model:value="legacyHost" placeholder="探活域名（可选，例如 example.com）" /><a-input v-model:value="legacyPath" placeholder="探活路径" /><a-checkbox v-model:checked="legacyHTTPS">HTTPS</a-checkbox></div>
+        <div class="pub"><a-checkbox v-model:checked="legacyAllowRoot">允许在 master 以 root 运行的节点上加载（脚本不受沙箱约束，将拥有 root 权限；不勾选时这类节点会拒绝本配置包）</a-checkbox></div>
         <div class="pub"><a-checkbox v-model:checked="legacyAcknowledged">我已备份并确认节点允许执行此配置及全部脚本和库</a-checkbox></div>
         <a-button type="primary" :loading="publishing" :disabled="!session.writable || !hasFeature('lua') || !legacyFile || !legacyAcknowledged || !!pendingReq" @click="submitLegacy">提交管理员审批</a-button>
       </template>

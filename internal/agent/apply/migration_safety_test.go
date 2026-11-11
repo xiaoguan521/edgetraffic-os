@@ -103,3 +103,53 @@ func TestExistingRevisionDoesNotAcceptSymlinks(t *testing.T) {
 		t.Fatal("symlink in approved revision was accepted")
 	}
 }
+
+// Native bundles are not sandboxed, so a root master may load one only when
+// the frozen, approved marker declares it.
+func TestLegacyBundleNeedsDeclarationForRootMaster(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "marker.json")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	orig := masterEUID
+	defer func() { masterEUID = orig }()
+	uid := 0
+	var uidErr error
+	masterEUID = func(int) (int, error) { return uid, uidErr }
+
+	for _, tc := range []struct {
+		name, marker string
+		uid          int
+		ok           bool
+	}{
+		{"root master, undeclared", `{}`, 0, false},
+		{"root master, explicitly false", `{"allow_root_master":false}`, 0, false},
+		{"root master, declared", `{"checks":[],"allow_root_master":true}`, 0, true},
+		{"unprivileged master, undeclared", `{}`, 993, true},
+		{"malformed marker never defaults to allowed", `{"allow_root_master":`, 993, false},
+		{"wrong type never defaults to allowed", `{"allow_root_master":"yes"}`, 0, false},
+	} {
+		uid = tc.uid
+		r, ok := legacyRootMasterAllowed(write(tc.marker), 1)
+		if ok != tc.ok || (!ok && r.Status != Rejected) {
+			t.Errorf("%s: ok=%v result=%+v", tc.name, ok, r)
+		}
+	}
+	uid, uidErr = 993, os.ErrPermission
+	if r, ok := legacyRootMasterAllowed(write(`{"allow_root_master":true}`), 1); ok || r.Status != Rejected {
+		t.Errorf("unknown master user must be refused: ok=%v result=%+v", ok, r)
+	}
+	uidErr = nil
+	if _, ok := legacyRootMasterAllowed(filepath.Join(dir, "missing"), 1); ok {
+		t.Error("missing marker accepted")
+	}
+	// The real reader reports this test process's own effective uid.
+	masterEUID = orig
+	if got, err := masterEUID(os.Getpid()); err != nil || got != os.Geteuid() {
+		t.Errorf("masterEUID(self) = %d, %v; want %d", got, err, os.Geteuid())
+	}
+}

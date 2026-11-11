@@ -231,6 +231,9 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 		if err != nil || !legacyMasterUsesCurrent(string(title), a.C.Prefix, filepath.Join(a.link("current"), brand.ConfName())) {
 			return Result{Status: Rejected, Message: "cannot verify running master uses the managed current configuration; start it with an explicit -c " + filepath.Join(a.link("current"), brand.ConfName())}
 		}
+		if r, ok := legacyRootMasterAllowed(marker, before.master); !ok {
+			return r
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Result{Status: Rejected, Message: "cannot inspect native configuration marker: " + err.Error()}
 	}
@@ -275,6 +278,49 @@ func (a *Applier) switchTo(ctx context.Context, rev string, isNew bool, checks [
 		a.cleanup()
 	}
 	return Result{Status: Applied, Message: "applied " + rev}
+}
+
+// masterEUID reports the effective uid of the running master. A variable so
+// tests can exercise the root case without running as root.
+var masterEUID = func(pid int) (int, error) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(line, "Uid:"); ok {
+			f := strings.Fields(rest) // real, effective, saved, filesystem
+			if len(f) < 2 {
+				break
+			}
+			return strconv.Atoi(f[1])
+		}
+	}
+	return 0, errors.New("no Uid line in process status")
+}
+
+// Native bundles are not sandboxed: loaded by a root master they control the
+// whole node. That is refused unless the frozen, approved bundle declares it.
+// The check uses the live process, not the install-time marker, because nodes
+// being taken over may run a master that was started outside the service unit.
+func legacyRootMasterAllowed(marker string, master int) (Result, bool) {
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		return Result{Status: Rejected, Message: "cannot read native configuration marker: " + err.Error()}, false
+	}
+	policy, err := configbundle.ParseLegacyPolicy(raw)
+	if err != nil {
+		return Result{Status: Rejected, Message: err.Error()}, false
+	}
+	uid, err := masterEUID(master)
+	if err != nil {
+		return Result{Status: Rejected, Message: "cannot determine the user of the running master: " + err.Error()}, false
+	}
+	if uid == 0 && !policy.AllowRootMaster {
+		return Result{Status: Rejected, Message: "the running master is root and this native bundle was not approved for root masters; " +
+			"run the master without root, or resubmit the bundle with the root-master declaration"}, false
+	}
+	return Result{}, true
 }
 
 // A live process started with a different -c keeps using that path on reload,

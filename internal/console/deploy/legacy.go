@@ -36,9 +36,21 @@ var (
 	ErrLegacyModeRequired  = errors.New("legacy configuration requires the legacy management mode")
 )
 
+// legacyMetadata is frozen into the bundle as the marker file. The agent
+// enforces the embedded configbundle.LegacyPolicy fields.
 type legacyMetadata struct {
 	Checks []*agentv1.PostCheck `json:"checks"`
+	configbundle.LegacyPolicy
 }
+
+// LegacyOptions are submitter declarations that become part of the frozen,
+// separately approved bundle.
+type LegacyOptions struct {
+	// AllowRootMaster permits loading the bundle on nodes whose master runs as root.
+	AllowRootMaster bool
+}
+
+const legacyRootMasterNote = "【已声明：允许在 master 以 root 运行的节点上加载】"
 
 func isLegacyRevision(rev *store.Revision) bool {
 	return rev != nil && configbundle.IsLegacy(rev.Bundle)
@@ -160,7 +172,9 @@ func readLegacyArchive(data []byte) (map[string][]byte, error) {
 }
 
 // LegacyRequestBundle is exposed only through an administrator-only endpoint.
-// It returns the exact frozen bytes for substantive review before approval.
+// It returns the frozen files for substantive review before approval. Private
+// keys are replaced by their SHA-256: reviewers need the scripts and
+// configuration, and key material must not leave the console in a response.
 func (d *Service) LegacyRequestBundle(id uint, user, ip string) ([]byte, error) {
 	rr := d.q().ReleaseRequest
 	req, err := rr.WithContext(bg).Where(rr.ID.Eq(id)).First()
@@ -174,15 +188,59 @@ func (d *Service) LegacyRequestBundle(id uint, user, ip string) ([]byte, error) 
 	if !isLegacyRevision(rev) {
 		return nil, ErrLegacyModeRequired
 	}
-	b, err := configbundle.Open(d.Box, rev.Bundle)
+	files, err := d.revisionFiles(rev)
+	if err != nil {
+		return nil, err
+	}
+	b, redacted, err := legacyReviewArchive(files)
 	if err != nil {
 		return nil, err
 	}
 	if err := d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "legacy.review_download", ObjectType: "release_request", ObjectID: fmt.Sprint(id),
-		Detail: map[string]any{"group": req.GroupID, "revision": rev.ID}}); err != nil {
+		Detail: map[string]any{"group": req.GroupID, "revision": rev.ID, "digest": rev.Digest, "redacted_keys": redacted}}); err != nil {
 		return nil, err
 	}
 	return b, nil
+}
+
+// isPrivateKeyFile matches the drift rule (*.key reports only a hash) and also
+// catches PEM private keys stored under any other name.
+func isPrivateKeyFile(name string, body []byte) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".key") || bytes.Contains(body, []byte("PRIVATE KEY-----"))
+}
+
+// legacyReviewArchive packs the frozen files for a reviewer, replacing private
+// keys with a one-line hash placeholder. It returns the number of files replaced.
+func legacyReviewArchive(files map[string][]byte) ([]byte, int, error) {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	redacted := 0
+	for _, name := range names {
+		body := files[name]
+		if isPrivateKeyFile(name, body) {
+			body = []byte(fmt.Sprintf("私钥内容不随复核包下载。SHA-256: %x\n", sha256.Sum256(body)))
+			redacted++
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			return nil, 0, err
+		}
+		if _, err := tw.Write(body); err != nil {
+			return nil, 0, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, 0, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), redacted, nil
 }
 
 // LegacyRequestIsRollback distinguishes a previously approved frozen version
@@ -228,7 +286,11 @@ func validateLegacyChecks(checks []*agentv1.PostCheck) error {
 
 // RequestLegacy freezes an encrypted version and a pending two-person release
 // request. Caller authentication and the administrator role are enforced by API.
-func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks []*agentv1.PostCheck, user, ip string) (*store.ReleaseRequest, error) {
+func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks []*agentv1.PostCheck, opts LegacyOptions, user, ip string) (*store.ReleaseRequest, error) {
+	if opts.AllowRootMaster {
+		// The approver must see the declaration wherever the request is listed.
+		note = strings.TrimSpace(note + " " + legacyRootMasterNote)
+	}
 	files, err := readLegacyArchive(data)
 	if err != nil {
 		return nil, err
@@ -285,7 +347,7 @@ func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks [
 			}
 			final[name] = body
 		}
-		meta, err := json.Marshal(legacyMetadata{Checks: checks})
+		meta, err := json.Marshal(legacyMetadata{Checks: checks, LegacyPolicy: configbundle.LegacyPolicy{AllowRootMaster: opts.AllowRootMaster}})
 		if err != nil {
 			return err
 		}
@@ -315,7 +377,7 @@ func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks [
 		return nil, err
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "legacy.request", ObjectType: "release_request", ObjectID: fmt.Sprint(req.ID),
-		Detail: map[string]any{"group": groupID, "revision": req.RevisionID, "digest": req.Digest, "files": len(files)}})
+		Detail: map[string]any{"group": groupID, "revision": req.RevisionID, "digest": req.Digest, "files": len(files), "allow_root_master": opts.AllowRootMaster}})
 	return req, nil
 }
 

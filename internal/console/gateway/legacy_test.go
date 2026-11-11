@@ -113,6 +113,16 @@ func TestLegacyFetchRequiresApprovalAndDriftHidesContents(t *testing.T) {
 	if err := q.ReleaseRequest.WithContext(ctx).Create(req); err != nil {
 		t.Fatal(err)
 	}
+	// Approved, but the node has no session that announced the capability.
+	if err := s.FetchBundle(&agentv1.FetchBundleRequest{RevisionId: rev.ID}, stream); status.Code(err) != codes.PermissionDenied || len(stream.data) != 0 {
+		t.Fatalf("fetch without a session = %q, %v", stream.data, err)
+	}
+	sess := &session{nodeID: node.ID, waiters: map[string]chan *agentv1.CommandResult{}, done: make(chan struct{})}
+	s.sessions = map[uint]*session{node.ID: sess}
+	if err := s.FetchBundle(&agentv1.FetchBundleRequest{RevisionId: rev.ID}, stream); status.Code(err) != codes.PermissionDenied || len(stream.data) != 0 {
+		t.Fatalf("fetch by an agent without the capability = %q, %v", stream.data, err)
+	}
+	sess.native = true
 	if err := s.FetchBundle(&agentv1.FetchBundleRequest{RevisionId: rev.ID}, stream); err != nil || !bytes.Equal(stream.data, []byte("sensitive-config")) {
 		t.Fatalf("approved fetch = %q, %v", stream.data, err)
 	}

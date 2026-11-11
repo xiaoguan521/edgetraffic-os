@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/deploy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/license"
 )
 
@@ -51,7 +52,9 @@ func (s *Server) requestLegacy(c *gin.Context) {
 			return
 		}
 	}
-	req, err := s.Deploy.RequestLegacy(id, note, data, checks, c.GetString("user"), c.ClientIP())
+	// Explicit opt-in only: anything but the literal value leaves root masters refused.
+	opts := deploy.LegacyOptions{AllowRootMaster: c.PostForm("allow_root_master") == "true"}
+	req, err := s.Deploy.RequestLegacy(id, note, data, checks, opts, c.GetString("user"), c.ClientIP())
 	if err != nil {
 		failErr(c, err)
 		return

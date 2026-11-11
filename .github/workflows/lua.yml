@@ -156,4 +156,5 @@ jobs:
           sudo env "PATH=$PATH" \
             SYEDGE_LEGACY_IT_BIN="$SYEDGE_PREFIX/sbin/syedge" \
             SYEDGE_LEGACY_IT_MODULES="$SYEDGE_PREFIX/modules/lua" \
+            SYEDGE_LEGACY_IT_REQUIRED=1 \
             go test -mod=vendor -count=1 -v -run '^TestLegacyLuaLiveLifecycle$' ./internal/agent/apply/
