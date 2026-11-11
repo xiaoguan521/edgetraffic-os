@@ -455,7 +455,7 @@ Lua 模块与 `syedge` 二进制版本强绑定。升级带 Lua 的节点时，�
 | `/opt/syedge/share/defaults/` | 默认文件、独立模式示例和基线模板 | `R/share/defaults/` |
 | `/opt/syedge/modules/lua` | 当前 Lua 模块版本软链接 | `R/modules/lua` |
 | `/var/log/syedge/error.log` | 错误日志 | `R/logs/error.log` |
-| `/var/log/syedge/access.log`、`access.json` | 访问日志 | `R/logs/access.json`（代码只生成 `access.json`） |
+| `/var/log/syedge/access.json` | 访问日志（JSON）。基线与控制台发布的配置都只写这个文件；`access.log` 是编译期默认路径，只有自带主配置且没有写 `access_log` 的原生兼容配置才会用到 | `R/logs/access.json` |
 | `/var/cache/syedge/` | 临时文件目录 | `R/cache/` |
 | `/run/syedge/syedge.pid` | master PID 文件 | 同左 |
 | `/var/lib/syedge-agent/` | Agent 身份、状态、升级文件和本机配置备份 | `R/agent/` |
@@ -704,7 +704,6 @@ sudo journalctl -u syedge-agent -n 100 --no-pager
 sudo journalctl -u syedge-agent -f
 
 sudo tail -f /var/log/syedge/error.log
-sudo tail -f /var/log/syedge/access.log
 sudo tail -f /var/log/syedge/access.json
 ```
 

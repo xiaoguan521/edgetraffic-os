@@ -264,8 +264,10 @@ func TestUpgradeBatchRunsInParallel(t *testing.T) {
 	if v.Status != "done" {
 		t.Fatalf("status %s", v.Status)
 	}
-	if el := time.Since(t0); el > 20*fa.delay/2 {
-		t.Errorf("20 nodes took %s: batches are not parallel", el)
+	// 墙上时钟只用来排除“完全串行”（20 个节点全部串行至少需要 20*delay）。
+	// 并发性由下面的 fa.max 断言保证，这里不设更紧的时间上限，避免 CI 机器忙时误报。
+	if el := time.Since(t0); el >= 20*fa.delay {
+		t.Errorf("20 nodes took %s (>= fully serial %s): batches are not parallel", el, 20*fa.delay)
 	}
 	if fa.max < 2 || fa.max > UpgradeParallel {
 		t.Errorf("max concurrent upgrades %d, want 2..%d", fa.max, UpgradeParallel)
