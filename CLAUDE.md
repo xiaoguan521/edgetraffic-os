@@ -72,7 +72,7 @@
 
 ## 品牌
 - 产品代码、界面文案、日志、打包脚本中不得出现 "nginx"（范围见 scripts/brand-check.sh；/opt/syedge/modules/ 下的 Lua 模块是唯一例外，见“数据面”）。
-- 关于页与 docs/NOTICE 必须保留 "Based on NGINX Open Source (BSD-2-Clause)"。
+- 关于页与 docs/NOTICE 必须保留归因句 "Based on NGINX Open Source (BSD-2-Clause)"（不区分大小写，句中可写作 "based on ..."）。
 
 ## 依赖
 - 依赖全部 vendor 在仓库中：新增依赖时在 internal/deps/tools.go 引用并推送到 deps/** 分支，由 deps 工作流 tidy + vendor 后提交。

@@ -178,7 +178,7 @@ location 内一旦写 `proxy_set_header`，http 层的 5 条全部失效，需�
 2. 任何一项不满足时输出 `FAIL <文件>: <原因>`，在 `GITHUB_ACTIONS` 非空时同时输出 `::error file=<文件>::<原因>`，最后以非零状态退出；
    全部通过时输出 `docs-check OK`。
 3. `docs-required.txt` 初始内容只放现有文档里已经存在的两条，证明机制可用：
-   - `docs/NOTICE<TAB>Based on NGINX Open Source (BSD-2-Clause)`
+   - `docs/NOTICE<TAB>based on NGINX Open Source (BSD-2-Clause)`
    - `README.md<TAB>docs/install-maintenance.md`
 4. `ci.yml` 新增任务，放在 `brand` 任务之后，写法与 `brand` 相同：
 
