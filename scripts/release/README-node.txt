@@ -35,6 +35,7 @@ SyEdge 边缘节点
     systemctl enable syedge && systemctl start syedge
     cp /opt/syedge/share/defaults/standalone-example.conf /opt/syedge/conf/current/conf.d/www.conf
     syedge -t && systemctl reload syedge
+  需要 Lua 时，在 Lua 附加包解包目录内执行 sudo bash install.sh --standalone，再 systemctl reload syedge（见 STANDALONE.txt 的“Lua”一节）。
   详见 /opt/syedge/share/doc/STANDALONE.txt。之后要接入控制台时，若本机已有自定义配置，注册会被拒绝以免被
   静默替换；确认由控制台接管时加 --replace-local-config（install.sh）或 -replace-local-config（syedge-agent enroll），
   当前配置会先备份到 /var/lib/syedge-agent/backups/。
