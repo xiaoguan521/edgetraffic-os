@@ -8,7 +8,7 @@
   - 开启 NTLS，静态链接；
   - syedge 源码与改名 patch **完全不变**；
   - configure 带 `--build=gmssl`，因此 `syedge -v` 显示 `syedge/<版本> (gmssl)`，`syedge -V` 的配置参数中带 `enable-ntls`。
-- **配置**：不需要改 syedge 源码。国密双证书通过 syedge 已有的 `ssl_conf_command` 指令交给铜锁的 SSL_CONF 命令：
+- **配置**：不需要改 syedge 源码。国密双证书通过 syedge 已有的 `ssl_conf_command` 指令交给铜锁的 SSL_CONF 命令。以下以 `/opt/syedge` 为例，实际根目录见 [安装维护手册的路径约定](install-maintenance.md#路径约定)：
 
   ```
   ssl_certificate      certs/site-gov.crt;          # 标准证书：服务不支持国密的客户端
