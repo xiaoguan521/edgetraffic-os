@@ -139,6 +139,24 @@ func uncommentHTTPS(s string) string {
 	return strings.Join(out, "\n")
 }
 
+// 随包说明必须写明独立模式 Lua 的启用方法与自定义 Lua 目录；随包文件中的占位符必须全部替换。
+func TestStandaloneGuideDocumentsLua(t *testing.T) {
+	files := StandaloneFiles()
+	guide := string(files["share/doc/STANDALONE.txt"])
+	for _, want := range []string{"--standalone", "lualib"} {
+		if !strings.Contains(guide, want) {
+			t.Fatalf("STANDALONE.txt does not mention %q", want)
+		}
+	}
+	for name, data := range files {
+		for _, ph := range []string{"@ID@", "@PREFIX@"} {
+			if strings.Contains(string(data), ph) {
+				t.Fatalf("%s still contains placeholder %s", name, ph)
+			}
+		}
+	}
+}
+
 // 嵌入二进制的模板与随包文档不得含默认品牌名（用 @ID@ 或模板函数），否则定制品牌的二进制会残留旧名字。
 func TestEmbeddedFilesHaveNoBrand(t *testing.T) {
 	for _, dir := range []string{"templates", "standalone"} {
