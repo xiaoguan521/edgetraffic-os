@@ -19,6 +19,32 @@
 命令与参数与上游一致：@ID@ -t / -T / -s reload / -s reopen / -s quit / -v / -V。
 建议始终使用 systemctl reload @ID@ 生效配置（不会中断现有连接），不要 restart。
 
+默认值与常见调整
+----------------
+基线配置比上游默认值更严格，以下四项最常被问到。覆盖写在自己的站点配置（conf.d/*.conf）里，校验与 reload 同上。
+
+  - 未匹配域名：HTTP 请求直接断开（444），HTTPS 拒绝握手。站点必须用 server_name 写明域名才能响应。
+  - 请求体上限 client_max_body_size 为 1m。上传接口在对应 server 内调大：
+        client_max_body_size  100m;
+  - 代理读超时 proxy_read_timeout 为 30s。长请求在对应 location 内调大：
+        proxy_read_timeout  120s;
+  - location 内一旦写 proxy_set_header，http 级别的五条基线（Host、X-Real-IP、X-Forwarded-For、
+    X-Forwarded-Proto、X-Request-ID）在该 location 全部失效，需要连同这五条一起重写。
+    响应头请写在 server 级别，不要在 location 内写 add_header。示例见 @PREFIX@/share/defaults/standalone-example.conf。
+
+Lua（可选）
+-----------
+站点需要 *_by_lua* 指令时，先安装 Lua 附加包并启用独立模式 Lua。在附加包解包目录内以 root 执行：
+
+  sudo bash install.sh --standalone
+  sudo systemctl reload @ID@
+
+启用前节点不能已接入控制台、conf/current 必须仍为 r000000、主配置中不能有 load_module；任一不满足会报错且不改动文件。
+启用只做 @ID@ -t 校验，不会自动 reload，所以最后一条 reload 必须手动执行。
+停用：先删除站点里的 Lua 指令，再执行 sudo bash install.sh --standalone-disable。
+
+自己的 Lua 文件放在 @PREFIX@/lualib/ 下（例如 @PREFIX@/lualib/hello.lua），站点里用 require("hello") 加载。
+
 接入控制台
 ----------
 安装 @ID@-agent 并注册（控制台“节点”页“添加节点”生成的命令）后，配置改由控制台发布，
@@ -26,7 +52,7 @@
 
   - 本机配置未改动过：直接注册即可。
   - 本机已有自定义配置：注册会被拒绝，以免配置被静默替换。可选择：
-      1) 在控制台按站点重新录入（或使用规划中的“导入现有配置”功能）后，再注册；
+      1) 在控制台按站点重新录入，或使用控制台的“配置导入”功能导入现有配置后，再注册；
       2) 确认由控制台接管：@ID@-agent enroll ... -replace-local-config
          当前配置先备份到 agent 状态目录的 backups/standalone-<时间>.tar.gz（0600），
          在控制台首次发布之前，@ID@ 继续使用本机配置运行。
