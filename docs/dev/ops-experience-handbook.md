@@ -447,6 +447,18 @@ location 内一旦写 `proxy_set_header`，http 层的 5 条全部失效，需�
 | D6 | 软件源 | 是否提供离线 yum / apt 源目录或一条命令的下载安装脚本，由谁托管 |
 | D7 | 第三方 C 模块（headers-more 等） | 是否作为动态模块随附加包提供；与“数据面只做改名构建”的原则如何协调 |
 
+### 4.1 建议（未决定）
+
+以下是执行完 T1–T7 后给出的建议，不是决定，仍需负责人确认后另写任务。
+
+- D1：建议作为下一轮的首选。只在独立模式与原生兼容配置包（legacy）中提供，先放纯 Lua 库（如 resty.http、resty.redis，许可逐个核对），C 模块暂不开放；控制台托管的受限环境不变。理由：迁移指南里这是现网脚本搬不过来的最大缺口。
+- D2：建议暂缓。tar 包加 install.sh（含 --standalone）已覆盖安装与启用，包管理器的 postinstall 自动切换模块风险较高。
+- D3：建议暂缓，等签名与授权方案确定后再做。
+- D4：建议维持现状。已有客户按现在的默认前缀部署，文档已用安装根目录 R 的约定消除歧义。
+- D5：建议不改。改名涉及兼容期，收益小；文档已说明各自的前缀。
+- D6：建议下一轮评估，取决于由谁托管。
+- D7：建议不做。与“数据面只做改名构建”的原则冲突；迁移指南已给出替代写法。
+
 ## 5. 完成定义
 
 一个任务完成，当且仅当：
@@ -458,3 +470,18 @@ location 内一旦写 `proxy_set_header`，http 层的 5 条全部失效，需�
 
 全部任务合并后，请一位没有参与开发的运维同事只看 `docs/quickstart.md` 完成一次独立模式安装、启用 Lua、写一个 Lua 接口，
 记录卡住的地方，作为下一轮改进的输入。
+
+## 6. 执行结果
+
+| 任务 | PR | 状态 |
+| --- | --- | --- |
+| T1 文档检查门禁 | [#62](https://github.com/xiaoguan521/edgetraffic-os/pull/62) | 已合并 |
+| T2 快速上手页与手册瘦身 | [#63](https://github.com/xiaoguan521/edgetraffic-os/pull/63) | 已合并 |
+| T3 路径约定统一 | [#65](https://github.com/xiaoguan521/edgetraffic-os/pull/65) | 已合并 |
+| T4 从 OpenResty 迁移的对照说明 | [#66](https://github.com/xiaoguan521/edgetraffic-os/pull/66) | 已合并 |
+| T5 独立模式一条命令启用 Lua | [#67](https://github.com/xiaoguan521/edgetraffic-os/pull/67) | 已合并 |
+| T6 安装结束时打印摘要 | [#68](https://github.com/xiaoguan521/edgetraffic-os/pull/68) | 已合并 |
+| T7 随包说明同步 | [#69](https://github.com/xiaoguan521/edgetraffic-os/pull/69) | 已合并 |
+| 原生兼容配置包的边界收紧（非手册任务） | [#64](https://github.com/xiaoguan521/edgetraffic-os/pull/64) | 已合并 |
+
+第 5 节末尾的运维同事实测尚未进行。
