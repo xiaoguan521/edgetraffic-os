@@ -21,3 +21,5 @@ docs/migrate-from-openresty.md	resty.redis
 docs/migrate-from-openresty.md	client_max_body_size
 docs/lua.md	--standalone-disable
 docs/install-maintenance.md	install.sh --standalone
+docs/lua.md	## 随附的 Lua 库
+docs/lua.md	resty.redis

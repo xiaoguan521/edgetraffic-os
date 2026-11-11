@@ -253,3 +253,47 @@ http {
 		t.Fatalf("after commit link = %s", link())
 	}
 }
+
+// 附加包的 extlib（独立模式与原生兼容配置包可用的第三方纯 Lua 库，放在 modules/lua-<版本>/extlib/）：
+// 升级路径必须接受 addon/extlib 下的 .lua 文件，其他类型与形式仍拒绝。
+func TestLuaEntryPatternExtlib(t *testing.T) {
+	for _, n := range []string{"addon/extlib/resty/redis.lua", "addon/extlib/tablepool.lua", "addon/extlib/resty/limit/req.lua"} {
+		if !luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be accepted", n)
+		}
+	}
+	for _, n := range []string{"addon/extlib/resty/x.so", "addon/extlib/x.txt", "addon/extlibx/x.lua", "addon/extlib/resty/x.lua.sh"} {
+		if luaEntryRe.MatchString(n) {
+			t.Errorf("%s should be rejected", n)
+		}
+	}
+}
+
+func TestInstallLuaWithExtlib(t *testing.T) {
+	dir := t.TempDir()
+	p := Paths{Modules: filepath.Join(dir, "modules"), Incoming: filepath.Join(dir, "incoming"), Arch: runtime.GOARCH}
+	for _, d := range []string{p.Modules, p.Incoming} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Keys = map[string]ed25519.PublicKey{"etos-ci-pkg-test": pub}
+	ver := "1.30.6-1"
+	pkg := luaPackage(t, ver, map[string]string{
+		"addon/extlib/resty/redis.lua": "return {}",
+		"addon/extlib/tablepool.lua":   "return {}",
+	})
+	dropLua(t, p, priv, ver, "lua", pkg)
+	if err := p.installLua(ver, "standard"); err != nil {
+		t.Fatalf("add-on with extlib rejected: %v", err)
+	}
+	for _, f := range []string{"extlib/resty/redis.lua", "extlib/tablepool.lua"} {
+		if _, err := os.Stat(filepath.Join(p.luaDir(ver), f)); err != nil {
+			t.Fatalf("%s not installed: %v", f, err)
+		}
+	}
+}

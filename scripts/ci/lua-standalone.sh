@@ -16,6 +16,7 @@ CONF="$PREFIX/conf/current/syedge.conf"
 MAIN="$PREFIX/conf/releases/r000000/syedge.conf"
 NEWCONF="$PREFIX/conf/releases/r000000/conf.d/00-lua-standalone.conf"
 SITE="$PREFIX/conf/releases/r000000/conf.d/standalone-www.conf"
+DICT="$PREFIX/conf/releases/r000000/conf.d/standalone-ext-dicts.conf"
 PIDF=/run/syedge/syedge.pid
 # agent 状态目录：与 internal/layout/layout.go 的 AgentState 一致（历史根目录 /opt/syedge 用 /var/lib/syedge-agent，其他为 <前缀>/agent）
 if [[ "$PREFIX" == /opt/syedge ]]; then
@@ -101,9 +102,82 @@ server {
     location = /hello {
         content_by_lua_block { ngx.say(require("hello").text) }
     }
+    location = /ext-require {
+        content_by_lua_block {
+            local mods = { "resty.redis", "resty.mysql", "resty.memcached", "resty.dns.resolver", "resty.string",
+                "resty.md5", "resty.sha1", "resty.sha256", "resty.aes", "resty.random", "resty.upload",
+                "resty.websocket.server", "resty.websocket.client", "resty.lock", "resty.limit.req",
+                "resty.limit.conn", "resty.limit.count", "resty.limit.traffic", "tablepool" }
+            local bad = {}
+            for _, m in ipairs(mods) do
+                local ok, err = pcall(require, m)
+                if not ok then bad[#bad + 1] = m .. ": " .. tostring(err) end
+            end
+            if #bad == 0 then ngx.say("ext-modules-ok") else ngx.say(table.concat(bad, "; ")) end
+        }
+    }
+    location = /ext-digest {
+        content_by_lua_block {
+            local str = require "resty.string"
+            local sha256, md5, sha1 = require "resty.sha256", require "resty.md5", require "resty.sha1"
+            local s256 = sha256:new(); s256:update("abc")
+            local m5 = md5:new(); m5:update("abc")
+            local s1 = sha1:new(); s1:update("abc")
+            local a, b, c = str.to_hex(s256:final()), str.to_hex(m5:final()), str.to_hex(s1:final())
+            if a == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                and b == "900150983cd24fb0d6963f7d28e17f72"
+                and c == "a9993e364706816aba3e25717850c26c9cd0d89d" then
+                ngx.say("ext-digest-ok")
+            else
+                ngx.say(a, " ", b, " ", c)
+            end
+        }
+    }
+    location = /ext-aes {
+        content_by_lua_block {
+            local aes = require "resty.aes"
+            local a = aes:new("0123456789abcdef", nil, aes.cipher(128, "cbc"), aes.hash.sha256)
+            local enc = a:encrypt("hello syedge")
+            local dec = enc and a:decrypt(enc)
+            ngx.say(dec == "hello syedge" and "ext-aes-ok" or "ext-aes-bad")
+        }
+    }
+    location = /ext-random {
+        content_by_lua_block {
+            local s = require("resty.random").bytes(16)
+            ngx.say(s and #s == 16 and "ext-random-ok" or "ext-random-bad")
+        }
+    }
+    location = /ext-lock {
+        content_by_lua_block {
+            local lock = require "resty.lock"
+            local l = lock:new("standalone_test_locks")
+            local el, err = l:lock("k1")
+            local un = el and l:unlock()
+            ngx.say((el and un == 1) and "ext-lock-ok" or ("ext-lock-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-limit {
+        content_by_lua_block {
+            local req = require "resty.limit.req"
+            local lim, err = req.new("standalone_test_limits", 10, 5)
+            local delay = lim and lim:incoming("ip", true)
+            ngx.say((lim and delay ~= nil) and "ext-limit-ok" or ("ext-limit-bad " .. tostring(err)))
+        }
+    }
+    location = /ext-tablepool {
+        content_by_lua_block {
+            local tp = require "tablepool"
+            local t = tp.fetch("standalone_ext", 0, 4)
+            local is_tbl = type(t) == "table"
+            tp.release("standalone_ext", t)
+            ngx.say(is_tbl and "ext-tablepool-ok" or "ext-tablepool-bad")
+        }
+    }
 }
 EOF
 printf 'return { text = "standalone-lualib-ok" }\n' > "$W/hello.lua"
+printf 'lua_shared_dict standalone_test_locks 1m;\nlua_shared_dict standalone_test_limits 1m;\n' > "$W/ext-dicts.conf"
 
 # 1. 不带新参数安装附加包后，站点中的 Lua 指令应当失败
 if sudo bash "$W/lua/install.sh" > "$W/i1.log" 2>&1; then
@@ -133,6 +207,8 @@ stat_after=$(sudo stat -c '%U:%G %a' "$MAIN")
 [[ "$stat_before" == "$stat_after" ]] && ok "2 主配置属主与权限不变（$stat_after）" || bad "2 主配置属主或权限改变：$stat_before -> $stat_after"
 
 # 3. 站点配置校验通过，reload 后 Lua 输出生效
+# （共享内存字典 lua_shared_dict 只能在 http 级声明，放在单独的 conf.d 文件中，在启用之后、reload 之前安装）
+sudo install -m 0644 "$W/ext-dicts.conf" "$DICT" || die "无法写入共享字典配置"
 out=$(syedge_t); rc=$?
 reload
 if [[ $rc -eq 0 ]] && body_is /lua "standalone-lua-ok"; then
@@ -153,6 +229,21 @@ sudo install -m 0644 "$HERE/standalone-lua-response-filter.conf" "$PREFIX/conf/c
 out=$(syedge_t); rc=$?
 sudo rm -f -- "$PREFIX/conf/current/conf.d/standalone-lua-response-filter.conf"
 [[ $rc -eq 0 ]] && ok "5 response-filter 片段 syedge -t 通过" || bad "5 response-filter 片段校验失败：${out:0:200}"
+
+# 13-20. 启用期间附加包随带的 Lua 库（extlib）可用：00 文件的 lua_package_path 为三段（lualib、extlib、<根目录>/lualib）
+extok() { # <编号> <说明> <路径> <期望响应体>
+  if body_is "$3" "$4"; then ok "$1 $2"; else bad "$1 $2（响应：$(curl -s --max-time 3 "http://127.0.0.1:18090$3" | head -c 200)）"; fi
+}
+line13=$(sudo grep '^lua_package_path' "$NEWCONF")
+want13="lua_package_path   \"$PREFIX/modules/lua/lualib/?.lua;$PREFIX/modules/lua/extlib/?.lua;$PREFIX/lualib/?.lua\";"
+if [[ "$line13" == "$want13" ]]; then ok "13 00 文件的 lua_package_path 为三段：lualib、extlib、<根目录>/lualib"; else bad "13 lua_package_path 不是预期的三段：$line13"; fi
+extok 14 "resty.* 与 tablepool 共 19 个模块全部可 require" /ext-require "ext-modules-ok"
+extok 15 "resty.sha256 / md5 / sha1 对固定输入的摘要正确（resty.string.to_hex）" /ext-digest "ext-digest-ok"
+extok 16 "resty.aes 加解密往返" /ext-aes "ext-aes-ok"
+extok 17 "resty.random.bytes 返回指定长度" /ext-random "ext-random-ok"
+extok 18 "resty.lock 加锁与解锁" /ext-lock "ext-lock-ok"
+extok 19 "resty.limit.req 可创建对象并计数" /ext-limit "ext-limit-ok"
+extok 20 "tablepool fetch / release" /ext-tablepool "ext-tablepool-ok"
 
 # 6. 重复启用报错，文件不变
 sudo cp -- "$MAIN" "$W/main.before6" && sudo cp -- "$NEWCONF" "$W/new.before6"
@@ -184,7 +275,7 @@ out=$(syedge_t); rc=$?
 [[ $rc -eq 0 ]] && ok "8 恢复后 syedge -t 仍通过" || bad "8 恢复后 syedge -t 失败：${out:0:200}"
 
 # 9. 去掉 Lua 站点后停用并卸载：都成功，主配置与最初逐字节相同
-sudo rm -f -- "$SITE"
+sudo rm -f -- "$SITE" "$DICT"
 sudo bash "$W/lua/install.sh" --standalone-disable > "$W/i9.log" 2>&1; rc9=$?
 reload; sleep 2
 sudo bash "$W/lua/uninstall.sh" > "$W/u9.log" 2>&1; rc9u=$?

@@ -136,3 +136,19 @@ func TestLuaStr(t *testing.T) {
 		t.Fatalf("luaStr = %s", got)
 	}
 }
+
+// 控制台托管的配置不引用附加库目录 extlib（它只属于独立模式与原生兼容配置包），受限环境保持不变。
+func TestManagedLuaConfigHasNoExtlib(t *testing.T) {
+	b, err := Render(luaInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range b.Files {
+		if strings.Contains(string(data), "extlib") {
+			t.Errorf("managed config file %s references extlib", name)
+		}
+	}
+	if !strings.Contains(string(b.Files["syedge.conf"]), `lua_package_path   "/opt/syedge/modules/lua/lualib/?.lua";`) {
+		t.Fatal("managed lua_package_path changed")
+	}
+}
