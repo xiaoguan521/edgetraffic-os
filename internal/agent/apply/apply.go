@@ -512,8 +512,49 @@ func (a *Applier) extractTo(tmp, rev string, bundle []byte, digest string) error
 	if err := verifyDir(tmp, m); err != nil {
 		return err
 	}
+	// Keep ordinary managed versions compatible with older firewall services
+	// that read their public configuration as a separate user. Native bundles
+	// may hold credentials in any file and must remain group-readable only.
+	if _, native := m.Files[configbundle.LegacyMarker]; !native {
+		mode, err := defaultPublicMode(tmp)
+		if err != nil {
+			return err
+		}
+		for name := range m.Files {
+			if !strings.HasSuffix(name, ".key") {
+				if err := os.Chmod(filepath.Join(tmp, filepath.FromSlash(name)), mode); err != nil {
+					return err
+				}
+			}
+		}
+		if err := os.Chmod(filepath.Join(tmp, manifestName), mode); err != nil {
+			return err
+		}
+	}
 	ok = true
 	return nil
+}
+
+// Probe the umask without changing the process-wide mask used by concurrent
+// goroutines. The temporary directory contains no customer configuration.
+func defaultPublicMode(dir string) (os.FileMode, error) {
+	probeDir, err := os.MkdirTemp(dir, ".mode-probe-")
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = os.RemoveAll(probeDir) }()
+	f, err := os.OpenFile(filepath.Join(probeDir, "file"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	info, err := f.Stat()
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Mode().Perm(), nil
 }
 
 func (a *Applier) checkFreeSpace(dir string, bundleBytes uint64) error {

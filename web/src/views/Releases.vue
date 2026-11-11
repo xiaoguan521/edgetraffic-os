@@ -320,7 +320,7 @@ function lastDeploy(rev: string) {
     <section v-if="group?.management_mode === 'legacy'" class="panel">
       <h2>提交原生兼容配置</h2>
       <p class="hint">准备 tar.gz，根目录包含 {{ brand.id }}.conf 及所需配置、Lua 和第三方库；版本内的路径可用 @{{ brand.id.toUpperCase() }}_RELEASE@ 指向本版本目录。节点的服务启动命令必须显式用 -c 指向受管的 conf/current/{{ brand.id }}.conf，并提前备份现网配置。兼容包不支持符号链接。</p>
-      <p class="hint">可选探活使用节点档案的 HTTP/HTTPS 端口；不设置时只检查配置及加载结果，不能证明业务正常。节点须升级 Agent 并安装匹配的 Lua 和国密模块，旧版 Agent 会拒绝下发。</p>
+      <p class="hint">可选探活使用节点档案的 HTTP/HTTPS 端口；不设置时只检查配置及加载结果，不能证明业务正常。节点须升级 Agent 并安装匹配的 Lua 和国密模块；启用内置防火墙时还需更新节点包中的防火墙刷新单元。</p>
       <template v-if="session.can('admin')">
         <input type="file" accept=".tar.gz,.tgz,application/gzip" @change="legacyFile = ($event.target as HTMLInputElement).files?.[0] || null" />
         <div class="pub"><a-input v-model:value="note" placeholder="本次变更说明" :maxlength="120" /></div>

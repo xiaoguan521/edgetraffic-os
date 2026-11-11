@@ -138,9 +138,12 @@ func localConfigCheck(ap *apply.Applier, replace bool, backupDir string, now tim
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return "", err
 	}
-	out := filepath.Join(backupDir, "standalone-"+now.UTC().Format("20060102T150405Z")+".tar.gz")
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("生成备份文件名失败：%w", err)
+	}
+	out := filepath.Join(backupDir, "standalone-"+now.UTC().Format("20060102T150405Z")+"-"+hex.EncodeToString(nonce[:])+".tar.gz")
 	if err := tarDir(dir, out); err != nil {
-		_ = os.Remove(out)
 		return "", fmt.Errorf("备份本机配置失败：%w", err)
 	}
 	return out, nil
@@ -151,7 +154,13 @@ func tarDir(dir, out string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	ok := false
+	defer func() {
+		_ = f.Close()
+		if !ok {
+			_ = os.Remove(out)
+		}
+	}()
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -199,5 +208,12 @@ func tarDir(dir, out string) error {
 	if err := gz.Close(); err != nil {
 		return err
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }

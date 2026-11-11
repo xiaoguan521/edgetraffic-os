@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 )
 
@@ -149,7 +151,62 @@ func TestLegacyBundleNeedsDeclarationForRootMaster(t *testing.T) {
 	}
 	// The real reader reports this test process's own effective uid.
 	masterEUID = orig
-	if got, err := masterEUID(os.Getpid()); err != nil || got != os.Geteuid() {
-		t.Errorf("masterEUID(self) = %d, %v; want %d", got, err, os.Geteuid())
+	if runtime.GOOS == "linux" {
+		if got, err := masterEUID(os.Getpid()); err != nil || got != os.Geteuid() {
+			t.Errorf("masterEUID(self) = %d, %v; want %d", got, err, os.Geteuid())
+		}
+	}
+}
+
+func TestBundlePermissionsProtectNativeAndKeepManagedReadable(t *testing.T) {
+	root := t.TempDir()
+	probe := filepath.Join(root, "mode-probe")
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := f.Stat()
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedMode := info.Mode().Perm()
+	a := &Applier{C: Config{ConfRoot: root}}
+	for _, tc := range []struct {
+		rev    string
+		native bool
+	}{
+		{"r000001", false},
+		{"r000002", true},
+	} {
+		files := map[string][]byte{
+			"syedge.conf":      []byte("events {}"),
+			"certs/server.key": []byte("secret"),
+			"lua/config.lua":   []byte("password = 'secret'"),
+		}
+		if tc.native {
+			files[configbundle.LegacyMarker] = []byte("{}")
+		}
+		b := render.Repack(tc.rev, files)
+		data, err := b.TarGz()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.unpack(tc.rev, data, b.Manifest.Digest); err != nil {
+			t.Fatal(err)
+		}
+		for name := range files {
+			info, err := os.Stat(filepath.Join(root, "releases", tc.rev, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.native || name == "certs/server.key" {
+				if info.Mode().Perm()&0o007 != 0 {
+					t.Errorf("%s %s exposes private content: %o", tc.rev, name, info.Mode().Perm())
+				}
+			} else if info.Mode().Perm() != managedMode {
+				t.Errorf("%s %s mode = %o, want umask-adjusted %o", tc.rev, name, info.Mode().Perm(), managedMode)
+			}
+		}
 	}
 }

@@ -209,6 +209,15 @@ system_phase() {
   nft list table inet syedge_fw 2>/dev/null | grep -q 28080 && ok "新增实例 green 后防火墙已放行 28080（刷新服务以非 root 运行）" \
     || bad "防火墙未放行 28080：$(journalctl -u syedge-firewall-refresh.service --no-pager -n 5 2>&1 | tr '\n' ' ')"
   [[ "$(systemctl show -p User --value syedge-firewall-refresh.service)" == syedge-firewall ]] && ok "刷新服务以 syedge-firewall 运行" || bad "刷新服务身份不对"
+  # 原生兼容包的配置可包含凭据，所有文件均为 0640；刷新服务只通过数据面组读取配置，不要求公开给其他用户。
+  local green_conf=/opt/syedge/instances/green/conf/current/syedge.conf old_mode
+  old_mode=$(stat -Lc %a "$green_conf")
+  if chmod 0640 "$green_conf" && systemctl start syedge-firewall-refresh.service && nft list table inet syedge_fw 2>/dev/null | grep -q 28080; then
+    ok "防火墙刷新服务可读取 0640 配置并保留 green 端口"
+  else
+    bad "防火墙无法读取 0640 实例配置：$(journalctl -u syedge-firewall-refresh.service --no-pager -n 5 2>&1 | tr '\n' ' ')"
+  fi
+  chmod "$old_mode" "$green_conf"
   # 运行时没有 root 进程：全部实例的 master 与 worker
   local roots; roots=$(ps -C syedge -o user= | grep -cx root)
   [[ "$roots" == 0 ]] && ok "D5 三个实例的 master 与 worker 都不以 root 运行" || bad "D5 有 $roots 个数据面进程以 root 运行"
