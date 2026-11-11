@@ -22,6 +22,33 @@
 
 独立模式验收夹具：`scripts/ci/standalone-lua-response-filter.conf`。它验证请求阶段的放行/拒绝、响应头新增与 `Content-Length` 清除，以及响应体改写；实际运行仍须在已安装匹配 `syedge-lua` 的独立节点上先执行 `syedge -t`。
 
+#### 一条命令启用（推荐）
+
+附加包解包后，在其目录内以 root 执行（不需要手改主配置）：
+
+```bash
+sudo bash install.sh --standalone          # 安装附加包，并启用独立模式 Lua
+sudo systemctl reload syedge               # 启用只做 syedge -t 校验，不会自动 reload
+sudo bash install.sh --standalone-disable  # 停用（只停用，不卸载附加包）
+```
+
+前置条件（任一不满足即报错退出，且不改动任何文件）：
+
+- 节点未注册到控制台：agent 状态目录中没有 `node.json`；
+- `conf/current` 指向初始版本 `r000000`，即控制台未发布过配置；
+- 主配置 `conf/current/syedge.conf` 中没有 `load_module`，即没有手工加载过模块。
+
+启用会做的事：
+
+- 在主配置最前面插入两行 `load_module`，分别加载 `R/modules/lua/ndk_http_module.so` 与 `R/modules/lua/ngx_http_lua_module.so`（先 ndk 后 lua）；
+- 新建 `conf.d/00-lua-standalone.conf`，设置 `lua_package_path` 与 `lua_package_cpath`；
+- 创建 `R/lualib/`（已存在则不动），用于放自己的 Lua 文件；
+- 用真实的 `syedge -t` 校验，失败则恢复主配置并删除新建的文件。
+
+自己的 Lua 文件放在 `R/lualib/` 下，例如 `R/lualib/hello.lua`，站点里 `require("hello")`。具名实例用 `--instance <实例名>`，其 `R` 为 `R/instances/<实例名>`，reload 时使用 `syedge@<实例名>`。`R` 是安装根目录，见[安装维护手册的路径约定](install-maintenance.md#路径约定)。
+
+停用前先删除站点里的 Lua 指令（如 `access_by_lua_block`），否则停用的校验会失败并恢复原状。停用会删除上述两行 `load_module` 与 `conf.d/00-lua-standalone.conf`，但保留 `R/lualib/`。独立模式 Lua 仍启用时，`uninstall.sh` 会拒绝卸载并提示先执行 `--standalone-disable`。
+
 已有独立配置需要先接入控制台观察时，使用节点组的 `observe` / `legacy` 接管方式；它们只做导入分析、审计和漂移观察，不会把原生 Lua 配置自动改写成受限脚本，也不会自动覆盖节点。操作步骤见 [现有配置的观察接入与 Lua 兼容](legacy-config-management.md)。
 
 ## 原生规则积木

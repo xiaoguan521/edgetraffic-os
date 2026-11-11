@@ -7,6 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=install.sh
 source "$HERE/install.sh"
 resolve_target "$@"
+[[ -z "$STANDALONE_ACTION" ]] || die "--standalone 与 --standalone-disable 只适用于 install.sh"
 M="$ROOT/modules"
 
 [[ $(id -u) -eq 0 || -n "${SYEDGE_ROOT:-}" ]] || die "请以 root 执行"
@@ -26,6 +27,9 @@ else
 fi
 for conf in "${confs[@]}"; do
   if grep -qs "modules/lua/" "$conf"; then
+    if [[ -e "$(dirname "$conf")/conf.d/00-lua-standalone.conf" ]]; then
+      die "独立模式 Lua 仍在使用（${conf}）：先执行 bash install.sh --standalone-disable（具名实例加 --instance <实例名>），再卸载"
+    fi
     die "当前配置正在使用 Lua 规则（${conf}）：先在控制台去掉 JWT 规则并发布到本节点，再卸载"
   fi
 done

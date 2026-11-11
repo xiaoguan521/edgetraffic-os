@@ -17,13 +17,20 @@ packaged_default_root() {
   printf '%s\n' "$root"
 }
 
+# 独立模式 Lua 的动作：空 / enable / disable；只属于 install.sh，由 resolve_target 解析。
+STANDALONE_ACTION=""
 # 安装和卸载共用目标选择，供同包的 uninstall.sh source；不执行任何安装操作。
 resolve_target() {
-  local requested="${SYEDGE_INSTANCE:-}" result name mode dir i choice
+  local requested="${SYEDGE_INSTANCE:-}" result name mode dir i choice act
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --instance) [[ $# -ge 2 ]] || die "--instance 需要实例名"; requested="$2"; shift 2 ;;
       --instance=*) requested="${1#*=}"; shift ;;
+      --standalone|--standalone-disable)
+        act=enable
+        if [[ "$1" == --standalone-disable ]]; then act=disable; fi
+        if [[ -n "$STANDALONE_ACTION" && "$STANDALONE_ACTION" != "$act" ]]; then die "--standalone 与 --standalone-disable 互斥"; fi
+        STANDALONE_ACTION=$act; shift ;;
       -h|--help) echo "用法：bash $(basename "$0") [--instance <实例名或 default>]"; exit 0 ;;
       *) die "未知参数：$1" ;;
     esac
@@ -101,6 +108,151 @@ SY="$ROOT/sbin/syedge"
 [[ -x "$SY" ]] || die "没有找到 $SY：请先安装 syedge 基础包"
 echo "已选择实例：$SELECTED；安装根目录：$ROOT。"
 [[ "$TARGET_MODE" != shared ]] || echo "该实例使用共享模块，会影响同一目录下的其他共享实例。"
+
+# ---- 独立模式 Lua（--standalone 启用，--standalone-disable 停用）----
+# 只改两处：主配置最前面的两行 load_module，以及 conf.d/00-lua-standalone.conf。不 reload、不 restart、不停止数据面。
+# IPREFIX 是目标实例的前缀（默认实例为 ROOT；具名实例为 <BASE_ROOT>/instances/<实例>）。
+IPREFIX="$ROOT"
+if [[ "$SELECTED" != default ]]; then IPREFIX="$BASE_ROOT/instances/$SELECTED"; fi
+SA_REAL=""; SA_DIR=""; SA_NEW=""; SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_LIB=""
+SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0
+
+# agent 状态目录，规则与 internal/layout/layout.go 的 Layout.AgentState 一致：
+# 用户模式（SYEDGE_ROOT）与非历史根目录为 <实例前缀>/agent；历史根目录 /opt/syedge 下默认实例为
+# /var/lib/syedge-agent，具名实例为 /var/lib/syedge-agent-<实例>。
+agent_state_dir() {
+  if [[ -z "${SYEDGE_ROOT:-}" && "$BASE_ROOT" == /opt/syedge ]]; then
+    if [[ "$SELECTED" == default ]]; then echo /var/lib/syedge-agent; else echo "/var/lib/syedge-agent-$SELECTED"; fi
+  else
+    echo "$IPREFIX/agent"
+  fi
+}
+
+# 同属性替换：REF 为参照文件，FILE 获得它的属主与权限（不原地编辑）
+same_attrs() { chown --reference="$1" "$2" && chmod --reference="$1" "$2"; }
+# 原子覆盖：SRC 先获得 REF 的属主与权限，再 mv 到 DST
+sa_replace() { same_attrs "$3" "$1" && mv -f -- "$1" "$2"; }
+
+# 失败恢复：主配置用备份覆盖回去，恢复或删除 00 文件，删除本次新建的 lualib 目录。附加包保持安装（未被配置引用）。
+sa_rollback() {
+  if [[ -n "$SA_TMP" ]]; then rm -f -- "$SA_TMP"; fi
+  if [[ "$SA_MAIN" == 1 ]]; then
+    sa_replace "$SA_BAK" "$SA_REAL" "$SA_REAL" || echo "syedge-lua: 警告：主配置恢复失败，备份在 $SA_BAK" >&2
+  elif [[ -n "$SA_BAK" ]]; then
+    rm -f -- "$SA_BAK"
+  fi
+  if [[ "$SA_NEWMADE" == 1 ]]; then rm -f -- "$SA_NEW"; fi
+  if [[ "$SA_NEWGONE" == 1 ]]; then
+    sa_replace "$SA_NBAK" "$SA_NEW" "$SA_REAL" || echo "syedge-lua: 警告：conf.d/00-lua-standalone.conf 恢复失败，备份在 $SA_NBAK" >&2
+  elif [[ -n "$SA_NBAK" ]]; then
+    rm -f -- "$SA_NBAK"
+  fi
+  if [[ -n "$SA_LIB" ]]; then rmdir -- "$SA_LIB" 2>/dev/null || true; fi
+}
+sa_fail() {
+  sa_rollback
+  if [[ "$STANDALONE_ACTION" == enable ]]; then rm -rf -- "$dest.old"; fi
+  die "$1（主配置已恢复原状）"
+}
+
+# 启用前置检查：任一不满足即报错退出，且尚未改动任何文件（在安装附加包之前执行）
+standalone_precheck() {
+  local conf="$IPREFIX/conf/current/syedge.conf" target st
+  [[ -L "$IPREFIX/conf/current" ]] || die "独立模式需要 $IPREFIX/conf/current 是软链"
+  target=$(readlink -f "$IPREFIX/conf/current") || die "无法解析 conf/current"
+  [[ "$(basename "$target")" == r000000 ]] || die "conf/current 指向 $(basename "$target")：只有初始版本 r000000 的节点能独立启用 Lua（已由控制台发布过配置）"
+  [[ -f "$conf" ]] || die "缺少主配置：$conf"
+  st=$(agent_state_dir)
+  [[ ! -e "$st/node.json" && ! -L "$st/node.json" ]] || die "节点已注册到控制台（$st/node.json 存在），不能独立启用 Lua"
+  if grep -qs 'load_module' "$conf"; then die "主配置已含 load_module，独立模式 Lua 可能已启用，未做任何改动"; fi
+  [[ ! -e "$IPREFIX/conf/current/conf.d/00-lua-standalone.conf" ]] || die "已存在 conf.d/00-lua-standalone.conf，独立模式 Lua 已启用，未做任何改动"
+}
+
+# 启用：主配置前面插入两行 load_module，新建 conf.d/00-lua-standalone.conf，创建 lualib，然后用真实 syedge -t 校验。
+standalone_enable() {
+  local conf="$IPREFIX/conf/current/syedge.conf" l1 l2 out
+  l1="load_module  $ROOT/modules/lua/ndk_http_module.so;"
+  l2="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
+  SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0; SA_LIB=""
+  SA_REAL=$(readlink -f "$conf") || die "无法解析主配置的真实路径"
+  SA_DIR=$(dirname "$SA_REAL")
+  SA_NEW="$SA_DIR/conf.d/00-lua-standalone.conf"
+  SA_BAK=$(mktemp "$SA_DIR/.syedge-conf.bak.XXXXXX") || sa_fail "无法创建备份文件"
+  cp -- "$SA_REAL" "$SA_BAK" || sa_fail "无法备份主配置"
+  same_attrs "$SA_REAL" "$SA_BAK" || sa_fail "无法设置备份文件的属主与权限"
+  SA_TMP=$(mktemp "$SA_DIR/.syedge-conf.new.XXXXXX") || sa_fail "无法创建临时文件"
+  { printf '%s\n' "$l1" "$l2"; cat -- "$SA_BAK"; } > "$SA_TMP" || sa_fail "无法生成新主配置"
+  same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置新主配置的属主与权限"
+  SA_MAIN=1
+  mv -f -- "$SA_TMP" "$SA_REAL" || sa_fail "无法写入主配置"
+  SA_TMP=""
+  if [[ ! -d "$SA_DIR/conf.d" ]]; then mkdir -p -- "$SA_DIR/conf.d" || sa_fail "无法创建 conf.d 目录"; fi
+  [[ ! -e "$SA_NEW" ]] || sa_fail "已存在 conf.d/00-lua-standalone.conf"
+  SA_TMP=$(mktemp "$SA_DIR/.syedge-new.XXXXXX") || sa_fail "无法创建临时文件"
+  {
+    printf '%s\n' "# 独立模式 Lua（install.sh --standalone 生成）。自己的 Lua 文件放在 $IPREFIX/lualib/ 下。"
+    printf '%s\n' "lua_package_path   \"$ROOT/modules/lua/lualib/?.lua;$IPREFIX/lualib/?.lua\";"
+    printf '%s\n' "lua_package_cpath  \"$ROOT/modules/lua/lualib/?.disabled\";"
+  } > "$SA_TMP" || sa_fail "无法生成 conf.d/00-lua-standalone.conf"
+  same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置 00 文件的属主与权限"
+  mv -f -- "$SA_TMP" "$SA_NEW" || sa_fail "无法写入 conf.d/00-lua-standalone.conf"
+  SA_TMP=""; SA_NEWMADE=1
+  if [[ ! -d "$IPREFIX/lualib" ]]; then
+    mkdir -m 0755 -- "$IPREFIX/lualib" || sa_fail "无法创建 lualib 目录"
+    SA_LIB="$IPREFIX/lualib"
+  fi
+  if ! out=$("$SY" -p "$IPREFIX" -c "$conf" -e stderr -t -q 2>&1); then
+    sa_fail "新配置校验失败：$out"
+  fi
+  rm -f -- "$SA_BAK"; SA_BAK=""
+}
+
+# 停用：删除与启用时写入内容完全相同的两行 load_module 与 00 文件，然后校验；失败则恢复原状。
+standalone_disable() {
+  local conf="$IPREFIX/conf/current/syedge.conf" l1 l2 out rc=0 had_new=0 had_load=0
+  l1="load_module  $ROOT/modules/lua/ndk_http_module.so;"
+  l2="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
+  [[ -f "$conf" ]] || die "缺少主配置：$conf"
+  SA_BAK=""; SA_NBAK=""; SA_TMP=""; SA_MAIN=0; SA_NEWMADE=0; SA_NEWGONE=0; SA_LIB=""
+  SA_REAL=$(readlink -f "$conf") || die "无法解析主配置的真实路径"
+  SA_DIR=$(dirname "$SA_REAL")
+  SA_NEW="$SA_DIR/conf.d/00-lua-standalone.conf"
+  if [[ -e "$SA_NEW" ]]; then had_new=1; fi
+  if grep -qxF -e "$l1" -e "$l2" -- "$SA_REAL"; then had_load=1; fi
+  if [[ $had_new -eq 0 && $had_load -eq 0 ]]; then echo "独立模式 Lua 未启用，无需停用。"; return 0; fi
+  SA_BAK=$(mktemp "$SA_DIR/.syedge-conf.bak.XXXXXX") || sa_fail "无法创建备份文件"
+  cp -- "$SA_REAL" "$SA_BAK" || sa_fail "无法备份主配置"
+  same_attrs "$SA_REAL" "$SA_BAK" || sa_fail "无法设置备份文件的属主与权限"
+  if [[ $had_new -eq 1 ]]; then
+    SA_NBAK=$(mktemp "$SA_DIR/.00-lua-standalone.bak.XXXXXX") || sa_fail "无法创建 00 文件的备份"
+    cp -- "$SA_NEW" "$SA_NBAK" || sa_fail "无法备份 conf.d/00-lua-standalone.conf"
+    same_attrs "$SA_REAL" "$SA_NBAK" || sa_fail "无法设置 00 文件备份的属主与权限"
+  fi
+  SA_TMP=$(mktemp "$SA_DIR/.syedge-conf.new.XXXXXX") || sa_fail "无法创建临时文件"
+  grep -vxF -e "$l1" -e "$l2" -- "$SA_BAK" > "$SA_TMP" || rc=$?
+  [[ $rc -le 1 ]] || sa_fail "无法读取主配置"
+  same_attrs "$SA_REAL" "$SA_TMP" || sa_fail "无法设置新主配置的属主与权限"
+  SA_MAIN=1
+  mv -f -- "$SA_TMP" "$SA_REAL" || sa_fail "无法写入主配置"
+  SA_TMP=""
+  if [[ $had_new -eq 1 ]]; then
+    SA_NEWGONE=1
+    rm -f -- "$SA_NEW" || sa_fail "无法删除 conf.d/00-lua-standalone.conf"
+  fi
+  if ! out=$("$SY" -p "$IPREFIX" -c "$conf" -e stderr -t -q 2>&1); then
+    sa_fail "站点配置仍在使用 Lua 指令，请先去掉站点里的 Lua 指令（syedge 校验：$out）"
+  fi
+  rm -f -- "$SA_BAK"; SA_BAK=""
+  if [[ -n "$SA_NBAK" ]]; then rm -f -- "$SA_NBAK"; fi
+  echo "独立模式 Lua 已停用（lualib 目录保留）。下一步（未 reload，配置尚未生效）：sudo systemctl reload $(unit_name)"
+}
+unit_name() { if [[ "$SELECTED" == default ]]; then echo syedge; else echo "syedge@$SELECTED"; fi; }
+
+if [[ "$STANDALONE_ACTION" == disable ]]; then
+  standalone_disable
+  exit 0
+fi
+if [[ "$STANDALONE_ACTION" == enable ]]; then standalone_precheck; fi
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$HERE/addon/VERSION"; }
 pkg=$(field version); want=$(field syedge)
 [[ "$pkg" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || die "附加包版本无效"
@@ -153,6 +305,13 @@ if ! out=$("$SY" -t -q -p "$T" -c "$T/t.conf" 2>&1); then
   rm -rf "$T"; restore
   die "自检失败，已恢复原状：$out"
 fi
-rm -rf "$T" "$dest.old"
+rm -rf "$T"
+if [[ "$STANDALONE_ACTION" == enable ]]; then standalone_enable; fi
+rm -rf "$dest.old"
 echo "syedge-lua $pkg 已安装（$base），模块目录 $dest"
-echo "节点 agent 会自动上报；控制台此后允许向该节点发布含 JWT 规则的配置。"
+if [[ "$STANDALONE_ACTION" == enable ]]; then
+  echo "独立模式 Lua 已启用：主配置已加载附加包模块，自己的 Lua 文件放在 $IPREFIX/lualib/ 下。"
+  echo "下一步（未 reload，配置尚未生效）：sudo systemctl reload $(unit_name)"
+else
+  echo "节点 agent 会自动上报；控制台此后允许向该节点发布含 JWT 规则的配置。"
+fi
