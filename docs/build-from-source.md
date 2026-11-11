@@ -116,7 +116,7 @@ cd /path/to/edgetraffic-os
 dataplane/build-syedge-lua.sh -o dist/syedge-lua
 ```
 
-脚本会按 `dataplane/lua/DEPS` 锁定并校验以下组件：LuaJIT、ngx_devel_kit、OpenResty Lua 模块、lua-resty-core 和 lua-resty-lrucache。输出包括：
+脚本会按 `dataplane/lua/DEPS` 锁定并校验以下组件：LuaJIT、ngx_devel_kit、OpenResty Lua 模块、lua-resty-core、lua-resty-lrucache 和 lua-resty-rsa。输出包括：
 
 ```text
 dist/syedge-lua/syedge-lua-1.30.6-x86_64.tar.gz

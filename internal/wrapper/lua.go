@@ -49,7 +49,7 @@ func (p Paths) luaReady(ver, base string) bool {
 	if err != nil || strings.TrimSpace(string(b)) != base {
 		return false
 	}
-	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua"} {
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "lualib/resty/rsa.lua"} {
 		if st, err := os.Stat(filepath.Join(d, f)); err != nil || !st.Mode().IsRegular() {
 			return false
 		}

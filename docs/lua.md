@@ -47,6 +47,8 @@ sudo bash install.sh --standalone-disable  # 停用（只停用，不卸载附�
 
 自己的 Lua 文件放在 `R/lualib/` 下，例如 `R/lualib/hello.lua`，站点里 `require("hello")`。具名实例用 `--instance <实例名>`，其 `R` 为 `R/instances/<实例名>`，reload 时使用 `syedge@<实例名>`。`R` 是安装根目录，见[安装维护手册的路径约定](install-maintenance.md#路径约定)。
 
+附加包中的 `resty.rsa` 只用于独立模式和原生兼容配置；控制台托管的受限 Lua 脚本不能加载它。`resty.mysql` 及其数据库驱动仍不随附。
+
 停用前先删除站点里的 Lua 指令（如 `access_by_lua_block`），否则停用的校验会失败并恢复原状。停用会删除上述两行 `load_module` 与 `conf.d/00-lua-standalone.conf`，但保留 `R/lualib/`。独立模式 Lua 仍启用时，`uninstall.sh` 会拒绝卸载并提示先执行 `--standalone-disable`。
 
 已有独立配置需要先接入控制台观察时，使用节点组的 `observe` / `legacy` 接管方式；它们只做导入分析、审计和漂移观察，不会把原生 Lua 配置自动改写成受限脚本，也不会自动覆盖节点。操作步骤见 [现有配置的观察接入与 Lua 兼容](legacy-config-management.md)。
@@ -88,6 +90,7 @@ sudo bash install.sh --standalone-disable  # 停用（只停用，不卸载附�
 - LuaJIT 2.1（OpenResty 分支）；
 - ngx_devel_kit、OpenResty 的 lua 模块（动态模块）；
 - lua-resty-core、lua-resty-lrucache；
+- 第三方 `resty.rsa`（lua-resty-rsa v1.1.1，MIT）；
 - 审核过的规则库 `etos`（JSON 解析、JWT 校验、初始化与沙箱）。
 
 版本与提交哈希锁定在 `dataplane/lua/DEPS`。syedge 核心与改名 patch 不变。

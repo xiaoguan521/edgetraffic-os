@@ -50,6 +50,7 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 - LuaJIT 2.1（静态链入 Lua 模块）；
 - `ndk_http_module`、`ngx_http_lua_module`；
 - `lua-resty-core`、`lua-resty-lrucache`；
+- `resty.rsa`（lua-resty-rsa v1.1.1，MIT，仅独立模式和原生兼容配置可用）；
 - 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`。
 
 **附加包中没有：**

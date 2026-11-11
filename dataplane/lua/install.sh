@@ -298,7 +298,7 @@ http {
     access_log  off;
     lua_package_path   "$M/lua/lualib/?.lua";
     lua_package_cpath  "$M/lua/lualib/?.disabled";
-    init_by_lua_block { require("etos.json"); require("resty.lrucache") }
+    init_by_lua_block { require("etos.json"); require("resty.lrucache"); require("resty.rsa") }
 }
 CONF
 if ! out=$("$SY" -t -q -p "$T" -c "$T/t.conf" 2>&1); then

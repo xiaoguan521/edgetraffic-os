@@ -30,6 +30,7 @@ func luaPackage(t *testing.T, ver string, extra map[string]string) []byte {
 		"addon/gmssl/ndk_http_module.so":        "gm-ndk",
 		"addon/gmssl/ngx_http_lua_module.so":    "gm-lua",
 		"addon/lualib/resty/core.lua":           "return {}",
+		"addon/lualib/resty/rsa.lua":            "return {}",
 		"addon/lualib/etos/jwt.lua":             "return {}",
 		"addon/VERSION":                         fmt.Sprintf(`{"name":"syedge-lua","version":%q}`, ver),
 		"addon/NOTICE":                          "notice",
@@ -89,7 +90,7 @@ func TestPrepareLuaRejectsVariantCollision(t *testing.T) {
 	dir := t.TempDir()
 	p := Paths{Modules: filepath.Join(dir, "modules")}
 	ver := "1.30.6-1"
-	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "BASE"} {
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "lualib/resty/rsa.lua", "BASE"} {
 		path := filepath.Join(p.luaDir(ver), f)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -136,7 +137,7 @@ func TestHotUpgradeWithLuaAddon(t *testing.T) {
 		}
 	}
 	// 一个“已安装”的旧版本附加包（配置不加载模块，这里只验证软链切换；真实加载在 CI 的 lua 验收中）
-	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua"} {
+	for _, f := range []string{"ndk_http_module.so", "ngx_http_lua_module.so", "lualib/etos/jwt.lua", "lualib/resty/core.lua", "lualib/resty/rsa.lua"} {
 		_ = os.WriteFile(filepath.Join(dir, "modules/lua-1.0.0", f), []byte("old"), 0o644)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "modules/lua-1.0.0/BASE"), []byte("standard\n"), 0o644)

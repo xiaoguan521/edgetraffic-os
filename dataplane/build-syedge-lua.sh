@@ -44,6 +44,7 @@ NDK_SRC=$(pin ndk "$NDK_GIT" "$NDK_TAG" "$NDK_COMMIT")
 LUA_MODULE_SRC=$(pin lua-module "$LUA_MODULE_GIT" "$LUA_MODULE_TAG" "$LUA_MODULE_COMMIT")
 RESTY_CORE_SRC=$(pin resty-core "$RESTY_CORE_GIT" "$RESTY_CORE_TAG" "$RESTY_CORE_COMMIT")
 LRUCACHE_SRC=$(pin lrucache "$LRUCACHE_GIT" "$LRUCACHE_TAG" "$LRUCACHE_COMMIT")
+RESTY_RSA_SRC=$(pin resty-rsa "$RESTY_RSA_GIT" "$RESTY_RSA_TAG" "$RESTY_RSA_COMMIT")
 
 # LuaJIT：只要静态库，-fPIC 以便链入共享模块；模块构建直接使用源码目录的头文件
 make -C "$LUAJIT_SRC" -j"$(nproc)" BUILDMODE=static CFLAGS="-fPIC -O2" > "$WORK/luajit.log" 2>&1 \
@@ -60,13 +61,15 @@ for tls in openssl tongsuo; do
   LUA_MODULES_OUT="$A/$variant" "$HERE/build-syedge.sh" -S -t "$tls" -o "$OUT/base"
 done
 
-# Lua 库：lua-resty-core、lua-resty-lrucache 与 etos（审核过的规则库）
+# Lua 库：lua-resty-core、lua-resty-lrucache、lua-resty-rsa 与 etos（审核过的规则库）
 cp -r "$RESTY_CORE_SRC/lib/." "$A/lualib/"
 cp -r "$LRUCACHE_SRC/lib/." "$A/lualib/"
+mkdir -p "$A/lualib/resty"
+cp "$RESTY_RSA_SRC/lib/resty/rsa.lua" "$A/lualib/resty/rsa.lua"
 cp -r "$HERE/lua/lualib/etos" "$A/lualib/"
 find "$A/lualib" -type f ! -name '*.lua' -delete
 cat > "$A/VERSION" <<EOF
-{"name":"syedge-lua","version":"$PKG_VERSION","syedge":"$UPSTREAM_VERSION","luajit":"$LUAJIT_TAG","ndk":"$NDK_TAG","lua_module":"$LUA_MODULE_TAG","resty_core":"$RESTY_CORE_TAG","lrucache":"$LRUCACHE_TAG"}
+{"name":"syedge-lua","version":"$PKG_VERSION","syedge":"$UPSTREAM_VERSION","luajit":"$LUAJIT_TAG","ndk":"$NDK_TAG","lua_module":"$LUA_MODULE_TAG","resty_core":"$RESTY_CORE_TAG","lrucache":"$LRUCACHE_TAG","resty_rsa":"$RESTY_RSA_TAG"}
 EOF
 printf '%s\n' "${SYEDGE_PREFIX:-/opt/$B}" > "$A/PREFIX"
 {
@@ -78,8 +81,9 @@ printf '%s\n' "${SYEDGE_PREFIX:-/opt/$B}" > "$A/PREFIX"
   echo "  OpenResty lua module ($LUA_MODULE_TAG)                BSD-2-Clause"
   echo "  lua-resty-core ($RESTY_CORE_TAG)                      BSD-2-Clause"
   echo "  lua-resty-lrucache ($LRUCACHE_TAG)                    BSD-2-Clause"
+  echo "  lua-resty-rsa ($RESTY_RSA_TAG)                         MIT License"
   echo
-  for f in "$LUAJIT_SRC/COPYRIGHT" "$NDK_SRC/LICENSE"; do [[ -f "$f" ]] && { echo "---- $(basename "$(dirname "$f")")/$(basename "$f")"; cat "$f"; echo; }; done
+  for f in "$LUAJIT_SRC/COPYRIGHT" "$NDK_SRC/LICENSE" "$RESTY_RSA_SRC/LICENSE"; do [[ -f "$f" ]] && { echo "---- $(basename "$(dirname "$f")")/$(basename "$f")"; cat "$f"; echo; }; done
 } > "$A/NOTICE"
 install -m 0755 "$HERE/lua/install.sh" "$WORK/pkg/install.sh"
 install -m 0755 "$HERE/lua/uninstall.sh" "$WORK/pkg/uninstall.sh"

@@ -65,10 +65,16 @@ check "基础包 -V 带 auth_request" "$($SY -V 2>&1)" "http_auth_request_module
 [[ $BASE == gmssl ]] && check "国密基础包 -V 带 enable-ntls" "$($SY -V 2>&1)" "enable-ntls"
 nm -D --defined-only "$SY" | awk '{print $NF}' | sort -u > "$W/exports"   # 写文件再查：管道里 grep -q 提前退出会在 pipefail 下误报
 missing=""
-for s in EVP_sha256 HMAC CRYPTO_memcmp BIO_new_mem_buf BIO_free PEM_read_bio_PUBKEY EVP_PKEY_free EVP_MD_CTX_new EVP_MD_CTX_free EVP_DigestVerifyInit EVP_DigestVerify ERR_clear_error pcre2_dfa_match_8; do
+for s in EVP_sha256 HMAC CRYPTO_memcmp BIO_new_mem_buf BIO_free PEM_read_bio_PUBKEY EVP_PKEY_free EVP_MD_CTX_new EVP_MD_CTX_free EVP_DigestVerifyInit EVP_DigestVerify ERR_clear_error \
+  BIO_new BIO_s_mem BIO_puts BIO_read BIO_vfree BIO_ctrl BN_new BN_free BN_set_word \
+  ERR_get_error_line_data ERR_reason_error_string EVP_get_digestbyname EVP_DigestInit EVP_DigestUpdate EVP_SignFinal EVP_VerifyFinal \
+  EVP_PKEY_new EVP_PKEY_CTX_new EVP_PKEY_CTX_free EVP_PKEY_CTX_ctrl EVP_PKEY_get_size EVP_PKEY_encrypt_init EVP_PKEY_encrypt \
+  EVP_PKEY_decrypt_init EVP_PKEY_decrypt EVP_PKEY_set1_RSA PEM_read_bio_RSAPrivateKey PEM_read_bio_RSAPublicKey \
+  PEM_read_bio_RSA_PUBKEY PEM_write_bio_PKCS8PrivateKey PEM_write_bio_RSAPrivateKey PEM_write_bio_RSAPublicKey \
+  PEM_write_bio_RSA_PUBKEY RSA_new RSA_free RSA_generate_key_ex pcre2_dfa_match_8; do
   grep -qx "$s" "$W/exports" || missing+=" $s"
 done
-[[ -z "$missing" ]] && ok "基础包导出 etos.jwt 需要的 OpenSSL 函数" || bad "基础包没有导出:$missing"
+[[ -z "$missing" ]] && ok "基础包导出 etos.jwt / resty.rsa 需要的 OpenSSL 函数" || bad "基础包没有导出:$missing"
 # 渲染器黄金用例（含规则积木、外部鉴权；国密版另跑国密双证书）过真实基础包的 syedge -t
 golden='TestRenderSyedgeSyntax$|TestRulesSyedgeSyntax$'
 gmenv0=(); [[ $BASE == gmssl ]] && { golden+='|TestRenderGMSyedgeSyntax$'; gmenv0=(SYEDGE_GM_BIN=$SY); }
@@ -179,8 +185,8 @@ check "content 脚本设置 Content-Type" "$hdr" "Content-Type: text/html"
 check "Lua 响应的 Server 头仍是品牌名" "$hdr" "Server: SyEdge"
 check "access 脚本拒绝请求" "$(req -H "$H" 'http://127.0.0.1/lua?deny=1')" "403"
 check "header_filter 脚本作用于跳转路由" "$(curl -s -D - -o /dev/null -H "$H" -H 'X-Forwarded-For: 10.250.0.2' http://127.0.0.1/lua-moved)" "X-Lua: 1"
-check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / string.dump / debug / package / jit / rawset / setfenv 不可用，ffi 与 string.buffer 被拒绝，不能写全局变量、标准库与 ngx 子表，可用 etos.json" \
-  "$(req -H "$H" http://127.0.0.1/lua-sb)$(body)" "200nil nil nil nil nil nil nil nil nil nil nil nil false false false false false false 7"
+check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / string.dump / debug / package / jit / rawset / setfenv 不可用，ffi / resty.rsa / string.buffer 被拒绝，不能写全局变量、标准库与 ngx 子表，可用 etos.json" \
+  "$(req -H "$H" http://127.0.0.1/lua-sb)$(body)" "200nil nil nil nil nil nil nil nil nil nil nil nil false false false false false false false 7"
 check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500"
 sleep 0.3
 check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 "$LOG_DIR/error.log")" "lua-script-boom"

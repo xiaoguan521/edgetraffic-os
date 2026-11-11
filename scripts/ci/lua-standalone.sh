@@ -91,6 +91,8 @@ echo "master pid $MASTER"
 
 # 断言 9 的基准：开始时保存主配置
 sudo cp -- "$MAIN" "$W/main.orig" || die "无法保存主配置副本"
+openssl genrsa -traditional 2048 > "$W/rsa.key" 2>/dev/null || die "无法生成 RSA 私钥"
+openssl rsa -in "$W/rsa.key" -pubout -out "$W/rsa.pub" 2>/dev/null || die "无法生成 RSA 公钥"
 cat > "$W/site-lua.conf" <<'EOF'
 server {
     listen       127.0.0.1:18090;
@@ -101,9 +103,75 @@ server {
     location = /hello {
         content_by_lua_block { ngx.say(require("hello").text) }
     }
+    location = /rsa {
+        content_by_lua_block {
+            local ok, err = require("rsa-check").roundtrip()
+            if not ok then
+                ngx.status = 500
+                ngx.say(err or "resty-rsa-check-failed")
+                return
+            end
+            ngx.say("resty-rsa-ok")
+        }
+    }
 }
 EOF
 printf 'return { text = "standalone-lualib-ok" }\n' > "$W/hello.lua"
+cat > "$W/rsa-check.lua" <<EOF
+local rsa = require "resty.rsa"
+
+local function read(path)
+    local f, err = io.open(path, "rb")
+    if not f then return nil, err end
+    local value = f:read("*a")
+    f:close()
+    return value
+end
+
+local public_key, err = read("$W/rsa.pub")
+if not public_key then error("read public key: " .. tostring(err)) end
+local private_key, err = read("$W/rsa.key")
+if not private_key then error("read private key: " .. tostring(err)) end
+
+local M = {}
+
+function M.roundtrip()
+    local message = "resty.mysql RSA password"
+    -- resty.mysql uses KEY_TYPE.PKCS8 for a server PKIX public key for compatibility.
+    local pub, err = rsa:new({
+        public_key = public_key,
+        key_type = rsa.KEY_TYPE.PKCS8,
+        padding = rsa.PADDING.RSA_PKCS1_OAEP_PADDING,
+        algorithm = "sha1",
+    })
+    if not pub then return nil, "new public key: " .. tostring(err) end
+
+    local encrypted, err = pub:encrypt(message)
+    if not encrypted then return nil, "encrypt: " .. tostring(err) end
+
+    local priv, err = rsa:new({ private_key = private_key })
+    if not priv then return nil, "new private key: " .. tostring(err) end
+    local decrypted, err = priv:decrypt(encrypted)
+    if decrypted ~= message then return nil, "decrypt: " .. tostring(err or "round-trip mismatch") end
+
+    local signer, err = rsa:new({ private_key = private_key, algorithm = "SHA256" })
+    if not signer then return nil, "new signer: " .. tostring(err) end
+    local signature, err = signer:sign(message)
+    if not signature then return nil, "sign: " .. tostring(err) end
+
+    local verifier, err = rsa:new({
+        public_key = public_key,
+        key_type = rsa.KEY_TYPE.PKIX,
+        algorithm = "SHA256",
+    })
+    if not verifier then return nil, "new verifier: " .. tostring(err) end
+    local verified, err = verifier:verify(message, signature)
+    if not verified then return nil, "verify: " .. tostring(err) end
+    return true
+end
+
+return M
+EOF
 
 # 1. 不带新参数安装附加包后，站点中的 Lua 指令应当失败
 if sudo bash "$W/lua/install.sh" > "$W/i1.log" 2>&1; then
@@ -146,6 +214,11 @@ if sudo install -m 0644 "$W/hello.lua" "$PREFIX/lualib/hello.lua" && body_is /he
   ok "4 <根目录>/lualib/hello.lua 可被站点 require"
 else
   bad "4 <根目录>/lualib 中的模块未被加载"
+fi
+if sudo install -m 0644 "$W/rsa-check.lua" "$PREFIX/lualib/rsa-check.lua" && body_is /rsa "resty-rsa-ok"; then
+  ok "4b 独立模式可按 resty.mysql 用法完成 RSA 公钥加密/私钥解密与签名/验签"
+else
+  bad "4b 独立模式 resty.rsa 公钥加密/私钥解密或签名/验签失败"
 fi
 
 # 5. 验收用的四层阶段片段通过校验（只校验，不请求）
