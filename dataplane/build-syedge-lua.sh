@@ -8,7 +8,7 @@
 #   附加库 extlib（安装到 <M>/lua/extlib/，只有独立模式与原生兼容配置包使用）：
 #     第一阶段：纯 Lua 库（只复制 lib/ 下的 .lua）；
 #     第二阶段：编译库 cjson.so、redis/parser.so、rds/parser.so、librestysignal.so（直接用 cc 编译，只依赖 LuaJIT 头文件），
-#     以及 resty.signal / resty.shell / resty.upstream.healthcheck 的 Lua 文件。编译库与 TLS 库无关，两个变体共用。
+#     以及 resty.signal / resty.upstream.healthcheck 的 Lua 文件。编译库与 TLS 库无关，两个变体共用。
 # 产物：
 #   <输出目录>/syedge-lua-<包版本>-<架构>.tar.gz   附加包（install.sh / uninstall.sh + addon/）
 #   <输出目录>/base/                              同一次构建产出的标准版与国密版基础包（CI 验收用）
@@ -155,9 +155,8 @@ ext_add lua-resty-signal "$RESTY_SIGNAL_TAG" "$RESTY_SIGNAL_SRC"
 cc -O2 -fPIC -shared -o "$A/extlib/librestysignal.so" "$RESTY_SIGNAL_SRC/resty_signal.c" > "$WORK/signal.log" 2>&1 \
   || { tail -20 "$WORK/signal.log" >&2; exit 5; }
 
-# resty.shell（ngx.pipe 与 resty.signal）与 resty.upstream.healthcheck（ngx.upstream）：纯 Lua
-RESTY_SHELL_SRC=$(pin lua-resty-shell "$RESTY_SHELL_GIT" "$RESTY_SHELL_TAG" "$RESTY_SHELL_COMMIT")
-ext_add lua-resty-shell "$RESTY_SHELL_TAG" "$RESTY_SHELL_SRC"
+# resty.upstream.healthcheck（依赖 ngx.upstream）：纯 Lua。
+# lua-resty-shell 不随附：它依赖的 ngx.pipe 只在核心带有 OpenResty 的 socket CLOEXEC 补丁时才编译进 lua 模块，本核心不打该补丁。
 RESTY_UPSTREAM_HC_SRC=$(pin lua-resty-upstream-healthcheck "$RESTY_UPSTREAM_HC_GIT" "$RESTY_UPSTREAM_HC_TAG" "$RESTY_UPSTREAM_HC_COMMIT")
 ext_add lua-resty-upstream-healthcheck "$RESTY_UPSTREAM_HC_TAG" "$RESTY_UPSTREAM_HC_SRC"
 

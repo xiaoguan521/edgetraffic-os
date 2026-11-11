@@ -208,12 +208,10 @@ server {
     location = /ext-shell {
         content_by_lua_block {
             local ok, err = pcall(require, "resty.shell")
-            if not ok and string.find(tostring(err), "pipe API is not supported", 1, true) then
-                ngx.say("ext-shell-expected-unsupported")
-            elseif ok then
-                ngx.say("ext-shell-unexpectedly-loaded")
+            if not ok and string.find(tostring(err), "module 'resty.shell' not found", 1, true) then
+                ngx.say("ext-shell-not-bundled")
             else
-                ngx.say("ext-shell-bad " .. tostring(err))
+                ngx.say("ext-shell-bad " .. tostring(ok) .. " " .. tostring(err))
             end
         }
     }
@@ -311,7 +309,7 @@ extok 19 "resty.limit.req 可创建对象并计数" /ext-limit "ext-limit-ok"
 extok 20 "tablepool fetch / release" /ext-tablepool "ext-tablepool-ok"
 
 # 21-28. D1 第二阶段的编译库与上游模块（只在独立模式可用）：00 文件的 lua_package_cpath 指向 extlib，
-# 主配置第三行加载 lua-upstream 模块，C 库、resty.signal、resty.shell 与 resty.upstream.healthcheck 在真实数据面上可用
+# 主配置第三行加载 lua-upstream 模块，C 库、resty.signal 与 resty.upstream.healthcheck 在真实数据面上可用；resty.shell 不随附
 line21=$(sudo grep '^lua_package_cpath' "$NEWCONF")
 want21="lua_package_cpath  \"$PREFIX/modules/lua/extlib/?.so\";"
 if [[ "$line21" == "$want21" ]]; then ok "21 00 文件的 lua_package_cpath 为 extlib/?.so"; else bad "21 lua_package_cpath 不是预期值：$line21"; fi
@@ -319,7 +317,7 @@ extok 22 "cjson.encode / decode 往返，cjson.safe 对坏输入返回 nil 与�
 extok 23 "redis.parser 的 build_query 与 parse_reply" /ext-redis "ext-redis-ok"
 extok 24 "rds.parser 可 require" /ext-rds "ext-rds-ok"
 extok 25 "resty.signal 的 signum(HUP) 与对本 worker 的 kill(pid, 0)" /ext-signal "ext-signal-ok"
-extok 26 "resty.shell 当前不可用：ngx.pipe 需要核心的 socket CLOEXEC 补丁，syedge 核心没有，require 报出该平台错误" /ext-shell "ext-shell-expected-unsupported"
+extok 26 "resty.shell 不随附（依赖的 ngx.pipe 在本核心上不可用），require 报找不到模块" /ext-shell "ext-shell-not-bundled"
 if sudo sed -n 3p "$MAIN" | grep -Eq '^load_module  .+/modules/lua/ngx_http_lua_upstream_module\.so;$'; then
   extok 27 "lua-upstream 模块已加载，ngx.upstream 列出站点定义的 upstream" /ext-upstream "ext-upstream-ok"
 else

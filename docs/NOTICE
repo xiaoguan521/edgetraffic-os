@@ -55,7 +55,6 @@ Lua 附加包第二阶段随附的第三方组件（未修改；版本与提交�
   lua-redis-parser         v0.13     Copyright (C) 2009-2017, by Yichun "agentzh" Zhang (章亦春), OpenResty Inc.   BSD-2-Clause（编译库 extlib/redis/parser.so）
   lua-rds-parser           v0.06     Copyright (C) 2011, Zhang "agentzh" Yichun (章亦春).   BSD-2-Clause（编译库 extlib/rds/parser.so）
   lua-resty-signal         v0.05     Copyright (C) 2018-2019, OpenResty Inc.   BSD-2-Clause（Lua 文件与编译库 extlib/librestysignal.so）
-  lua-resty-shell          v0.03     Copyright (C) 2018-2019, OpenResty Inc.   BSD-2-Clause
   lua-resty-upstream-healthcheck v0.10  Copyright (C) 2014-2017, by Yichun "agentzh" Zhang, OpenResty Inc.   BSD-2-Clause
   lua-upstream-nginx-module v0.08    Copyright (C) 2014-2017, by Yichun "agentzh" Zhang, OpenResty Inc.   BSD-2-Clause（动态模块 ngx_http_lua_upstream_module.so，按与 lua 模块相同的 configure 参数编译）
 

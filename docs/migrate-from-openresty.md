@@ -53,7 +53,7 @@ Lua 附加包 `syedge-lua` 与 `syedge` 版本绑定，标准版与国密版各�
 - 审核过的规则库 `etos.init`、`etos.json`、`etos.jwt`；
 - 第一阶段随附的 10 个纯 Lua 库（安装在 `R/modules/lua/extlib/`）：`resty.redis`、`resty.mysql`、`resty.memcached`、`resty.dns.resolver`、`resty.string` 及 `resty.md5` / `resty.sha*` / `resty.aes` / `resty.random`、`resty.upload`、`resty.websocket.*`、`resty.lock`、`resty.limit.*`、`tablepool`；
 - 第二阶段随附：`cjson`（含 `cjson.safe`）、`redis.parser`、`rds.parser`、`resty.signal`、`resty.upstream.healthcheck`，以及动态模块 `ngx_http_lua_upstream_module.so`（提供 `ngx.upstream`）。编译库安装在 `R/modules/lua/extlib/`。
-  `resty.shell` 文件随附，但当前不可用（需要核心的 socket CLOEXEC 补丁，见 [docs/lua.md](lua.md)）。
+  `resty.shell` 与 `ngx.pipe` 不可用，也没有随附（需要核心的 socket CLOEXEC 补丁，见 [docs/lua.md](lua.md)）。
 清单、版本与许可见 [docs/lua.md](lua.md) 的“随附的 Lua 库”一节。这些库只对独立模式与原生兼容配置包可用，控制台托管的环境不可用。
 
 **附加包中没有（现状）：**

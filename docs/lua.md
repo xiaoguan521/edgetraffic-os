@@ -169,7 +169,6 @@ sudo bash uninstall.sh --instance blue
 | lua-redis-parser | v0.13 | `redis.parser`（编译库 `extlib/redis/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
 | lua-rds-parser | v0.06 | `rds.parser`（编译库 `extlib/rds/parser.so`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
 | lua-resty-signal | v0.05 | `resty.signal`（编译库 `extlib/librestysignal.so`，由 resty.signal 按 `package.cpath` 查找） | BSD-2-Clause | 独立模式、原生兼容配置包 |
-| lua-resty-shell | v0.03 | `resty.shell`（依赖 `ngx.pipe`；**当前在 syedge 上不可用**，见下文） | BSD-2-Clause | 随附文件，但 require 会报错；启用后执行命令的权限见下文 |
 | lua-resty-upstream-healthcheck | v0.10 | `resty.upstream.healthcheck`（依赖 `ngx.upstream`） | BSD-2-Clause | 独立模式、原生兼容配置包 |
 | lua-upstream-nginx-module | v0.08 | 动态模块 `modules/lua/ngx_http_lua_upstream_module.so`，提供 `ngx.upstream` | BSD-2-Clause | 同上：只在独立模式与原生兼容配置包中加载 |
 
@@ -192,14 +191,10 @@ sudo bash uninstall.sh --instance blue
 - `resty.rsa` 未随附：`caching_sha2_password` 的非 TLS 完整认证需要它，请使用 TLS 连接（`ssl`）。
 - ed25519 认证插件需要 `resty.openssl`，未随附。
 
-**resty.shell 与 ngx.pipe**
+**resty.shell 与 ngx.pipe 不可用**
 
-- **`resty.shell` 当前不可用。** 它通过 `ngx.pipe` 启动子进程，而 `ngx.pipe` 只在 nginx 核心带有 OpenResty 的 socket CLOEXEC 补丁（`HAVE_SOCKET_CLOEXEC_PATCH`）时可用。
-  syedge 核心只打改名补丁，不能为此改动核心结构（见 CLAUDE.md 数据面规则），因此 `require "resty.shell"` 会报 “pipe API is not supported”。
-  文件仍随附，便于日后核心补丁获批后启用；在此之前不要在站点中使用它。`scripts/ci/lua-standalone.sh` 第 26 项断言这一当前行为。
-  启用后它会以数据面用户（`syedge`）的权限运行子进程，只适用于独立模式与原生兼容配置包。
-- `ngx.pipe` 的 lua 模块实现在 `ngx_http_lua_module` 配置阶段即屏蔽 SIGCHLD 并用 `waitpid(-1)` 回收子进程，即使 `resty.shell` 不可用，这段代码仍在数据面中运行。
-  本阶段没有验证它对 worker 异常退出后重新拉起的影响；启用独立模式前需要在目标环境确认。
+`resty.shell` 没有随附，`ngx.pipe` 也不可用：Lua 模块只在核心带有 OpenResty 的 socket CLOEXEC 补丁时才编译这部分代码，而 syedge 核心只打改名补丁（见 CLAUDE.md 数据面规则）。
+现网脚本用到 `resty.shell` 或 `ngx.pipe` 执行外部命令的，需要改为其他方式（例如由外部程序定时生成文件，Lua 只读取）。`scripts/ci/lua-standalone.sh` 第 26 项断言 `require "resty.shell"` 报找不到模块。
 
 **本阶段不随附**
 

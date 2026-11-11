@@ -19,7 +19,6 @@ LRUCACHE_COMMIT=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b
 # 附加库 extlib（D1 第一阶段，纯 Lua，全部来自 github.com/openresty/，许可均为 BSD-2-Clause，README 中的 “licensed under the BSD license” 声明在构建时校验）。
 # 标签为各仓库截至 2026-11-11 的最新正式发布标签（不取 rc）；提交哈希为该标签指向的提交（轻量标签，ls-remote 与克隆后 rev-parse HEAD 一致）。
 # 第二阶段（D1）：编译库与 lua-upstream 动态模块。许可在克隆后校验：cjson 为 MIT（LICENSE），其余 README 声明 BSD。
-# lua-resty-shell 的标签是注释标签（^{}），下面的提交哈希是标签指向的提交，与克隆后 rev-parse HEAD 一致。
 # 编译库（cjson、redis/rds parser、resty.signal 的 librestysignal.so）只依赖 LuaJIT 头文件，直接用 cc 编译，不链接 libluajit。
 # lua-upstream-nginx-module 与 lua 模块同一次 configure 编译为第三个动态模块（同一套 configure 参数）。
 CJSON_GIT=https://github.com/openresty/lua-cjson.git
@@ -34,9 +33,6 @@ RDS_PARSER_COMMIT=621e6b978983b4779435a56480ea636eae93d65d
 RESTY_SIGNAL_GIT=https://github.com/openresty/lua-resty-signal.git
 RESTY_SIGNAL_TAG=v0.05
 RESTY_SIGNAL_COMMIT=42319006723c104e47d6922db17459c95e4db224
-RESTY_SHELL_GIT=https://github.com/openresty/lua-resty-shell.git
-RESTY_SHELL_TAG=v0.03
-RESTY_SHELL_COMMIT=ea23b3d6d4a4b3c475a3e0b530469343694e775c
 RESTY_UPSTREAM_HC_GIT=https://github.com/openresty/lua-resty-upstream-healthcheck.git
 RESTY_UPSTREAM_HC_TAG=v0.10
 RESTY_UPSTREAM_HC_COMMIT=71b878c8d66e3c475d744314d83ed53512613ebc
