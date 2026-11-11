@@ -119,6 +119,12 @@ jobs:
       - uses: actions/checkout@v5
       - run: ./scripts/brand-check.sh
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./scripts/ci/docs-check.sh
+
   dataplane:
     runs-on: ubuntu-24.04
     steps:
