@@ -1,0 +1,31 @@
+name: skywalking-conf
+
+# 兼容配置接入 SkyWalking 的静态校验：初始化、库、location 链路块成对、同级别重复指令。
+# 不需要数据面二进制与 root，几秒即可完成；真实的 syedge -t 与 reload 仍在节点上做（见 demo/skywalking-legacy-example/LUA-PLACEMENT.md）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "demo/skywalking-legacy-example/**"
+      - "demo/skywalking-nginx-lua-0.5.0.zip"
+      - "scripts/ci/skywalking-conf-check.sh"
+      - ".github/workflows/skywalking-conf.yml"
+  pull_request:
+    paths:
+      - "demo/skywalking-legacy-example/**"
+      - "demo/skywalking-nginx-lua-0.5.0.zip"
+      - "scripts/ci/skywalking-conf-check.sh"
+      - ".github/workflows/skywalking-conf.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: SkyWalking integration config check
+        run: bash scripts/ci/skywalking-conf-check.sh
