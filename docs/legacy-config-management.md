@@ -50,6 +50,18 @@ sudo tar -tzf /root/syedge-config-backup.tar.gz
 6. master 以 root 运行的节点（兼容模式，或在服务单元之外以 root 启动的旧进程）默认拒绝兼容包：原生脚本不受沙箱约束，由 root master 加载等于获得节点的全部权限。优先让 master 改为非 root 运行（见安装维护手册 8.10）；确实无法调整时，提交人勾选“允许在 master 以 root 运行的节点上加载”。该声明冻结在包内、记入审计并显示在发布说明中，另一位管理员批准时应确认确有必要。Agent 在切换前按运行中 master 的实际用户判断，未声明时返回拒绝且不改动现网。
 7. 控制台加密保存兼容包，并审计提交、下载和审批；需安全备份控制台数据目录的 `secret.key`，否则无法解密历史包。版本回退需再次由两位管理员提交和审批，并按批准摘要验证节点本地文件。节点离线或未持有历史批准摘要时，授权过期后未必能重新获取历史版本，应先恢复授权并检查节点结果。
 
+### 提交时的 Lua 静态提示
+
+提交兼容包时，控制台会读取包内 `.conf` 与 `.lua` 的文本（不执行、不改写包内容），把已知的常见 Lua 配置错误追加到发布说明末尾，审批人在列表里即可看到；同样的位置写入审计的 `lua_warnings`（只含提示类型与文件行号，不含配置内容）。**提示不阻止提交**，识别靠文本匹配，会有漏报与误报，不能代替在测试节点上的 `syedge -t` 与 reload 验证。
+
+| 提示 | 触发条件 | 建议 |
+| --- | --- | --- |
+| `lua-versioned-path` | `lua_package_path` / `lua_package_cpath` 指向带版本号的附加包目录（`modules/lua-<版本>/`） | 改用稳定入口 `<前缀>/modules/lua/lualib/?.lua`，附加包升级时由 `install.sh` 原子切换，不用再改配置 |
+| `lua-package-path-missing` | 配置里有 `*_by_lua*` 指令，但整个包没有设置 `lua_package_path` | 补上 `lua_package_path`，否则 Lua 模块可能找不到 `resty.core` 等库，reload 时才报错 |
+| `lua-global-uninitialized` | 使用了 `skywalking_tracer`、`prometheus`、`metric_*` 等全局变量（形如 `名字:方法(`），但整个包里没有对它赋值 | 在 `init_by_lua` 或 `init_worker_by_lua` 中创建；`local 名字 =` 不会创建全局变量，仍会提示 |
+
+整行注释（`#`、`--`）不参与匹配。SkyWalking 与 Prometheus 的接入示例见 `demo/skywalking-legacy-example/`。
+
 防火墙刷新服务以独立的 `syedge-firewall` 用户运行，并通过附加的 `syedge` 组读取实例配置；这也使该服务可以读取数据面组可读的私钥和脚本，应保护此系统账户和服务配置。
 
 控制台不会把兼容包自动拆成可视化站点/路由，也不会自动维护兼容包中的证书；需要修改时上传新的完整包。现有独立运行配置不会被控制台自动读取或捕获；首次接管之前必须先完成手动备份、打包和核对。

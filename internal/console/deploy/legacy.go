@@ -295,6 +295,11 @@ func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks [
 	if err != nil {
 		return nil, err
 	}
+	// 静态提示只读包内文本，不改写、不阻止提交；写进发布说明，审批人在列表里就能看到。
+	luaWarnings := lintLegacyLua(files)
+	if n := legacyWarningNote(luaWarnings); n != "" {
+		note = strings.TrimSpace(note + " " + n)
+	}
 	if err := validateLegacyChecks(checks); err != nil {
 		return nil, err
 	}
@@ -377,7 +382,7 @@ func (d *Service) RequestLegacy(groupID uint, note string, data []byte, checks [
 		return nil, err
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "legacy.request", ObjectType: "release_request", ObjectID: fmt.Sprint(req.ID),
-		Detail: map[string]any{"group": groupID, "revision": req.RevisionID, "digest": req.Digest, "files": len(files), "allow_root_master": opts.AllowRootMaster}})
+		Detail: map[string]any{"group": groupID, "revision": req.RevisionID, "digest": req.Digest, "files": len(files), "allow_root_master": opts.AllowRootMaster, "lua_warnings": legacyWarningAudit(luaWarnings)}})
 	return req, nil
 }
 
