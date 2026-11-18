@@ -410,6 +410,13 @@ func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bo
 		}
 	}
 
+	// 先把密钥文件写成同目录下的临时文件：任何一个写不进去都在碰数据库之前失败，
+	// 数据库与数据目录保持原样，排除故障后可以直接重试（不会因为库里已有数据而被“不是空库”拒绝）。
+	staged, err := stageDataFiles(entries, dataDir)
+	if err != nil {
+		return nil, err
+	}
+
 	err = st.DB.Transaction(func(tx *gorm.DB) error {
 		if _, ok := entries["db/system_kvs.gob"]; ok {
 			if err := tx.Where("1 = 1").Delete(&store.SystemKV{}).Error; err != nil {
@@ -428,26 +435,91 @@ func Restore(r io.Reader, st *store.Store, dataDir string, pass []byte, force bo
 		return resetSequences(tx)
 	})
 	if err != nil {
+		staged.discard()
 		return nil, err
 	}
+	// 数据库已提交：把临时文件改名到位（同目录改名，原子且几乎不会失败）
+	if err := staged.commit(); err != nil {
+		return nil, fmt.Errorf("数据库已恢复，但密钥文件未能全部就位（%w）：已就位的文件保留，其余临时文件已清理；请修复数据目录权限，并从同一份备份里手工取出缺少的 files/ 下的文件放到数据目录", err)
+	}
+	return &sum, nil
+}
+
+// stagedFiles 是已写好、尚未改名到位的密钥文件。
+type stagedFiles struct{ items []stagedFile }
+type stagedFile struct{ tmp, dst string }
+
+func stageDataFiles(entries map[string][]byte, dataDir string) (*stagedFiles, error) {
+	sf := &stagedFiles{}
 	for _, f := range dataFiles {
 		b, ok := entries["files/"+f]
 		if !ok {
 			continue
 		}
-		p := filepath.Join(dataDir, filepath.FromSlash(f))
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		dst := filepath.Join(dataDir, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			sf.discard()
 			return nil, err
 		}
 		mode := os.FileMode(0o600)
 		if strings.HasSuffix(f, ".crt") {
 			mode = 0o644
 		}
-		if err := os.WriteFile(p, b, mode); err != nil {
+		tmp, err := writeTemp(filepath.Dir(dst), b, mode)
+		if err != nil {
+			sf.discard()
 			return nil, err
 		}
+		sf.items = append(sf.items, stagedFile{tmp: tmp, dst: dst})
 	}
-	return &sum, nil
+	return sf, nil
+}
+
+func writeTemp(dir string, b []byte, mode os.FileMode) (string, error) {
+	t, err := os.CreateTemp(dir, ".restore-*")
+	if err != nil {
+		return "", err
+	}
+	name := t.Name()
+	if _, err := t.Write(b); err != nil {
+		_ = t.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := t.Sync(); err != nil {
+		_ = t.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := t.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := os.Chmod(name, mode); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+// discard 删除全部临时文件，并清理为暂存而新建的空目录之外的残留（目录保留，不影响重试）。
+func (sf *stagedFiles) discard() {
+	for _, it := range sf.items {
+		_ = os.Remove(it.tmp)
+	}
+	sf.items = nil
+}
+
+func (sf *stagedFiles) commit() error {
+	for i, it := range sf.items {
+		if err := os.Rename(it.tmp, it.dst); err != nil {
+			for _, rest := range sf.items[i:] {
+				_ = os.Remove(rest.tmp)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // resetSequences：PostgreSQL 的自增序列不会因为显式写入主键而前进，恢复后需要对齐到最大值。

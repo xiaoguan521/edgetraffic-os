@@ -26,7 +26,9 @@ type approvedEnv struct {
 	a        *Agent
 	confRoot string
 	exec     func(*agentv1.ServerMessage) *agentv1.CommandResult
-	d1       string
+	d1, d2   string
+	wrapper  string
+	bundles  map[string][]byte
 	files1   map[string][]byte
 }
 
@@ -41,7 +43,8 @@ func newApprovedEnv(t *testing.T) *approvedEnv {
 	_ = os.WriteFile(pidFile, []byte("1"), 0o644)
 	_ = os.WriteFile(errLog, nil, 0o644)
 	wrapper := filepath.Join(dir, "wrapper.sh")
-	_ = os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	// 存在 wrapper.sh.failreload 文件时 reload 失败（模拟配置校验通过但进程没有接受）
+	_ = os.WriteFile(wrapper, []byte("#!/bin/sh\nif [ \"$1\" = reload ] && [ -e \"$0.failreload\" ]; then exit 1; fi\nexit 0\n"), 0o755)
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	licPub, licPriv, _ := ed25519.GenerateKey(rand.Reader)
 	gen := 100
@@ -54,7 +57,7 @@ func newApprovedEnv(t *testing.T) *approvedEnv {
 	bundles := map[string][]byte{}
 	cl := &bundleClient{bundles: bundles}
 	seq := 0
-	e := &approvedEnv{t: t, a: a, confRoot: confRoot}
+	e := &approvedEnv{t: t, a: a, confRoot: confRoot, wrapper: wrapper, bundles: bundles}
 	e.exec = func(m *agentv1.ServerMessage) *agentv1.CommandResult {
 		seq++
 		m.CmdId = time.Now().Format("150405.000000000") + "-" + string(rune('0'+seq))
@@ -82,7 +85,7 @@ func newApprovedEnv(t *testing.T) *approvedEnv {
 			t.Fatalf("apply %s: %+v", s.rev, r)
 		}
 	}
-	e.d1, e.files1 = d1, f1
+	e.d1, e.d2, e.files1 = d1, d2, f1
 	return e
 }
 
@@ -203,5 +206,31 @@ func TestRollbackWithoutApprovedFileStillWorks(t *testing.T) {
 	_ = os.Remove(e.a.path("approved.json"))
 	if r := e.rollback("r000001"); r.Status != agentv1.CommandResult_APPLIED {
 		t.Fatalf("legacy rollback failed: %+v", r)
+	}
+}
+
+// 漂移恢复在 reload 阶段失败时，磁盘上的当前目录必须与失败前一致（手工改动过的原目录换回来），
+// 不能留下“干净副本已就位、进程却没接受”的状态；保留备份目录也不应遗留。
+func TestRestoreFailureSwapsTheOriginalDirectoryBack(t *testing.T) {
+	e := newApprovedEnv(t)
+	site := filepath.Join(e.confRoot, "releases", "r000002", "conf.d", "site-shop.conf")
+	if err := os.WriteFile(site, []byte("# hand edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.wrapper+".failreload", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := e.exec(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{RevisionId: "r000002", ParentRevisionId: "r000002", BundleSha256: e.d2}}})
+	if r.Status == agentv1.CommandResult_APPLIED {
+		t.Fatalf("restore reported success although reload failed: %+v", r)
+	}
+	if got, _ := os.ReadFile(site); string(got) != "# hand edited\n" {
+		t.Fatalf("current directory was left as the clean copy after a failed restore: %q", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(e.confRoot, "releases", ".drift-*")); len(left) != 0 {
+		t.Fatalf("backup directory left behind: %v", left)
+	}
+	if left, _ := filepath.Glob(filepath.Join(e.confRoot, "releases", "*.restore")); len(left) != 0 {
+		t.Fatalf("staging directory left behind: %v", left)
 	}
 }

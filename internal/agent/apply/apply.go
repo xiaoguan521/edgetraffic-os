@@ -172,6 +172,29 @@ func (a *Applier) Restore(ctx context.Context, rev string, bundle []byte, digest
 	r := a.switchTo(ctx, rev, false, checks)
 	if r.Status == Applied {
 		r.Message = "restored to " + rev + "; manual changes kept in " + filepath.Base(backup)
+		return r
+	}
+	// 恢复没能生效（reload 失败、未确认或探活失败）：换回手工改动过的原目录。
+	// switchTo 的回滚只切换 current 链接，而恢复的版本号与当前相同，链接没有变化，
+	// 不换回的话磁盘上是干净副本、进程却没有接受它，状态与上报不一致。
+	_ = os.RemoveAll(final)
+	if err := os.Rename(backup, final); err != nil {
+		r.Message += "; 换回原目录失败（手工改动保留在 " + filepath.Base(backup) + "）：" + err.Error()
+		r.Status = Degraded
+		return r
+	}
+	r.Message += "; 已换回恢复前的目录"
+	// 进程可能已加载过干净副本（例如 reload 成功但探活失败）：再 reload 一次，让进程与磁盘一致
+	if b, err := a.snapshot(); err == nil {
+		if out, err := a.wrapper(ctx, "reload"); err != nil {
+			r.Status, r.Stderr = Degraded, r.Stderr+"\n"+out
+			r.Message += "；重新加载原目录失败"
+		} else if cerr := a.confirm(ctx, b); cerr != nil {
+			r.Status = Degraded
+			r.Message += "；重新加载原目录未确认：" + cerr.Error()
+		} else {
+			r.Status = RolledBack
+		}
 	}
 	return r
 }
