@@ -10,6 +10,7 @@
 #       产物 syedge-node-<ver>-linux-<goarch>.tar.gz
 #
 #   scripts/release/package.sh all <goarch> <节点包> <国密基础包> <Lua 附加包>
+#       （发布流水线设置 SYEDGE_DATAPLANE_VERSION=N.N.N[-N]，用来检查 Lua 附加包的目标版本与数据面一致）
 #       整合包：节点包 + extras/gmssl（国密版二进制）+ extras/lua（Lua 附加包），产物 syedge-all-<ver>-linux-<goarch>.tar.gz
 #
 #   scripts/release/package.sh node-user <goarch> <syedge tarball>
@@ -263,6 +264,14 @@ case "${1:-}" in
     [[ -n "$gm_bin" ]] || { echo "$gm_tgz 中没有 sbin/$B" >&2; exit 2; }
     tar -C "$l" -xzf "$lua_tgz"
     [[ -f "$l/addon/VERSION" && -f "$l/install.sh" && -f "$l/uninstall.sh" ]] || { echo "$lua_tgz 不是 Lua 附加包" >&2; exit 2; }
+    # 数据面版本（发布流水线给出）必须与 Lua 附加包的目标版本一致：规则与 lua-upgrade 相同（发行序号不参与比较）
+    if [[ -n "${SYEDGE_DATAPLANE_VERSION:-}" ]]; then
+      [[ "$SYEDGE_DATAPLANE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "数据面版本 $SYEDGE_DATAPLANE_VERSION 不是 N.N.N[-N]" >&2; exit 2; }
+      lua_base=$(sed -n 's/.*"syedge":"\([^"]*\)".*/\1/p' "$l/addon/VERSION")
+      [[ "$lua_base" == "${SYEDGE_DATAPLANE_VERSION%-*}" ]] || { echo "Lua 附加包的目标版本 $lua_base 与数据面版本 $SYEDGE_DATAPLANE_VERSION 不一致" >&2; exit 2; }
+    else
+      echo "warning: 未设置 SYEDGE_DATAPLANE_VERSION，跳过数据面与 Lua 附加包的版本一致性检查" >&2
+    fi
     mkdir -p "$d/extras/gmssl" "$d/extras/lua"
     install -m 0755 "$gm_bin" "$d/extras/gmssl/$B"
     cp -r "$l/install.sh" "$l/uninstall.sh" "$l/addon" "$d/extras/lua/"
@@ -273,6 +282,7 @@ case "${1:-}" in
     install -m 0644 "$ex/conf.d/10-skywalking.conf" "$sw/10-skywalking.conf"
     install -m 0644 "$ex/LUA-PLACEMENT.md" "$sw/LUA-PLACEMENT.md"
     install -m 0755 deploy/node/skywalking-render.sh "$sw/render.sh"
+    install -m 0644 deploy/node/skywalking-install.sh "$sw/install-lib.sh"
     prefix_template scripts/release/README-all.txt "$d/README.txt"
     rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"

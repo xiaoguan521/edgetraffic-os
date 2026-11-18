@@ -180,7 +180,7 @@ jobs:
             SYEDGE_UPGRADE_VERSION="$gm_ver" scripts/release/package.sh syedge-upgrade ${{ matrix.arch }} dist/syedge-gm/syedge-*-gmssl-*.tar.gz gmssl
             scripts/release/package.sh lua-upgrade dist/syedge-lua/syedge-lua-*.tar.gz "$gm_ver" "$(uname -m)"
             # 整合包：节点包 + 国密版 + Lua 附加包（首次安装与手动升级用；经控制台升级仍用上面的签名单包）
-            scripts/release/package.sh all ${{ matrix.arch }} "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz" \
+            SYEDGE_DATAPLANE_VERSION="$dp" scripts/release/package.sh all ${{ matrix.arch }} "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz" \
               dist/syedge-gm/syedge-*-gmssl-*.tar.gz dist/syedge-lua/syedge-lua-*.tar.gz
             SYEDGE_GM_UPGRADE_PACKAGE="$OUT/syedge-$gm_ver-gmssl-${{ matrix.arch }}.tar.gz" \
               go test -mod=vendor -count=1 -run TestReleaseGMUpgradePackage ./internal/wrapper/
