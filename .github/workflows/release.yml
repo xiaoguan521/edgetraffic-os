@@ -241,6 +241,20 @@ jobs:
           test -f "$SYEDGE_PREFIX/modules/lua/ngx_http_lua_module.so"
           systemctl is-active syedge.service
           sudo ./uninstall.sh --purge
+      # 独立模式 + SkyWalking 参数：库与初始化文件装好、配置校验通过、reload 后服务在运行。首次引入，暂不阻塞发布。
+      - name: smoke test all-in-one bundle (standalone Lua + SkyWalking flags, tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        run: |
+          trap 'echo "::warning title=all-bundle skywalking smoke::exit $? at: $BASH_COMMAND"' ERR
+          d=$(mktemp -d); tar -C "$d" -xzf "$OUT"/syedge-all-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          cd "$d"/syedge-all-*
+          sudo ./install.sh --skywalking-oap http://127.0.0.1:22800 --skywalking-service smoke --skywalking-instance smoke-1
+          test -f "$SYEDGE_PREFIX/lualib/skywalking/tracer.lua"
+          test -f "$SYEDGE_PREFIX/conf/current/conf.d/10-skywalking.conf"
+          sudo "$SYEDGE_PREFIX/sbin/syedge" -p "$SYEDGE_PREFIX" -c "$SYEDGE_PREFIX/conf/current/syedge.conf" -t
+          systemctl is-active syedge.service
+          sudo ./uninstall.sh --purge
       - name: release binaries have no CI key and run
         run: |
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')

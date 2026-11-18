@@ -14,6 +14,8 @@
 #   sudo ./install.sh --gmssl                           安装国密版（默认标准版）
 #   sudo ./install.sh --no-lua                          不安装 Lua 附加包（整合包默认安装）
 #   sudo ./install.sh --lua-standalone                  不接入控制台时，一步启用独立模式 Lua 并 reload
+#   sudo ./install.sh --skywalking-oap http://主机:端口 --skywalking-service 服务名 --skywalking-instance 实例名
+#                                                       同时装好 SkyWalking 链路上报的库与初始化文件（三个参数需一起给，自动按独立模式 Lua 处理）
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
@@ -22,7 +24,7 @@ umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LEGACY_ROOT=/opt/"syedge" # 不随编译前缀模板替换；旧版本使用 /var 下的运行目录
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
-USE_GM=0; NO_LUA=0; LUA_STANDALONE=0
+USE_GM=0; NO_LUA=0; LUA_STANDALONE=0; SW_OAP=""; SW_SVC=""; SW_INST=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
@@ -35,16 +37,33 @@ while [[ $# -gt 0 ]]; do
     --gmssl)          USE_GM=1; shift ;;
     --no-lua)         NO_LUA=1; shift ;;
     --lua-standalone) LUA_STANDALONE=1; shift ;;
-    -h|--help)        sed -n '2,17p' "$0"; exit 0 ;;
+    --skywalking-oap)      [[ $# -ge 2 ]] || { echo "--skywalking-oap 需要一个地址" >&2; exit 2; }; SW_OAP="$2"; shift 2 ;;
+    --skywalking-service)  [[ $# -ge 2 ]] || { echo "--skywalking-service 需要一个服务名" >&2; exit 2; }; SW_SVC="$2"; shift 2 ;;
+    --skywalking-instance) [[ $# -ge 2 ]] || { echo "--skywalking-instance 需要一个实例名" >&2; exit 2; }; SW_INST="$2"; shift 2 ;;
+    -h|--help)        sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
 die() { echo "install: $*" >&2; exit 1; }
+# 给了 --skywalking-*：链路上报只用于独立模式 Lua，自动按 --lua-standalone 处理（不必再写一遍）
+if [[ -n "$SW_OAP$SW_SVC$SW_INST" ]]; then
+  [[ "$NO_LUA" -eq 0 ]] || { echo "install: --skywalking-* 需要 Lua，不能与 --no-lua 同时使用" >&2; exit 2; }
+  LUA_STANDALONE=1
+fi
 # 整合包专属参数：在要求 root 之前校验，普通节点包（没有 extras）收到时明确拒绝，不能悄悄装成标准版
 [[ "$USE_GM" -eq 0 || -x "$HERE/extras/gmssl/syedge" ]] || die "--gmssl 需要 syedge-all 整合包（本包不含国密版）"
 [[ "$LUA_STANDALONE" -eq 0 || -f "$HERE/extras/lua/install.sh" ]] || die "--lua-standalone 需要 syedge-all 整合包（本包不含 Lua 附加包）"
 [[ "$NO_LUA" -eq 0 || "$LUA_STANDALONE" -eq 0 ]] || die "--no-lua 与 --lua-standalone 互斥"
-[[ "$LUA_STANDALONE" -eq 0 || -z "$SERVER$TOKEN$CAFP" ]] || die "独立模式 Lua（--lua-standalone）只用于不接入控制台的节点，不能与 --server 同时使用"
+[[ "$LUA_STANDALONE" -eq 0 || -z "$SERVER$TOKEN$CAFP" ]] || die "独立模式 Lua（--lua-standalone，含 --skywalking-*）只用于不接入控制台的节点，不能与 --server 同时使用"
+# SkyWalking 三个参数：必须一起给，只用于独立模式 Lua，值在这里就校验（生成文件前、要求 root 之前）
+SW_STAGE=""
+if [[ -n "$SW_OAP$SW_SVC$SW_INST" ]]; then
+  [[ -n "$SW_OAP" && -n "$SW_SVC" && -n "$SW_INST" ]] || die "--skywalking-oap、--skywalking-service、--skywalking-instance 需同时提供"
+  [[ -f "$HERE/extras/skywalking/render.sh" ]] || die "SkyWalking 参数需要 syedge-all 整合包（本包不含 SkyWalking 库）"
+  SW_STAGE=$(mktemp -d)
+  trap 'rm -rf "$SW_STAGE"' EXIT
+  bash "$HERE/extras/skywalking/render.sh" "$HERE/extras/skywalking/10-skywalking.conf" "$SW_OAP" "$SW_SVC" "$SW_INST" "$SW_STAGE/10-skywalking.conf" || exit 2
+fi
 [[ $EUID -eq 0 ]] || die "请以 root 运行"
 [[ -d "$HERE/rootfs/opt/syedge" ]] || die "请在解压后的发布包目录中运行"
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die "需要 systemd"
@@ -196,8 +215,33 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
   # 附加包自检失败会恢复原状；此时 syedge 已按基础配置运行，不受影响
   (cd "$HERE/extras/lua" && bash install.sh ${lua_args[@]+"${lua_args[@]}"}) || die "Lua 附加包安装失败（syedge 已按基础配置运行，不受影响）"
   if [[ "$LUA_STANDALONE" -eq 1 ]]; then
+    if [[ -n "$SW_OAP" ]]; then
+      echo "== 安装 SkyWalking 库与初始化文件"
+      SWSRC="$HERE/extras/skywalking/lualib"
+      sw_conflicts=()
+      while IFS= read -r -d '' f; do
+        rel=${f#"$SWSRC"/}
+        if [[ -e "$R/lualib/$rel" ]] && ! cmp -s "$f" "$R/lualib/$rel"; then sw_conflicts+=("$rel"); fi
+      done < <(find "$SWSRC" -type f -name '*.lua' -print0)
+      [[ ${#sw_conflicts[@]} -eq 0 ]] || die "$R/lualib 下已有内容不同的同名文件，为避免覆盖你自己的库而停止：${sw_conflicts[*]}"
+      sw_conf_dir="$(cd -P "$R/conf/current" && pwd -P)/conf.d"
+      [[ -d "$sw_conf_dir" ]] || die "找不到 $sw_conf_dir"
+      sw_dup=$(grep -lE 'init_worker_by_lua_block|lua_shared_dict[[:space:]]+tracing_buffer' "$sw_conf_dir"/*.conf 2>/dev/null | grep -v '/10-skywalking.conf$' || true)
+      [[ -z "$sw_dup" ]] || die "conf.d 里已有文件定义了 init_worker_by_lua_block 或 tracing_buffer，同级别重复会让配置校验失败：$sw_dup"
+      while IFS= read -r -d '' f; do
+        install -o root -g root -m 0644 -D "$f" "$R/lualib/${f#"$SWSRC"/}"
+      done < <(find "$SWSRC" -type f -name '*.lua' -print0)
+      install -o root -g root -m 0644 "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir/10-skywalking.conf"
+      if ! "$R/sbin/syedge" -p "$R" -c "$R/conf/current/syedge.conf" -t >/dev/null 2>"$SW_STAGE/t.err"; then
+        rm -f "$sw_conf_dir/10-skywalking.conf"
+        die "加入 SkyWalking 初始化后配置校验失败，已撤销该文件：$(tail -n 3 "$SW_STAGE/t.err" | tr '\n' ' ')"
+      fi
+    fi
     systemctl reload syedge.service || die "独立模式 Lua 已写入配置，但 reload 失败；请先看 $LOG_DIR/error.log"
     LUA_NOTE="Lua 附加包已安装，独立模式已启用并 reload；自己的 Lua 文件放在 $R/lualib/"
+    if [[ -n "$SW_OAP" ]]; then
+      LUA_NOTE="$LUA_NOTE；SkyWalking 已装好（OAP $SW_OAP，服务 $SW_SVC，实例 $SW_INST），需要链路的 location 里还要写 start / finish / prepareForReport，见 $HERE/extras/skywalking/LUA-PLACEMENT.md"
+    fi
   else
     LUA_NOTE="Lua 附加包已安装；没有写 lua_package_path 的配置也能 require $R/lualib 下的库"
   fi

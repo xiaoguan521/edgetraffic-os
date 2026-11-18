@@ -60,11 +60,41 @@ out=$(run --lua-standalone);         [[ "$out" == *"请以 root"* ]] && ok "--lu
 out=$(run --no-lua --lua-standalone); [[ "$out" == *"互斥"* ]] && ok "--no-lua 与 --lua-standalone 互斥" || bad "互斥参数没有被拒绝：$out"
 out=$(run --lua-standalone --server h:1 --token t --ca-fingerprint f); [[ "$out" == *"独立模式"* && "$out" != *"请以 root"* ]] && ok "--lua-standalone 不能与控制台注册同时使用" || bad "独立模式与注册没有互斥：$out"
 
+# SkyWalking：包内文件、渲染脚本与 install.sh 参数边界
+SW="$D/extras/skywalking"
+[[ -f "$SW/render.sh" && -f "$SW/10-skywalking.conf" && -f "$SW/lualib/skywalking/tracer.lua" && -f "$SW/lualib/prometheus.lua" && -f "$SW/LUA-PLACEMENT.md" ]] && ok "extras/skywalking 含渲染脚本、初始化模板、库与说明" || bad "extras/skywalking 不完整"
+[[ -z "$(find "$SW/lualib" -name '*_test.lua')" ]] && ok "SkyWalking 库不含测试文件" || bad "SkyWalking 库含测试文件"
+R="$W/render"; mkdir -p "$R"
+bash "$SW/render.sh" "$SW/10-skywalking.conf" http://oap.example.com:22800 gw-svc node_1 "$R/ok.conf" >/dev/null 2>&1   && grep -qF 'local OAP_ADDRESS   = "http://oap.example.com:22800"' "$R/ok.conf"   && grep -qF 'local SERVICE_NAME  = "gw-svc"' "$R/ok.conf"   && grep -qF 'local INSTANCE_NAME = "node_1"' "$R/ok.conf" \
+  && ok "render.sh 把三个值写入模板" || bad "render.sh 没有正确写入三个值"
+changed=$(diff "$SW/10-skywalking.conf" "$R/ok.conf" | grep -c '^>' || true)
+[[ "$changed" == 3 ]] && ok "render.sh 只改了三行，其余与模板完全一致" || bad "render.sh 改动了 $changed 行（应为 3）"
+for bad_oap in 'http://a;b:1' 'http://h/path' 'ftp://h:1' 'http://h:0' 'http://h:99999' 'http://192.0.2.10:22800' 'http://u@h:1' $'http://h:1\nx' 'http://h:1"--'; do
+  rm -f "$R/x.conf"
+  if bash "$SW/render.sh" "$SW/10-skywalking.conf" "$bad_oap" s i "$R/x.conf" >/dev/null 2>&1 || [[ -e "$R/x.conf" ]]; then bad "不合法的 OAP 地址被接受：$bad_oap"; else ok "拒绝不合法的 OAP 地址：${bad_oap//$'\n'/\\n}"; fi
+done
+for bad_name in 'a"b' 'a b' 'a;b' '$(id)' '`id`' $'a\nb' 'a\\b' 'a&b' '' "$(printf 'x%.0s' $(seq 65))" 'a")os.execute("x")--'; do
+  rm -f "$R/x.conf"
+  if bash "$SW/render.sh" "$SW/10-skywalking.conf" http://h:1 "$bad_name" i "$R/x.conf" >/dev/null 2>&1 || [[ -e "$R/x.conf" ]]; then bad "不合法的服务名被接受：$bad_name"; else ok "拒绝不合法的服务名：${bad_name//$'\n'/\\n}"; fi
+  rm -f "$R/x.conf"
+  if bash "$SW/render.sh" "$SW/10-skywalking.conf" http://h:1 s "$bad_name" "$R/x.conf" >/dev/null 2>&1 || [[ -e "$R/x.conf" ]]; then bad "不合法的实例名被接受：$bad_name"; else ok "拒绝不合法的实例名：${bad_name//$'\n'/\\n}"; fi
+done
+SWARGS=(--skywalking-oap http://h:22800 --skywalking-service s --skywalking-instance i)
+out=$(run --lua-standalone "${SWARGS[@]}");  [[ "$out" == *"请以 root"* ]] && ok "三个 SkyWalking 参数加 --lua-standalone 被接受" || bad "合法的 SkyWalking 参数被拒绝：$out"
+out=$(run "${SWARGS[@]}");                   [[ "$out" == *"请以 root"* ]] && ok "只给 SkyWalking 三个参数即可（自动按独立模式处理）" || bad "SkyWalking 参数没有被自动按独立模式处理：$out"
+out=$(run --no-lua "${SWARGS[@]}");          [[ "$out" == *"--no-lua"* && "$out" != *"请以 root"* ]] && ok "SkyWalking 参数与 --no-lua 冲突被拒绝" || bad "SkyWalking 与 --no-lua 没有冲突：$out"
+out=$(run "${SWARGS[@]}" --server h:1 --token t --ca-fingerprint f); [[ "$out" == *"独立模式"* && "$out" != *"请以 root"* ]] && ok "SkyWalking 参数不能与控制台注册同时使用" || bad "SkyWalking 与 --server 没有互斥：$out"
+out=$(run --lua-standalone --skywalking-oap http://h:1); [[ "$out" == *"同时提供"* && "$out" != *"请以 root"* ]] && ok "只给部分 SkyWalking 参数时被拒绝" || bad "部分参数没有被拒绝：$out"
+out=$(run --lua-standalone --skywalking-oap 'http://h:1;rm' --skywalking-service s --skywalking-instance i); [[ "$out" == *"OAP 地址"* && "$out" != *"请以 root"* ]] && ok "install.sh 在要求 root 之前就校验 OAP 地址" || bad "install.sh 没有校验 OAP 地址：$out"
+out=$(run --lua-standalone --skywalking-oap http://h:1 --skywalking-service 'a"b' --skywalking-instance i); [[ "$out" == *"服务名"* && "$out" != *"请以 root"* ]] && ok "install.sh 在要求 root 之前就校验服务名" || bad "install.sh 没有校验服务名：$out"
+out=$(run --lua-standalone --skywalking-oap http://h:1 --skywalking-service s --skywalking-instance 'a b'); [[ "$out" == *"实例名"* && "$out" != *"请以 root"* ]] && ok "install.sh 在要求 root 之前就校验实例名" || bad "install.sh 没有校验实例名：$out"
+
 # 普通节点包（没有 extras）收到整合包专属参数时要明确拒绝，不能悄悄装成标准版
 mkdir -p "$W/plain"; tar -C "$W/plain" -xzf "$W/node.tar.gz"
 P="$W/plain/syedge-node-$VER-linux-amd64"
 out=$(bash "$P/install.sh" --gmssl 2>&1 || true);  [[ "$out" == *"整合包"* && "$out" != *"请以 root"* ]] && ok "节点包不含国密版时 --gmssl 被拒绝并指向整合包" || bad "节点包没有拒绝 --gmssl：$out"
 out=$(bash "$P/install.sh" --lua-standalone 2>&1 || true); [[ "$out" == *"整合包"* && "$out" != *"请以 root"* ]] && ok "节点包不含 Lua 时 --lua-standalone 被拒绝" || bad "节点包没有拒绝 --lua-standalone：$out"
+out=$(bash "$P/install.sh" --lua-standalone "${SWARGS[@]}" 2>&1 || true); [[ "$out" == *"整合包"* && "$out" != *"请以 root"* ]] && ok "节点包不含 SkyWalking 库时相关参数被拒绝" || bad "节点包没有拒绝 SkyWalking 参数：$out"
 out=$(bash "$P/install.sh" --no-lua 2>&1 || true); [[ "$out" == *"请以 root"* ]] && ok "节点包上 --no-lua 无害" || bad "节点包上的 --no-lua 被拒绝：$out"
 
 # 打包本身的边界
