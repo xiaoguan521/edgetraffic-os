@@ -351,3 +351,74 @@ func TestRestoreIntoStartedButEmptyConsole(t *testing.T) {
 		t.Fatalf("command_key = %q", v)
 	}
 }
+
+func restoreFixture(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	src := storetest.Open(t)
+	seed(t, src, dir)
+	var buf bytes.Buffer
+	pass := []byte("pass phrase 123")
+	if _, err := Create(&buf, src, dir, pass, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), pass
+}
+
+// 密钥文件写不进去时，恢复必须整体失败且不动数据库：否则库已有数据、重试被“不是空库”拒绝，只能手工清库。
+func TestRestoreFileWriteFailureLeavesDatabaseUntouchedAndRetryable(t *testing.T) {
+	data, pass := restoreFixture(t)
+	dataDir := t.TempDir()
+	// pki 是普通文件：写 pki/ca.crt 时 MkdirAll 必然失败
+	if err := os.WriteFile(filepath.Join(dataDir, "pki"), []byte("blocker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := storetest.Open(t)
+	if _, err := Restore(bytes.NewReader(data), dst, dataDir, pass, false); err == nil {
+		t.Fatal("restore succeeded although a key file could not be written")
+	}
+	var users, revs int64
+	dst.DB.Model(&store.User{}).Count(&users)
+	dst.DB.Model(&store.Revision{}).Count(&revs)
+	if users != 0 || revs != 0 {
+		t.Fatalf("database was modified by a failed restore: users=%d revisions=%d", users, revs)
+	}
+	for _, f := range []string{"installation.json", "secret.key"} {
+		if _, err := os.Stat(filepath.Join(dataDir, f)); err == nil {
+			t.Fatalf("%s was left behind by a failed restore", f)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(dataDir, ".restore-*")); len(left) != 0 {
+		t.Fatalf("temporary files left behind: %v", left)
+	}
+	// 排除故障后直接重试即可成功
+	if err := os.Remove(filepath.Join(dataDir, "pki")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(bytes.NewReader(data), dst, dataDir, pass, false); err != nil {
+		t.Fatalf("retry after fixing the cause failed: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dataDir, "pki", "ca.key")); err != nil || len(b) == 0 {
+		t.Fatalf("ca.key not restored on retry: %v", err)
+	}
+}
+
+// 数据库导入失败时也不能留下任何密钥文件。
+func TestRestoreDatabaseFailureLeavesNoFiles(t *testing.T) {
+	data, pass := restoreFixture(t)
+	dataDir := t.TempDir()
+	dst := storetest.Open(t)
+	// 让导入失败：预先放入一个会与备份主键冲突的行（system_kvs 以外的表必须为空，这里改用关闭库连接来模拟写入失败）
+	sqlDB, err := dst.DB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sqlDB.Close()
+	if _, err := Restore(bytes.NewReader(data), dst, dataDir, pass, false); err == nil {
+		t.Fatal("restore succeeded on a closed database")
+	}
+	entries, _ := os.ReadDir(dataDir)
+	if len(entries) != 0 {
+		t.Fatalf("files left behind after a database failure: %v", entries)
+	}
+}

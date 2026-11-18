@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gen/field"
+	"gorm.io/gorm/clause"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/certs"
@@ -96,6 +99,9 @@ type credentials struct {
 	Password string `json:"password" binding:"required"`
 }
 
+// setupDoneKey 是首次初始化的唯一标记（system_kvs 的主键），见 setup。
+const setupDoneKey = "setup.done"
+
 func (s *Server) setup(c *gin.Context) {
 	if s.userCount() > 0 {
 		fail(c, http.StatusConflict, "ALREADY_INITIALIZED", "already initialized")
@@ -121,18 +127,51 @@ func (s *Server) setup(c *gin.Context) {
 	}
 	now := time.Now()
 	u := &store.User{Username: req.Username, PasswordHash: h, Role: store.RoleAdmin, Source: "local", PasswordChangedAt: &now}
-	q, ctx := s.q(), c.Request.Context()
-	if err := q.User.WithContext(ctx).Create(u); err != nil {
-		failErr(c, err)
+	// 初始化必须只成功一次：用户数检查与创建之间有间隙，并发请求会各自通过检查。
+	// 在同一个事务里先抢占唯一键 setup.done（跨进程、SQLite 与 PostgreSQL 都只有一个请求能插入成功），
+	// 抢到的再创建管理员与默认节点组。事务回滚时标记一并撤销，失败后可以重新初始化。
+	errAlready := errors.New("already initialized")
+	err = s.q().Transaction(func(tx *query.Query) error {
+		ctx := c.Request.Context()
+		// 用本次请求独有的值占位：DoNothing 不报冲突，读回来仍是自己的值才说明抢到了
+		nonce := make([]byte, 12)
+		if _, err := rand.Read(nonce); err != nil {
+			return err
+		}
+		mine := now.UTC().Format(time.RFC3339) + "-" + hex.EncodeToString(nonce)
+		kv := tx.SystemKV.WithContext(ctx)
+		if err := kv.Clauses(clause.OnConflict{DoNothing: true}).Create(&store.SystemKV{Key: setupDoneKey, Value: mine}); err != nil {
+			return err
+		}
+		got, err := kv.Where(tx.SystemKV.Key.Eq(setupDoneKey)).First()
+		if err != nil {
+			return err
+		}
+		if got.Value != mine {
+			return errAlready
+		}
+		if n, err := tx.User.WithContext(ctx).Count(); err != nil {
+			return err
+		} else if n > 0 {
+			return errAlready
+		}
+		if err := tx.User.WithContext(ctx).Create(u); err != nil {
+			return err
+		}
+		// 初始化默认节点组
+		if n, err := tx.NodeGroup.WithContext(ctx).Count(); err == nil && n == 0 {
+			return tx.NodeGroup.WithContext(ctx).Create(&store.NodeGroup{Name: "default", Description: "默认节点组",
+				AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", InstanceProfile: defaultGroupProfile()})
+		}
+		return nil
+	})
+	if errors.Is(err, errAlready) {
+		fail(c, http.StatusConflict, "ALREADY_INITIALIZED", "already initialized")
 		return
 	}
-	// 初始化默认节点组
-	if n, err := q.NodeGroup.WithContext(ctx).Count(); err == nil && n == 0 {
-		if err := q.NodeGroup.WithContext(ctx).Create(&store.NodeGroup{Name: "default", Description: "默认节点组",
-			AllowedCIDRs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", InstanceProfile: defaultGroupProfile()}); err != nil {
-			failErr(c, err)
-			return
-		}
+	if err != nil {
+		failErr(c, err)
+		return
 	}
 	c.Set("user", u.Username)
 	s.audit(c, "system.setup", "user", u.Username, nil)
