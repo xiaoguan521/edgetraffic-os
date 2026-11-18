@@ -112,6 +112,11 @@ func (e Env) writePrefixUnits() error {
 		if !ok {
 			continue
 		}
+		if strings.HasPrefix(string(data), overrideHeader()) {
+			// 来源本身是兼容模式单元（升级到本版本之前进入兼容模式的 tar 节点，没有原始副本）：不能把 User=root 带进普通模式
+			e.say("警告：%s 是兼容模式单元且没有原始副本，不生成自定义根目录单元；请重新执行发布包中的 install.sh", src)
+			continue
+		}
 		dst := e.path("/etc/systemd/system/" + unit)
 		if err := writeFile(dst, []byte(prefixUnit(string(data), root, e.homeSandbox())), 0o644); err != nil {
 			return err
