@@ -30,6 +30,8 @@ type User struct {
 	PasswordHistory    string     `json:"-"` // 最近几次口令哈希（JSON）
 	FailedLogins       int        `json:"failed_logins"`
 	LockedUntil        *time.Time `json:"locked_until"`
+	// 会话版本：会话令牌携带签发时的值，与此处不一致即失效。退出、改口令、重置口令时递增。
+	TokenVersion int `gorm:"not null;default:0" json:"-"`
 }
 
 type NodeGroup struct {

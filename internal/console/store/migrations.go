@@ -33,6 +33,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202610310002_rules_lua", Migrate: migrateRulesLua},
 		{ID: "202611050001_instance_profile", Migrate: migrateInstanceProfile},
 		{ID: "202611050002_running_version", Migrate: migrateRunningVersion},
+		{ID: "202611180001_token_version", Migrate: migrateTokenVersion},
 	}
 }
 
@@ -581,4 +582,13 @@ func migrateRunningVersion(tx *gorm.DB) error {
 		RunningVersion string `gorm:"size:32"`
 	}
 	return tx.AutoMigrate(&Node{})
+}
+
+// ---- 202611180001_token_version：用户会话版本，退出、改口令、重置口令时递增，使已签发的会话立即失效 ----
+
+func migrateTokenVersion(tx *gorm.DB) error {
+	type User struct {
+		TokenVersion int `gorm:"not null;default:0"`
+	}
+	return tx.AutoMigrate(&User{})
 }
