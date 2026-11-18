@@ -9,7 +9,11 @@ LIB=deploy/node/skywalking-install.sh
 fail=0
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; [[ -z "${GITHUB_ACTIONS:-}" ]] || echo "::error title=skywalking-install-check::$1"; fail=$((fail+1)); }
-[[ -f "$LIB" ]] || { bad "缺少 $LIB"; echo "---- $fail failed"; exit 1; }
+[[ -f "$LIB" ]] || { bad "缺少 $LIB"; # 12. SkyWalking 写入失败时，install.sh 要先停用刚启用的 Lua 独立模式，提示里的“重新执行”才真的可行
+dis=$(grep -n 'standalone-disable' deploy/node/install.sh | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1); apl=$(grep -n 'sw_apply "\$R"' deploy/node/install.sh | head -1 | cut -d: -f1)
+[[ -n "$dis" && -n "$apl" && "$dis" -gt "$apl" ]] && ok "sw_apply 失败后 install.sh 会停用 Lua 独立模式再退出" || bad "install.sh 没有在 sw_apply 失败后停用 Lua 独立模式（disable=$dis apply=$apl）"
+
+echo "---- $fail failed"; exit 1; }
 # shellcheck source=/dev/null
 source "$LIB"
 
@@ -60,6 +64,24 @@ if sw_apply "$R" "$SWSRC" "$STAGE/10-skywalking.conf" "$CONFD" "$STAGE/t.err" 2>
 # 7. sw_apply 自己也要拒绝冲突（防止预检之后出现新冲突）
 fresh 7; printf 'user lib\n' > "$R/lualib/prometheus.lua"; before=$(snapshot)
 sw_apply "$R" "$SWSRC" "$STAGE/10-skywalking.conf" "$CONFD" "$STAGE/t.err" 2>/dev/null && bad "sw_apply 没有拒绝冲突" || { [[ "$(snapshot)" == "$before" ]] && ok "sw_apply 遇到冲突时拒绝且不写文件" || bad "sw_apply 冲突时改动了磁盘"; }
+
+# 9. 全新节点：conf.d 还不存在（由随后的 Lua 安装步骤创建），预检不能因此失败
+fresh 9; rm -rf "$CONFD"; before=$(snapshot)
+if sw_precheck "$R" "$SWSRC" "$CONFD" 2>"$W/e9"; then [[ "$(snapshot)" == "$before" ]] && ok "conf.d 尚不存在时预检通过且不写文件" || bad "预检改动了磁盘"; else bad "conf.d 尚不存在时预检失败：$(cat "$W/e9")"; fi
+# 但真正写入时 conf.d 必须存在
+if sw_apply "$R" "$SWSRC" "$STAGE/10-skywalking.conf" "$CONFD" "$STAGE/t.err" 2>/dev/null; then bad "conf.d 不存在时 sw_apply 不应成功"; else ok "写入时 conf.d 不存在则拒绝"; fi
+
+# 10/11. 写入失败（install 失败）必须返回非 0 并还原：sw_apply 在 ||、if 里被调用时 set -e 不生效，必须显式检查每一步
+fresh 10; printf 'USER INIT\n' > "$CONFD/10-skywalking.conf"; before=$(snapshot)
+install() { case "$*" in *10-skywalking.conf) return 1 ;; esac; command install "$@"; }
+if sw_apply "$R" "$SWSRC" "$STAGE/10-skywalking.conf" "$CONFD" "$STAGE/t.err" 2>/dev/null; then bad "写入 10-skywalking.conf 失败却返回成功"; else
+  [[ "$(snapshot)" == "$before" ]] && ok "写入初始化文件失败：返回非 0，原文件与库文件还原" || { bad "写入初始化文件失败后磁盘与安装前不一致"; diff <(echo "$before") <(snapshot); }; fi
+unset -f install
+fresh 11; before=$(snapshot)
+install() { case "$*" in *prometheus.lua) return 1 ;; esac; command install "$@"; }
+if sw_apply "$R" "$SWSRC" "$STAGE/10-skywalking.conf" "$CONFD" "$STAGE/t.err" 2>/dev/null; then bad "写入库文件失败却返回成功"; else
+  [[ "$(snapshot)" == "$before" ]] && ok "写入库文件失败：返回非 0，已写入的文件被撤销" || { bad "写入库文件失败后仍有残留"; diff <(echo "$before") <(snapshot); }; fi
+unset -f install
 
 # 8. install.sh 的顺序：预检在 Lua 附加包安装之前
 pre=$(grep -n 'sw_precheck' deploy/node/install.sh | head -1 | cut -d: -f1); lua=$(grep -n 'echo "== 安装 Lua 附加包"' deploy/node/install.sh | head -1 | cut -d: -f1)
