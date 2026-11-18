@@ -179,7 +179,7 @@ func TestLiveLifecycle(t *testing.T) {
 	if r := a.Apply(ctx, rev(5), rev(1), tgz5, dg5, check); r.Status != Applied || get(t) != "v5" {
 		t.Fatalf("apply v5: %+v", r)
 	}
-	if r := a.Rollback(ctx, rev(1), check); r.Status != Applied || get(t) != "v1" {
+	if r := a.Rollback(ctx, rev(1), check, ""); r.Status != Applied || get(t) != "v1" {
 		t.Fatalf("rollback: %+v body=%q", r, get(t))
 	}
 	if d, err := a.TreeDigest(); err != nil || strings.HasPrefix(d, "drifted") {
@@ -194,7 +194,7 @@ func TestLiveLifecycle(t *testing.T) {
 
 	// 恢复测试前的版本
 	if start != "" {
-		_ = a.Rollback(ctx, start, nil)
+		_ = a.Rollback(ctx, start, nil, "")
 	}
 }
 

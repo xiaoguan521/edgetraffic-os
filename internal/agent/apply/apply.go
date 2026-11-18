@@ -199,8 +199,10 @@ func (a *Applier) replaceDir(rev string, bundle []byte, digest string) (string, 
 	return backup, nil
 }
 
-// Rollback 把 current 切回本机已有的某个版本。
-func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck) Result {
+// Rollback 把 current 切回本机已有的某个版本。切换前核验该历史目录：内容必须与自己的清单一致，
+// 并且 wantDigest 非空时清单摘要必须等于它（agent 本地记录的已批准摘要，防止目录与清单被一并改成自洽的内容）。
+// wantDigest 为空只发生在没有批准记录的旧节点上，此时只做自洽性核验。
+func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck, wantDigest string) Result {
 	if !revRe.MatchString(rev) {
 		return Result{Status: Rejected, Message: "invalid revision id"}
 	}
@@ -211,6 +213,17 @@ func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck) 
 	defer unlock()
 	if _, err := os.Stat(filepath.Join(a.releases(), rev, brand.ConfName())); err != nil {
 		return Result{Status: Rejected, Message: "revision not present on node"}
+	}
+	dir := filepath.Join(a.releases(), rev)
+	m, err := readManifest(dir)
+	if err == nil {
+		err = verifyDir(dir, m)
+	}
+	if err == nil && wantDigest != "" && m.Digest != wantDigest {
+		err = errors.New("manifest digest differs from the approved digest")
+	}
+	if err != nil {
+		return Result{Status: Rejected, Message: "revision on node failed integrity check: " + err.Error()}
 	}
 	if out, err := a.wrapper(ctx, "test", rev); err != nil {
 		return Result{Status: Invalid, Message: "configuration test failed", Stderr: out}

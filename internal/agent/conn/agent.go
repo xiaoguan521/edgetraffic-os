@@ -336,11 +336,7 @@ func (a *Agent) session(ctx context.Context, tlsCfg *tls.Config) error {
 		}
 	}
 	send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Hello{Hello: a.hello(sctx)}})
-	if cur := a.applier.Current(); cur != "" {
-		if d, err := a.applier.TreeDigest(); err == nil && !strings.HasPrefix(d, "drifted") {
-			a.recordApproved(cur, d)
-		}
-	}
+	a.recordCurrentApproved()
 	a.log.Info("connected to console", "server", a.C.Server)
 
 	go a.heartbeat(sctx, send)
@@ -523,12 +519,9 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		a.log.Info("apply result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
 	case *agentv1.ServerMessage_Rollback:
-		r := a.applier.Rollback(ctx, b.Rollback.ToRevisionId, nil)
-		if r.Status == apply.Applied {
-			if d := a.approvedDigest(b.Rollback.ToRevisionId); d != "" {
-				a.recordApproved(b.Rollback.ToRevisionId, d)
-			}
-		}
+		// 只用本地已批准的摘要核验历史目录：不依赖控制台与授权状态，授权过期时仍可回滚
+		want := a.approvedDigest(b.Rollback.ToRevisionId)
+		r := a.applier.Rollback(ctx, b.Rollback.ToRevisionId, nil, want)
 		a.log.Info("rollback result", "revision", b.Rollback.ToRevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
 	case *agentv1.ServerMessage_Probe:
@@ -607,6 +600,19 @@ func (a *Agent) sameAsApproved(rev string, bundle []byte) bool {
 		return false
 	}
 	return cm.Digest != "" && nm.Digest == cm.Digest
+}
+
+// recordCurrentApproved 在连接时为当前版本补记批准摘要：只在该版本还没有记录时才写（首次信任，
+// 兼容尚无 approved.json 的旧节点）。已有记录时绝不覆盖——本地目录与清单可以被一并改成自洽的内容，
+// 用它的摘要去覆盖，会让之后的漂移恢复与授权过期时的回退把被篡改的内容当成已批准。
+func (a *Agent) recordCurrentApproved() {
+	cur := a.applier.Current()
+	if cur == "" || a.approvedDigest(cur) != "" {
+		return
+	}
+	if d, err := a.applier.TreeDigest(); err == nil && !strings.HasPrefix(d, "drifted") {
+		a.recordApproved(cur, d)
+	}
 }
 
 // recordApproved 在 StateDir/approved.json 中记录已成功生效的 (revision -> manifest digest)。
