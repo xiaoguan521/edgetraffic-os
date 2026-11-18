@@ -983,9 +983,15 @@ sudo ./install.sh                    # 标准版 + Lua 附加包（默认）
 sudo ./install.sh --gmssl            # 国密版 + Lua 附加包
 sudo ./install.sh --no-lua           # 不装 Lua 附加包
 sudo ./install.sh --lua-standalone   # 不接入控制台：一步启用独立模式 Lua 并 reload
+sudo ./install.sh --lua-standalone \
+  --skywalking-oap http://<OAP 主机>:<端口> --skywalking-service <服务名> --skywalking-instance <实例名>
+                                     # 同时装好 SkyWalking 链路上报的库与初始化文件
 ```
 
 - 变体只在安装时选择；重复执行只更新文件，运行中的 master 不重启，新二进制在下次二进制热升级时生效。
 - 已装标准版的节点换国密版，用控制台的数据面热升级，不靠重装。
 - 整合包只用于首次安装与手动升级；经控制台升级仍使用厂商签名的单独升级包，整合包不进入验签流程。
+- SkyWalking 三个参数必须一起给，且只用于 `--lua-standalone`；值在要求 root 之前校验（OAP 只接受 `http(s)://主机:端口`，名字只含字母、数字、点、下划线、连字符），示例地址会被拒绝。
+  库放到 `<前缀>/lualib/`，`<前缀>/lualib` 下已有内容不同的同名文件、或 `conf.d/` 里已有文件定义了 `init_worker_by_lua_block` / `tracing_buffer` 时会停止，不覆盖也不制造重复定义。
+  配置校验不通过会撤销写入的初始化文件。需要链路的 location 里的 `start` / `finish` / `prepareForReport` 仍由你写在站点配置里，见包内 `extras/skywalking/LUA-PLACEMENT.md`。
 - 结构与参数边界由 `scripts/ci/all-package.sh` 覆盖；真实安装由 release 工作流在正式标签上冒烟（首次引入，暂不阻塞发布）。

@@ -266,6 +266,13 @@ case "${1:-}" in
     mkdir -p "$d/extras/gmssl" "$d/extras/lua"
     install -m 0755 "$gm_bin" "$d/extras/gmssl/$B"
     cp -r "$l/install.sh" "$l/uninstall.sh" "$l/addon" "$d/extras/lua/"
+    # SkyWalking 链路上报：库与初始化模板取自示例目录（由 scripts/ci/skywalking-conf-check.sh 校验），install.sh --skywalking-* 使用
+    sw="$d/extras/skywalking"; ex=demo/skywalking-legacy-example
+    mkdir -p "$sw"
+    cp -r "$ex/lualib" "$sw/lualib"
+    install -m 0644 "$ex/conf.d/10-skywalking.conf" "$sw/10-skywalking.conf"
+    install -m 0644 "$ex/LUA-PLACEMENT.md" "$sw/LUA-PLACEMENT.md"
+    install -m 0755 deploy/node/skywalking-render.sh "$sw/render.sh"
     prefix_template scripts/release/README-all.txt "$d/README.txt"
     rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
