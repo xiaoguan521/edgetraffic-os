@@ -1,10 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"gorm.io/gorm"
 )
 
 const sessionTestPassword = "Import@2026!test"
@@ -115,5 +121,78 @@ func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
 	}
 	if code := f.withCookie(t, renewed, http.MethodGet, "/auth/me", nil); code != http.StatusOK {
 		t.Fatalf("reissued session rejected: %d", code)
+	}
+}
+
+type blockSaveKey struct{}
+
+// 管理员更新用户时读取了旧行；期间该用户退出。更新写回不能把退出递增的会话版本覆盖掉。
+func TestConcurrentAdminUpdateDoesNotRevalidateLoggedOutSession(t *testing.T) {
+	f := newImportHTTP(t)
+	old := f.login(t, "viewer", sessionTestPassword)
+	uq := f.s.q().User
+	viewer, err := uq.WithContext(context.Background()).Where(uq.Username.Eq("viewer")).First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached, resume := make(chan struct{}), make(chan struct{})
+	// 管理员请求读到用户行之后暂停（此时不占用数据库连接），模拟“读到的是旧行”。
+	// 该请求对 users 表的查询依次是：鉴权中间件、updateUser 读取目标用户；在第二次查询后暂停。
+	var reads atomic.Int32
+	block := func(tx *gorm.DB) {
+		if tx.Statement.Context.Value(blockSaveKey{}) == true && tx.Statement.Table == "users" && reads.Add(1) == 2 {
+			close(reached)
+			<-resume
+		}
+	}
+	db := f.s.Store.DB
+	if err := db.Callback().Query().After("gorm:query").Register("test:pause_after_read", block); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Callback().Query().Remove("test:pause_after_read") }()
+
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/users/"+fmt.Sprint(viewer.ID), bytes.NewBufferString(`{"unlock":true}`))
+	r = r.WithContext(context.WithValue(r.Context(), blockSaveKey{}, true))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Requested-With", "etos")
+	r.AddCookie(f.cookies["admin"])
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { w := httptest.NewRecorder(); f.h.ServeHTTP(w, r); done <- w }()
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("update never reached the write")
+	}
+	if code := f.withCookie(t, old, http.MethodPost, "/auth/logout", nil); code != http.StatusNoContent {
+		t.Fatalf("logout: %d", code)
+	}
+	close(resume)
+	select {
+	case w := <-done:
+		if w.Code != http.StatusOK {
+			t.Fatalf("update: %d %s", w.Code, w.Body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("update did not finish")
+	}
+	if code := f.withCookie(t, old, http.MethodGet, "/auth/me", nil); code != http.StatusUnauthorized {
+		t.Fatalf("logged-out session accepted again after a concurrent admin update: %d", code)
+	}
+}
+
+// 管理员重置口令与退出并发：两次递增都必须生效，旧会话不得恢复。
+func TestAdminUpdateStillRevokesOnReset(t *testing.T) {
+	f := newImportHTTP(t)
+	old := f.login(t, "viewer", sessionTestPassword)
+	uq := f.s.q().User
+	v, _ := uq.WithContext(context.Background()).Where(uq.Username.Eq("viewer")).First()
+	w := f.json(t, "admin", http.MethodPut, "/users/"+fmt.Sprint(v.ID), map[string]string{"reset_password": "Reset@2026!newpw"})
+	requireStatus(t, w, http.StatusOK, "")
+	after, _ := uq.WithContext(context.Background()).Where(uq.ID.Eq(v.ID)).First()
+	if after.TokenVersion != v.TokenVersion+1 {
+		t.Fatalf("token version %d -> %d, want +1", v.TokenVersion, after.TokenVersion)
+	}
+	if code := f.withCookie(t, old, http.MethodGet, "/auth/me", nil); code != http.StatusUnauthorized {
+		t.Fatalf("session survived reset: %d", code)
 	}
 }

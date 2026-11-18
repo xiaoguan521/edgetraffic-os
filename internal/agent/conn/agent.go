@@ -520,7 +520,12 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		reply(status(r.Status), r.Message, r.Stderr)
 	case *agentv1.ServerMessage_Rollback:
 		// 只用本地已批准的摘要核验历史目录：不依赖控制台与授权状态，授权过期时仍可回滚
-		want := a.approvedDigest(b.Rollback.ToRevisionId)
+		want, aerr := a.approvedLookup(b.Rollback.ToRevisionId)
+		if aerr != nil {
+			a.log.Error("rollback refused: approved.json is unreadable", "err", aerr)
+			reply(agentv1.CommandResult_REJECTED, "approved.json is unreadable ("+aerr.Error()+"); refusing rollback until it is checked (delete it only to accept first-seen trust)", "")
+			return
+		}
 		r := a.applier.Rollback(ctx, b.Rollback.ToRevisionId, nil, want)
 		a.log.Info("rollback result", "revision", b.Rollback.ToRevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
@@ -615,16 +620,35 @@ func (a *Agent) recordCurrentApproved() {
 	}
 }
 
+// readApproved 读取 approved.json。文件不存在（旧版 agent 或尚无记录）返回空表；
+// 文件存在但读不出或不是合法 JSON 返回错误——两者不能混为一谈，否则损坏的记录会让回滚退回只核对自洽性的旧节点路径。
+func (a *Agent) readApproved() (map[string]string, error) {
+	b, err := os.ReadFile(a.path("approved.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // recordApproved 在 StateDir/approved.json 中记录已成功生效的 (revision -> manifest digest)。
+// 记录文件损坏时不改写它（从空表重写会丢掉全部历史摘要），只记日志，由运维检查后处理。
 func (a *Agent) recordApproved(rev, digest string) {
 	if a.C.StateDir == "" || rev == "" || digest == "" {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	m := map[string]string{}
-	if b, err := os.ReadFile(a.path("approved.json")); err == nil {
-		_ = json.Unmarshal(b, &m)
+	m, err := a.readApproved()
+	if err != nil {
+		a.log.Error("approved.json is unreadable; not recording", "revision", rev, "err", err)
+		return
 	}
 	m[rev] = digest
 	if b, err := json.Marshal(m); err == nil {
@@ -632,17 +656,24 @@ func (a *Agent) recordApproved(rev, digest string) {
 	}
 }
 
-func (a *Agent) approvedDigest(rev string) string {
+// approvedLookup 返回版本的已批准摘要；没有记录返回空串，记录文件损坏返回错误。
+func (a *Agent) approvedLookup(rev string) (string, error) {
 	if a.C.StateDir == "" || rev == "" {
-		return ""
+		return "", nil
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var m map[string]string
-	if b, err := os.ReadFile(a.path("approved.json")); err == nil && json.Unmarshal(b, &m) == nil {
-		return m[rev]
+	m, err := a.readApproved()
+	if err != nil {
+		return "", err
 	}
-	return ""
+	return m[rev], nil
+}
+
+// approvedDigest 在记录损坏时按“没有记录”处理，仅用于只读授权下放行的判断（要求摘要非空，损坏即不放行）。
+func (a *Agent) approvedDigest(rev string) string {
+	d, _ := a.approvedLookup(rev)
+	return d
 }
 
 // licenseWritable：尚未收到 License 时由控制台负责拦截；收到后按 agent 侧独立校验结果执行。

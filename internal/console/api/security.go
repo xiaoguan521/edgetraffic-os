@@ -9,6 +9,7 @@ import (
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/secpolicy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
+	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/crypto"
 )
 
@@ -110,6 +111,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		failErr(c, store.ErrNotFound)
 		return
 	}
+	bump := false
 	self := u.ID == c.GetUint("uid")
 	if self && ((req.Role != nil && *req.Role != u.Role) || (req.Disabled != nil && *req.Disabled)) {
 		fail(c, http.StatusBadRequest, "SELF", "不能修改自己的角色或停用自己")
@@ -152,9 +154,23 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 		u.PasswordHistory = secpolicy.PushHistory(u.PasswordHistory, u.PasswordHash, s.policy().History)
 		u.PasswordHash, u.MustChangePassword = h, true
-		u.TokenVersion++ // 重置前签发的会话全部失效
+		bump = true
 	}
-	if err := uq.WithContext(ctx).Save(u); err != nil {
+	// 只写本接口改动的列，不整行写回：整行写回会把并发的退出、改口令刚递增的 token_version 覆盖回旧值，已撤销的会话重新有效。
+	// 重置口令时 token_version 在同一事务里原子加一（重置前签发的会话全部失效）。
+	err = s.q().Transaction(func(tx *query.Query) error {
+		t := tx.User
+		if _, err := t.WithContext(ctx).Select(t.Role, t.Disabled, t.LockedUntil, t.FailedLogins, t.PasswordHash,
+			t.PasswordHistory, t.MustChangePassword).Where(t.ID.Eq(u.ID)).Updates(u); err != nil {
+			return err
+		}
+		if bump {
+			_, err := t.WithContext(ctx).Where(t.ID.Eq(u.ID)).UpdateSimple(t.TokenVersion.Add(1))
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		failErr(c, err)
 		return
 	}
