@@ -55,6 +55,9 @@ grep -q '^The MIT License (MIT)' "$RESTY_RSA_SRC/LICENSE" \
   && grep -q 'Permission is hereby granted, free of charge' "$RESTY_RSA_SRC/LICENSE" \
   || { echo "lua-resty-rsa: license is not MIT" >&2; exit 4; }
 
+# 默认搜索路径指向安装前缀（与下面写入 PREFIX 文件的值相同）：运维写 Lua 时不用在每份主配置里都写 lua_package_path。
+# 配置里写了 lua_package_path 时行为不变（不带 ;; 是覆盖，带 ;; 是追加）。见 dataplane/lua/patch-luajit-paths.sh。
+bash "$HERE/lua/patch-luajit-paths.sh" "$LUAJIT_SRC" "${SYEDGE_PREFIX:-/opt/$B}" || exit 6
 # LuaJIT：只要静态库，-fPIC 以便链入共享模块；模块构建直接使用源码目录的头文件
 make -C "$LUAJIT_SRC" -j"$(nproc)" BUILDMODE=static CFLAGS="-fPIC -O2" > "$WORK/luajit.log" 2>&1 \
   || { tail -20 "$WORK/luajit.log" >&2; exit 5; }
