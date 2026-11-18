@@ -181,6 +181,24 @@ sudo bash uninstall.sh --instance blue
 - 原生兼容配置包：兼容包自己的主配置可以把 `R/modules/lua/extlib/?.lua` 写进 `lua_package_path`（`R` 为安装根目录，见安装维护手册的路径约定）。
 - 已经用旧版附加包独立启用过的节点，旧的 `00-lua-standalone.conf` 不含 `extlib` 路径。升级附加包后需要先 `sudo bash install.sh --standalone-disable`（站点不再使用 Lua 时），再 `sudo bash install.sh --standalone`，然后 reload。`--standalone` 对“已启用”的节点仍会拒绝，这是已有行为，本阶段没有改为“刷新路径”。
 
+**默认搜索路径（不写 `lua_package_path` 也能 `require`）**
+
+附加包的 Lua 模块在编译期把本前缀下的库目录编进了 LuaJIT 的默认 `package.path` / `package.cpath`，顺序为：
+
+| 顺序 | 目录 | 内容 |
+| --- | --- | --- |
+| 1 | `R/modules/lua/lualib` | 附加包自带库（`resty.core`、`resty.lrucache` 等），升级附加包时由 `modules/lua` 软链切换，不用改配置 |
+| 2 | `R/modules/lua/extlib` | 随附的扩展库与编译库（`cjson` 等） |
+| 3 | `R/lualib` | 运维自己的库，附加包升级不会覆盖 |
+| 4 | LuaJIT 原默认值 | `./?.lua`、`/usr/local/share/lua/5.1/` 等 |
+
+因此原生配置、兼容配置里新增 Lua 文件时，放进 `R/lualib/` 即可，**不需要在主配置里再写 `lua_package_path`**。
+
+- 配置里写了 `lua_package_path` / `lua_package_cpath` 时行为不变：不带 `;;` 是完全覆盖（托管渲染就是这样，所以仍不会引用 `extlib`，上面的边界不变）；带 `;;` 是在原默认值前后追加，`;;` 会展开成上表的默认值。
+- 默认路径在编译期写入，使用与基础包、wrapper 相同的编译期默认前缀（`SYEDGE_PREFIX`，见 `dataplane/lua/patch-luajit-paths.sh`）。使用自定义 system 根目录（`/etc/syedge/prefix`）的实例，库不在编译期前缀下，仍需显式写 `lua_package_path`，或使用 `install.sh --standalone` 生成的片段。
+- 升级到带这个默认路径的附加包之前，已经手写了 `lua_package_path` 的配置不受影响，不需要改。
+- 由 lua 工作流的 `scripts/ci/lua-default-path.sh` 验证：不写 `lua_package_path` 时 `resty.core`、`R/lualib` 下的自有库和 `extlib` 下的 `cjson` 都能 `require`；带 `;;` 时是追加而不是覆盖；整个过程只发 HUP。
+
 **控制台托管的环境不可用**
 
 控制台托管（managed）环境的 `lua_package_path` 只包含 `lualib`，`lua_package_cpath` 仍是 `lualib/?.disabled`，`extlib` 不出现在渲染出的配置中，托管配置也不加载 lua-upstream 模块与编译库；托管的自定义脚本只能 `require "etos.json"`。

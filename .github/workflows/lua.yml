@@ -23,6 +23,7 @@ on:
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
       - "scripts/ci/lua-standalone.sh"
+      - "scripts/ci/lua-default-path.sh"
       - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   pull_request:
@@ -44,6 +45,7 @@ on:
       - "scripts/ci/lua-custom-prefix.sh"
       - "scripts/ci/lua-instance-targets.sh"
       - "scripts/ci/lua-standalone.sh"
+      - "scripts/ci/lua-default-path.sh"
       - "scripts/release/package.sh"
       - ".github/workflows/lua.yml"
   workflow_dispatch:
@@ -120,6 +122,8 @@ jobs:
         run: bash scripts/ci/lua-instance-targets.sh dist-lua ${{ matrix.base }}
       - name: Lua standalone enable and disable (${{ matrix.base }})
         run: bash scripts/ci/lua-standalone.sh dist-lua ${{ matrix.base }}
+      - name: Lua default search path without lua_package_path (${{ matrix.base }})
+        run: bash scripts/ci/lua-default-path.sh dist-lua ${{ matrix.base }}
       # 以上验收不依赖压测工具或签名密钥；外部软件源故障不应阻止独立模式验证。
       - name: tools (CI package key, wrapper, license server)
         run: |
