@@ -155,6 +155,8 @@ if [[ $rc -eq 0 && "$out" != *"failed to load the 'resty.core'"* ]]; then
 else
   bad "D1 -t rc=$rc：${out:0:300}"
 fi
+# 没有 master 时用 root 跑 -t 会留下 root 所有的 pid 文件，之后以 syedge 启动会写不了它
+sudo rm -f -- "$PIDF"
 sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- \
   "$SY" -p "$PREFIX" -e "$LOG_DIR/error.log" -c "$CONF_MAIN" || die "syedge 无法启动：$(sudo tail -n 5 "$LOG_DIR/error.log" 2>/dev/null | tr '\n' ' ')"
 for _ in $(seq 50); do sudo test -s "$PIDF" && break; sleep 0.2; done
