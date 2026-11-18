@@ -50,9 +50,18 @@ need=(
   'lua_shared_dict[[:space:]]+prometheus_metrics'
   'init_worker_by_lua_block'
   'skywalking_tracer[[:space:]]*=[[:space:]]*require\("skywalking\.tracer"\)'
-  'startBackendTimer\("http://[^"]+"\)'
+  'startBackendTimer\(OAP_ADDRESS\)'
+  'local[[:space:]]+OAP_ADDRESS[[:space:]]*=[[:space:]]*"http://[^"]+"'
+  'local[[:space:]]+SERVICE_NAME[[:space:]]*='
+  'local[[:space:]]+INSTANCE_NAME[[:space:]]*='
   'serviceName'
   'serviceInstanceName'
+  '"nginx_http_size_bytes"'
+  '"nginx_http_requests_total"'
+  '"nginx_http_latency"'
+  '"nginx_http_connections"'
+  'metric_duration[[:space:]]*=[[:space:]]*prometheus:histogram'
+  'metric_duration:observe'
   'prometheus[[:space:]]*=[[:space:]]*require\("prometheus"\)'
   'metric_connections[[:space:]]*='
 )
@@ -105,6 +114,30 @@ while read -r mod; do
   p=${mod//.//}
   [[ -f "$LIBDIR/$p.lua" ]] && ok "配置 require(\"$mod\") 可在库中找到" || bad "配置 require(\"$mod\") 在库中找不到"
 done < <(active "$INIT" | grep -oE 'require\("[A-Za-z0-9_.]+"\)' | sed -E 's/require\("([^"]+)"\)/\1/' | sort -u)
+
+echo "== 6. 随示例提供的 lualib（运维整目录复制即可）"
+LUALIB="$DIR/lualib"
+[[ -d "$LUALIB" ]] || bad "缺少 $LUALIB"
+# 与压缩包逐文件一致（不含测试文件）：防止被改动或遗漏
+drift=""
+while IFS= read -r f; do
+  rel=${f#"$LIBDIR"/}
+  [[ "$rel" == *_test.lua ]] && continue
+  case "$rel" in skywalking/*|prometheus*.lua|resty/http.lua|resty/http_headers.lua|resty/jit-uuid.lua) ;; *) continue ;; esac
+  cmp -s "$f" "$LUALIB/$rel" || drift="$drift $rel"
+done < <(find "$LIBDIR" -type f -name '*.lua')
+[[ -z "$drift" ]] && ok "lualib 与压缩包一致（缺失或改动的文件：无）" || bad "lualib 与压缩包不一致：$drift"
+extra=$(cd "$LUALIB" && find . -type f -name '*.lua' | sed 's|^\./||' | while read -r r; do [[ -f "$LIBDIR/$r" ]] || echo "$r"; done)
+[[ -z "$extra" ]] && ok "lualib 里没有压缩包以外的 Lua 文件" || bad "lualib 里有压缩包以外的 Lua 文件：$extra"
+[[ -z "$(find "$LUALIB" -name '*_test.lua')" ]] && ok "lualib 不含测试文件" || bad "lualib 含测试文件"
+for f in README.txt LICENSE-prometheus; do [[ -f "$LUALIB/$f" ]] && ok "lualib/$f 存在" || bad "lualib/$f 缺失"; done
+
+echo "== 7. 示例必须脱敏"
+if grep -rnE '(^|[^0-9])(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)([^0-9]|$)' "$DIR" --include='*.conf' --include='*.md' >/dev/null; then
+  bad "示例里出现私网地址，请换成 192.0.2.x / example.com"
+else
+  ok "示例里没有私网地址"
+fi
 
 echo "---- $fail failed"
 [[ $fail -eq 0 ]]
