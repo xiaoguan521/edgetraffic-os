@@ -104,6 +104,12 @@ pid $PIDF;
 events { worker_connections 256; }
 http {
     access_log off;
+    # 自己写的主配置没有基线里的临时目录设置，二进制默认的 /var/cache/syedge 在非默认前缀上不存在
+    client_body_temp_path $CACHE_DIR/client_temp;
+    proxy_temp_path       $CACHE_DIR/proxy_temp;
+    fastcgi_temp_path     $CACHE_DIR/fastcgi_temp;
+    uwsgi_temp_path       $CACHE_DIR/uwsgi_temp;
+    scgi_temp_path        $CACHE_DIR/scgi_temp;
     $1
     server {
         listen       127.0.0.1:18090;
