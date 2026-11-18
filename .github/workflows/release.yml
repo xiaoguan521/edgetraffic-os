@@ -250,7 +250,7 @@ jobs:
           trap 'echo "::warning title=all-bundle skywalking smoke::exit $? at: $BASH_COMMAND"' ERR
           d=$(mktemp -d); tar -C "$d" -xzf "$OUT"/syedge-all-$VERSION-linux-${{ matrix.arch }}.tar.gz
           cd "$d"/syedge-all-*
-          sudo ./install.sh --lua-standalone --skywalking-oap http://127.0.0.1:22800 --skywalking-service smoke --skywalking-instance smoke-1
+          sudo ./install.sh --skywalking-oap http://127.0.0.1:22800 --skywalking-service smoke --skywalking-instance smoke-1
           test -f "$SYEDGE_PREFIX/lualib/skywalking/tracer.lua"
           test -f "$SYEDGE_PREFIX/conf/current/conf.d/10-skywalking.conf"
           sudo "$SYEDGE_PREFIX/sbin/syedge" -p "$SYEDGE_PREFIX" -c "$SYEDGE_PREFIX/conf/current/syedge.conf" -t

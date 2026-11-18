@@ -14,8 +14,8 @@
 #   sudo ./install.sh --gmssl                           安装国密版（默认标准版）
 #   sudo ./install.sh --no-lua                          不安装 Lua 附加包（整合包默认安装）
 #   sudo ./install.sh --lua-standalone                  不接入控制台时，一步启用独立模式 Lua 并 reload
-#   sudo ./install.sh --lua-standalone --skywalking-oap http://主机:端口 --skywalking-service 服务名 --skywalking-instance 实例名
-#                                                       同时装好 SkyWalking 链路上报的库与初始化文件（三个参数需一起给）
+#   sudo ./install.sh --skywalking-oap http://主机:端口 --skywalking-service 服务名 --skywalking-instance 实例名
+#                                                       同时装好 SkyWalking 链路上报的库与初始化文件（三个参数需一起给，自动按独立模式 Lua 处理）
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
@@ -45,17 +45,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 die() { echo "install: $*" >&2; exit 1; }
+# 给了 --skywalking-*：链路上报只用于独立模式 Lua，自动按 --lua-standalone 处理（不必再写一遍）
+if [[ -n "$SW_OAP$SW_SVC$SW_INST" ]]; then
+  [[ "$NO_LUA" -eq 0 ]] || { echo "install: --skywalking-* 需要 Lua，不能与 --no-lua 同时使用" >&2; exit 2; }
+  LUA_STANDALONE=1
+fi
 # 整合包专属参数：在要求 root 之前校验，普通节点包（没有 extras）收到时明确拒绝，不能悄悄装成标准版
 [[ "$USE_GM" -eq 0 || -x "$HERE/extras/gmssl/syedge" ]] || die "--gmssl 需要 syedge-all 整合包（本包不含国密版）"
 [[ "$LUA_STANDALONE" -eq 0 || -f "$HERE/extras/lua/install.sh" ]] || die "--lua-standalone 需要 syedge-all 整合包（本包不含 Lua 附加包）"
 [[ "$NO_LUA" -eq 0 || "$LUA_STANDALONE" -eq 0 ]] || die "--no-lua 与 --lua-standalone 互斥"
-[[ "$LUA_STANDALONE" -eq 0 || -z "$SERVER$TOKEN$CAFP" ]] || die "独立模式 Lua（--lua-standalone）只用于不接入控制台的节点，不能与 --server 同时使用"
+[[ "$LUA_STANDALONE" -eq 0 || -z "$SERVER$TOKEN$CAFP" ]] || die "独立模式 Lua（--lua-standalone，含 --skywalking-*）只用于不接入控制台的节点，不能与 --server 同时使用"
 # SkyWalking 三个参数：必须一起给，只用于独立模式 Lua，值在这里就校验（生成文件前、要求 root 之前）
 SW_STAGE=""
 if [[ -n "$SW_OAP$SW_SVC$SW_INST" ]]; then
   [[ -n "$SW_OAP" && -n "$SW_SVC" && -n "$SW_INST" ]] || die "--skywalking-oap、--skywalking-service、--skywalking-instance 需同时提供"
   [[ -f "$HERE/extras/skywalking/render.sh" ]] || die "SkyWalking 参数需要 syedge-all 整合包（本包不含 SkyWalking 库）"
-  [[ "$LUA_STANDALONE" -eq 1 ]] || die "SkyWalking 参数只用于独立模式，需要同时加 --lua-standalone"
   SW_STAGE=$(mktemp -d)
   trap 'rm -rf "$SW_STAGE"' EXIT
   bash "$HERE/extras/skywalking/render.sh" "$HERE/extras/skywalking/10-skywalking.conf" "$SW_OAP" "$SW_SVC" "$SW_INST" "$SW_STAGE/10-skywalking.conf" || exit 2

@@ -81,7 +81,9 @@ for bad_name in 'a"b' 'a b' 'a;b' '$(id)' '`id`' $'a\nb' 'a\\b' 'a&b' '' "$(prin
 done
 SWARGS=(--skywalking-oap http://h:22800 --skywalking-service s --skywalking-instance i)
 out=$(run --lua-standalone "${SWARGS[@]}");  [[ "$out" == *"请以 root"* ]] && ok "三个 SkyWalking 参数加 --lua-standalone 被接受" || bad "合法的 SkyWalking 参数被拒绝：$out"
-out=$(run "${SWARGS[@]}");                   [[ "$out" == *"--lua-standalone"* && "$out" != *"请以 root"* ]] && ok "SkyWalking 参数没有 --lua-standalone 时被拒绝" || bad "SkyWalking 参数没有要求 --lua-standalone：$out"
+out=$(run "${SWARGS[@]}");                   [[ "$out" == *"请以 root"* ]] && ok "只给 SkyWalking 三个参数即可（自动按独立模式处理）" || bad "SkyWalking 参数没有被自动按独立模式处理：$out"
+out=$(run --no-lua "${SWARGS[@]}");          [[ "$out" == *"--no-lua"* && "$out" != *"请以 root"* ]] && ok "SkyWalking 参数与 --no-lua 冲突被拒绝" || bad "SkyWalking 与 --no-lua 没有冲突：$out"
+out=$(run "${SWARGS[@]}" --server h:1 --token t --ca-fingerprint f); [[ "$out" == *"独立模式"* && "$out" != *"请以 root"* ]] && ok "SkyWalking 参数不能与控制台注册同时使用" || bad "SkyWalking 与 --server 没有互斥：$out"
 out=$(run --lua-standalone --skywalking-oap http://h:1); [[ "$out" == *"同时提供"* && "$out" != *"请以 root"* ]] && ok "只给部分 SkyWalking 参数时被拒绝" || bad "部分参数没有被拒绝：$out"
 out=$(run --lua-standalone --skywalking-oap 'http://h:1;rm' --skywalking-service s --skywalking-instance i); [[ "$out" == *"OAP 地址"* && "$out" != *"请以 root"* ]] && ok "install.sh 在要求 root 之前就校验 OAP 地址" || bad "install.sh 没有校验 OAP 地址：$out"
 out=$(run --lua-standalone --skywalking-oap http://h:1 --skywalking-service 'a"b' --skywalking-instance i); [[ "$out" == *"服务名"* && "$out" != *"请以 root"* ]] && ok "install.sh 在要求 root 之前就校验服务名" || bad "install.sh 没有校验服务名：$out"

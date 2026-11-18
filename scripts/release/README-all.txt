@@ -15,8 +15,8 @@ SyEdge 整合包（数据面 + 国密版 + Lua）
   sudo ./install.sh --no-lua             不装 Lua 附加包
   sudo ./install.sh --lua-standalone     不接入控制台时，一步启用独立模式 Lua（写入配置并 reload）
 
-  sudo ./install.sh --lua-standalone --skywalking-oap http://主机:端口 --skywalking-service 服务名 --skywalking-instance 实例名
-                                         同时装好 SkyWalking 链路上报（三个参数要一起给，只用于独立模式）：
+  sudo ./install.sh --skywalking-oap http://主机:端口 --skywalking-service 服务名 --skywalking-instance 实例名
+                                         同时装好 SkyWalking 链路上报（三个参数要一起给，自动按独立模式 Lua 处理，不用再写 --lua-standalone）：
                                          库放到 <前缀>/lualib/，初始化文件写入 conf.d/10-skywalking.conf，校验通过后 reload。
                                          需要链路的 location 里还要自己写 start / finish / prepareForReport，见包内
                                          extras/skywalking/LUA-PLACEMENT.md。<前缀>/lualib 下已有内容不同的同名文件时停止，不覆盖你自己的库。
