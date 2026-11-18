@@ -209,6 +209,12 @@ echo "$($R/sbin/syedge -v 2>&1)，systemd 单元 syedge.service 已启动"
 
 LUA_NOTE=""
 if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
+  if [[ -n "$SW_OAP" ]]; then
+    # 先做只读的冲突检查，再启用 Lua：检查不过就不会留下已启用但未 reload 的独立模式配置
+    # shellcheck source=/dev/null
+    source "$HERE/extras/skywalking/install-lib.sh"
+    sw_precheck "$R" "$HERE/extras/skywalking/lualib" "$(cd -P "$R/conf/current" && pwd -P)/conf.d" || die "SkyWalking 预检未通过，尚未安装 Lua 附加包（上面是原因）"
+  fi
   echo "== 安装 Lua 附加包"
   lua_args=()
   [[ "$LUA_STANDALONE" -eq 0 ]] || lua_args=(--standalone)
@@ -217,25 +223,8 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
   if [[ "$LUA_STANDALONE" -eq 1 ]]; then
     if [[ -n "$SW_OAP" ]]; then
       echo "== 安装 SkyWalking 库与初始化文件"
-      SWSRC="$HERE/extras/skywalking/lualib"
-      sw_conflicts=()
-      while IFS= read -r -d '' f; do
-        rel=${f#"$SWSRC"/}
-        if [[ -e "$R/lualib/$rel" ]] && ! cmp -s "$f" "$R/lualib/$rel"; then sw_conflicts+=("$rel"); fi
-      done < <(find "$SWSRC" -type f -name '*.lua' -print0)
-      [[ ${#sw_conflicts[@]} -eq 0 ]] || die "$R/lualib 下已有内容不同的同名文件，为避免覆盖你自己的库而停止：${sw_conflicts[*]}"
       sw_conf_dir="$(cd -P "$R/conf/current" && pwd -P)/conf.d"
-      [[ -d "$sw_conf_dir" ]] || die "找不到 $sw_conf_dir"
-      sw_dup=$(grep -lE 'init_worker_by_lua_block|lua_shared_dict[[:space:]]+tracing_buffer' "$sw_conf_dir"/*.conf 2>/dev/null | grep -v '/10-skywalking.conf$' || true)
-      [[ -z "$sw_dup" ]] || die "conf.d 里已有文件定义了 init_worker_by_lua_block 或 tracing_buffer，同级别重复会让配置校验失败：$sw_dup"
-      while IFS= read -r -d '' f; do
-        install -o root -g root -m 0644 -D "$f" "$R/lualib/${f#"$SWSRC"/}"
-      done < <(find "$SWSRC" -type f -name '*.lua' -print0)
-      install -o root -g root -m 0644 "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir/10-skywalking.conf"
-      if ! "$R/sbin/syedge" -p "$R" -c "$R/conf/current/syedge.conf" -t >/dev/null 2>"$SW_STAGE/t.err"; then
-        rm -f "$sw_conf_dir/10-skywalking.conf"
-        die "加入 SkyWalking 初始化后配置校验失败，已撤销该文件：$(tail -n 3 "$SW_STAGE/t.err" | tr '\n' ' ')"
-      fi
+      sw_apply "$R" "$HERE/extras/skywalking/lualib" "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir" "$SW_STAGE/t.err" || die "SkyWalking 安装已中止并还原（上面是原因）；Lua 独立模式配置已写入但尚未 reload，运行中的 syedge 不受影响，修正后重新执行 install.sh 即可"
     fi
     systemctl reload syedge.service || die "独立模式 Lua 已写入配置，但 reload 失败；请先看 $LOG_DIR/error.log"
     LUA_NOTE="Lua 附加包已安装，独立模式已启用并 reload；自己的 Lua 文件放在 $R/lualib/"

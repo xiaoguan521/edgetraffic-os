@@ -62,7 +62,7 @@ out=$(run --lua-standalone --server h:1 --token t --ca-fingerprint f); [[ "$out"
 
 # SkyWalking：包内文件、渲染脚本与 install.sh 参数边界
 SW="$D/extras/skywalking"
-[[ -f "$SW/render.sh" && -f "$SW/10-skywalking.conf" && -f "$SW/lualib/skywalking/tracer.lua" && -f "$SW/lualib/prometheus.lua" && -f "$SW/LUA-PLACEMENT.md" ]] && ok "extras/skywalking 含渲染脚本、初始化模板、库与说明" || bad "extras/skywalking 不完整"
+[[ -f "$SW/render.sh" && -f "$SW/install-lib.sh" && -f "$SW/10-skywalking.conf" && -f "$SW/lualib/skywalking/tracer.lua" && -f "$SW/lualib/prometheus.lua" && -f "$SW/LUA-PLACEMENT.md" ]] && ok "extras/skywalking 含渲染脚本、初始化模板、库与说明" || bad "extras/skywalking 不完整"
 [[ -z "$(find "$SW/lualib" -name '*_test.lua')" ]] && ok "SkyWalking 库不含测试文件" || bad "SkyWalking 库含测试文件"
 R="$W/render"; mkdir -p "$R"
 bash "$SW/render.sh" "$SW/10-skywalking.conf" http://oap.example.com:22800 gw-svc node_1 "$R/ok.conf" >/dev/null 2>&1   && grep -qF 'local OAP_ADDRESS   = "http://oap.example.com:22800"' "$R/ok.conf"   && grep -qF 'local SERVICE_NAME  = "gw-svc"' "$R/ok.conf"   && grep -qF 'local INSTANCE_NAME = "node_1"' "$R/ok.conf" \
@@ -100,6 +100,10 @@ out=$(bash "$P/install.sh" --no-lua 2>&1 || true); [[ "$out" == *"请以 root"* 
 # 打包本身的边界
 if OUT="$W/out2" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/node.tar.gz" >/dev/null 2>&1; then bad "把不是附加包的文件当 Lua 附加包也被接受"; else ok "Lua 附加包结构不对时拒绝打包"; fi
 if OUT="$W/out3" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/lua.tar.gz" "$W/lua.tar.gz" >/dev/null 2>&1; then bad "没有国密版二进制的包也被接受"; else ok "国密包里没有 sbin/syedge 时拒绝打包"; fi
+# 数据面版本与 Lua 附加包的目标版本必须一致（SYEDGE_DATAPLANE_VERSION 由发布流水线给出，与 lua-upgrade 的规则相同）
+if SYEDGE_DATAPLANE_VERSION=1.99.0 OUT="$W/out4" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" >"$W/mismatch.log" 2>&1; then bad "数据面 1.99.0 与 Lua 目标版本 1.30.6 不一致却被打包"; else grep -q '1.30.6' "$W/mismatch.log" && ok "数据面与 Lua 附加包版本不一致时拒绝打包" || bad "拒绝打包但没有说明版本：$(cat "$W/mismatch.log")"; fi
+if SYEDGE_DATAPLANE_VERSION=1.30.6-1 OUT="$W/out5" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" >/dev/null 2>&1; then ok "数据面 1.30.6-1 与 Lua 目标 1.30.6 一致（发行序号不影响）"; else bad "版本一致的组合被拒绝"; fi
+if SYEDGE_DATAPLANE_VERSION=bogus OUT="$W/out6" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" >/dev/null 2>&1; then bad "格式不对的数据面版本被接受"; else ok "格式不对的数据面版本被拒绝"; fi
 
 echo "---- $fail failed"
 [[ $fail -eq 0 ]] || exit 1

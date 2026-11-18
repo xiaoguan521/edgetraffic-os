@@ -709,7 +709,10 @@ func (d *Service) startWithMode(lk *sync.Mutex, g *store.NodeGroup, rev *store.R
 }
 
 func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deployment, nodes []store.Node) {
-	checks := d.postChecks(rev)
+	checks, checksErr := d.postChecks(rev)
+	if checksErr != nil {
+		d.Log.Error("failed to build post-check plan", "group", g.ID, "revision", rev.ID, "err", checksErr)
+	}
 	ag := d.agents()
 	var wg sync.WaitGroup
 	results := make([]string, len(nodes))
@@ -744,6 +747,11 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			cur, err := q.Node.WithContext(bg).Where(q.Node.ID.Eq(n.ID)).First()
 			if err != nil {
 				upd("FAILED", "读取节点状态失败："+err.Error(), "", true)
+				return
+			}
+			if checksErr != nil {
+				// 不带探活下发等于放弃业务验证：宁可不发布，也不静默省略
+				upd("FAILED", "无法生成探活计划，已停止下发："+checksErr.Error(), "", true)
 				return
 			}
 			var res *agentv1.CommandResult
@@ -844,17 +852,19 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 }
 
 // postChecks 为每个站点生成本机探活：请求首个域名的 /，只要求非 5xx。
-func (d *Service) postChecks(rev *store.Revision) []*agentv1.PostCheck {
+// 冻结版本读不出来、或兼容包的探活元数据损坏时返回错误：空列表只表示“本来没有探活项”，
+// 不能用来掩盖读取失败，否则业务探活会被悄悄省略。
+func (d *Service) postChecks(rev *store.Revision) ([]*agentv1.PostCheck, error) {
 	files, err := d.revisionFiles(rev)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("读取版本 %s 失败：%w", rev.ID, err)
 	}
 	if isLegacyRevision(rev) {
 		var metadata legacyMetadata
-		if json.Unmarshal(files[configbundle.LegacyMarker], &metadata) != nil {
-			return nil
+		if err := json.Unmarshal(files[configbundle.LegacyMarker], &metadata); err != nil {
+			return nil, fmt.Errorf("版本 %s 的兼容包探活元数据无法解析：%w", rev.ID, err)
 		}
-		return metadata.Checks
+		return metadata.Checks, nil
 	}
 	var out []*agentv1.PostCheck
 	for name, content := range files {
@@ -877,5 +887,5 @@ func (d *Service) postChecks(rev *store.Revision) []*agentv1.PostCheck {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
-	return out
+	return out, nil
 }

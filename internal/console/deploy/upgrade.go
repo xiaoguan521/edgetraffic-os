@@ -457,13 +457,18 @@ func (d *Service) runUpgrade(up *store.DataplaneUpgrade, plan []UpgradeNode) {
 			set(n, "offline", "节点离线，未升级", true) // 离线节点也停止：避免部分节点在新旧版本间混跑而无人察觉
 			return false
 		}
+		checks, err := d.groupPostChecks(node.GroupID)
+		if err != nil {
+			set(n, "failed", "无法生成探活计划，未升级："+err.Error(), true)
+			return false
+		}
 		set(n, "upgrading", "", false)
 		sig := sigOf(brand.ID(), node.Arch, up.Variant)
 		var ps pkgsig.Sig
 		_ = json.Unmarshal(sig, &ps)
 		msg := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Upgrade{Upgrade: &agentv1.UpgradeDataplane{
 			Action: agentv1.UpgradeDataplane_START, Version: up.Version, PackageSha256: ps.SHA256, SignatureJson: sig,
-			PostChecks: d.groupPostChecks(node.GroupID), TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
+			PostChecks: checks, TimeoutSeconds: int32(UpgradeTimeout / time.Second)}}}
 		if node.LuaAddon != "" {
 			msg.GetUpgrade().LuaSignatureJson = sigOf(brand.Lua(), node.Arch, "lua")
 		}
@@ -637,14 +642,18 @@ func summarizeHosts(plan []UpgradeNode) []UpgradeHost {
 }
 
 // groupPostChecks 返回节点组当前版本的探活项（与发布相同）。
-func (d *Service) groupPostChecks(groupID uint) []*agentv1.PostCheck {
+// 节点组没有当前版本是合法的（无探活项）；读取节点组或版本失败则返回错误，不退化为空列表。
+func (d *Service) groupPostChecks(groupID uint) ([]*agentv1.PostCheck, error) {
 	g, err := store.First[store.NodeGroup](d.Store, groupID)
-	if err != nil || g.CurrentRevisionID == "" {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("读取节点组失败：%w", err)
+	}
+	if g.CurrentRevisionID == "" {
+		return nil, nil
 	}
 	rev, err := d.revision(g.CurrentRevisionID, groupID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("读取节点组当前版本失败：%w", err)
 	}
 	return d.postChecks(rev)
 }
