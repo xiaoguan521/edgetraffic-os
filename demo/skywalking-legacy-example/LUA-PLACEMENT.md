@@ -2,39 +2,31 @@
 
 本示例面向原生兼容配置，安装根目录 `R`（默认 `/opt/syedge`，以 `syedge-instance prefix` 为准）。
 
-## 1. 要放的文件
+## 1. 三步接入（运维只改三个值）
 
-放到 **`R/lualib/`**（你自己的库目录，附加包升级不会覆盖它）。
-不要放进 `R/modules/lua-<版本>/`，那是附加包自带目录，升级会被替换。
-
-```
-R/lualib/
-├── skywalking/                 整个目录（去掉 *_test.lua）
-├── prometheus.lua
-├── prometheus_keys.lua
-├── prometheus_resty_counter.lua
-└── resty/
-    ├── http.lua
-    ├── http_headers.lua
-    └── jit-uuid.lua
-```
-
-`resty/core.lua` 不用放，附加包里已有。测试文件与 `integration/` 不要放。
-
-来源：解压 `demo/skywalking-nginx-lua-0.5.0.zip`（上游 skywalking-nginx-lua 0.5.0）得到的 `lib/`。
+示例目录里已经带好了现成的库 `lualib/`，不用再解压压缩包、挑文件。
 
 ```bash
-R=/opt/syedge
-unzip skywalking-nginx-lua-0.5.0.zip -d /tmp/sw
-SRC=/tmp/sw/skywalking-nginx-lua-0.5.0/lib
-
-sudo mkdir -p "$R/lualib/resty"
-sudo cp -r "$SRC/skywalking"      "$R/lualib/"
-sudo cp    "$SRC"/prometheus*.lua "$R/lualib/"
-sudo cp    "$SRC/resty/http.lua" "$SRC/resty/http_headers.lua" "$SRC/resty/jit-uuid.lua" "$R/lualib/resty/"
-sudo rm -f "$R/lualib/prometheus_test.lua" "$R"/lualib/skywalking/*_test.lua
-sudo chown -R root:syedge "$R/lualib" && sudo chmod -R o-w "$R/lualib"
+R=/opt/syedge                                  # 安装根目录，以 syedge-instance prefix 为准
+sudo cp -r lualib/. "$R/lualib/"               # 1. 整个目录原样复制，不要改里面的文件
+sudo cp conf.d/10-skywalking.conf "$R/conf/current/conf.d/"   # 2. 初始化文件
+sudo vi "$R/conf/current/conf.d/10-skywalking.conf"           # 3. 只改开头三个值
 ```
+
+第 3 步只改 `init_worker_by_lua_block` 开头这三行：
+
+```lua
+local OAP_ADDRESS   = "http://192.0.2.10:22800"   -- SkyWalking OAP 的 HTTP 上报地址
+local SERVICE_NAME  = "example-service"           -- 服务名
+local INSTANCE_NAME = "example-node-1"            -- 实例名，多个节点同时上报时必须各不相同
+```
+
+OAP 地址如果还是示例值（192.0.2.10），worker 启动时会在 `error.log` 里写“请先修改 OAP_ADDRESS”并且不上报，不会去连一个不存在的地址刷错误。
+
+`lualib/` 放在 **`R/lualib/`**（你自己的库目录，附加包升级不会覆盖）。不要放进 `R/modules/lua-<版本>/`，那是附加包自带目录，升级会被替换。
+`resty/core.lua` 不用放，附加包里已有。库的来源、许可见 `lualib/README.txt`。
+
+指标名沿用 OpenResty 时代的 `nginx_http_*`（含 `nginx_http_request_duration_seconds`），已有的 Grafana 面板不用改。
 
 ## 2. 配置文件放哪
 
@@ -47,8 +39,6 @@ R/conf/current/
 
 主配置里已有 `include conf.d/*.conf;`，所以只需把 `10-skywalking.conf` 放进 `conf.d/`。
 放之前确认 `conf.d/` 下没有别的文件也定义了 `init_worker_by_lua_block`、`lua_shared_dict tracing_buffer` 或 `lua_package_path`，同级别重复会让 `-t` 报错。
-
-`10-skywalking.conf` 里是示例值，按实际修改：服务名 `example-service`、实例名 `example-node-1`、OAP `http://192.0.2.10:22800`。多个节点同时上报时，`serviceInstanceName` 不能相同。
 
 ## 3. 主配置的接入要点
 
@@ -77,7 +67,7 @@ tail -n 50 $R/logs/error.log
 ```
 
 - `error.log` 不应再出现 `attempt to index global 'skywalking_tracer'`；
-- 如果出现 `resty.http` 连接失败，说明连不上 OAP（`192.0.2.10:22800`），不影响业务，但链路不上报；
+- 如果出现 `connection refused`，说明 `OAP_ADDRESS` 填的地址没人监听（常见原因是还保留着示例值），不影响业务，但链路不上报；
 - 回退：恢复备份的 `conf/current`，删除 `conf.d/10-skywalking.conf`，再 `-t` 并 HUP。
 
 ## 5. 已知限制
