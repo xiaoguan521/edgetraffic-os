@@ -76,11 +76,12 @@ func (s *Server) changePassword(c *gin.Context) {
 	}
 	now := time.Now()
 	if _, err := uq.WithContext(c.Request.Context()).Where(uq.ID.Eq(u.ID)).UpdateSimple(uq.PasswordHash.Value(h), uq.PasswordChangedAt.Value(now),
-		uq.MustChangePassword.Value(false), uq.PasswordHistory.Value(secpolicy.PushHistory(u.PasswordHistory, u.PasswordHash, pol.History))); err != nil {
+		uq.MustChangePassword.Value(false), uq.TokenVersion.Add(1), uq.PasswordHistory.Value(secpolicy.PushHistory(u.PasswordHistory, u.PasswordHash, pol.History))); err != nil {
 		failErr(c, err)
 		return
 	}
 	u.MustChangePassword, u.PasswordChangedAt, u.PasswordHash = false, &now, h
+	u.TokenVersion++ // 其他设备上的旧会话失效；下面重新签发当前会话
 	s.audit(c, "auth.password_change", "user", u.Username, nil)
 	_ = s.issue(c, u) // 解除“必须改口令”限制
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -151,6 +152,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 		u.PasswordHistory = secpolicy.PushHistory(u.PasswordHistory, u.PasswordHash, s.policy().History)
 		u.PasswordHash, u.MustChangePassword = h, true
+		u.TokenVersion++ // 重置前签发的会话全部失效
 	}
 	if err := uq.WithContext(ctx).Save(u); err != nil {
 		failErr(c, err)

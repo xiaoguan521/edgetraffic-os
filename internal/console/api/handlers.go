@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gen/field"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
@@ -212,7 +213,18 @@ func (s *Server) login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"username": u.Username, "role": u.Role, "must_change_password": mustChange})
 }
 
+// logout 清除 cookie，并让该用户已签发的全部会话失效（令牌无状态，只能靠递增账号的会话版本）。
+// 没有有效令牌的请求只清 cookie，不影响任何账号。
 func (s *Server) logout(c *gin.Context) {
+	if ck, err := c.Cookie(cookieName); err == nil {
+		var cl claims
+		if tok, err := jwt.ParseWithClaims(ck, &cl, func(t *jwt.Token) (any, error) { return s.jwtKey, nil }, jwt.WithValidMethods([]string{"HS256"})); err == nil && tok.Valid {
+			uq := s.q().User
+			if _, err := uq.WithContext(c.Request.Context()).Where(uq.ID.Eq(cl.UID), uq.TokenVersion.Eq(cl.TV)).UpdateSimple(uq.TokenVersion.Add(1)); err != nil {
+				s.Log.Error("failed to revoke sessions on logout", "uid", cl.UID, "err", err)
+			}
+		}
+	}
 	http.SetCookie(c.Writer, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteStrictMode})
 	c.Status(http.StatusNoContent)
 }

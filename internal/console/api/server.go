@@ -374,6 +374,7 @@ type claims struct {
 	Role   string `json:"role"`
 	AuthAt int64  `json:"auth_at"` // 登录时间：会话最长有效期从这里算
 	PC     bool   `json:"pc"`      // 必须先修改口令（首次登录或口令过期）
+	TV     int    `json:"tv"`      // 签发时的 User.TokenVersion；与数据库不一致即已被撤销
 	jwt.RegisteredClaims
 }
 
@@ -385,7 +386,7 @@ func (s *Server) issue(c *gin.Context, u *store.User) error {
 func (s *Server) issueAt(c *gin.Context, u *store.User, authAt int64, pc bool) error {
 	pol := s.policy()
 	idle := time.Duration(pol.IdleMinutes) * time.Minute
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{UID: u.ID, Name: u.Username, Role: u.Role, AuthAt: authAt, PC: pc,
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{UID: u.ID, Name: u.Username, Role: u.Role, AuthAt: authAt, PC: pc, TV: u.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(idle)), IssuedAt: jwt.NewNumericDate(time.Now())}})
 	str, err := tok.SignedString(s.jwtKey)
 	if err != nil {
@@ -422,6 +423,10 @@ func (s *Server) auth(c *gin.Context) {
 	u, err := uq.WithContext(c.Request.Context()).Where(uq.ID.Eq(cl.UID)).First()
 	if err != nil || u.Disabled || u.Username != cl.Name {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "account disabled or removed")
+		return
+	}
+	if cl.TV != u.TokenVersion {
+		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "session revoked, please sign in again")
 		return
 	}
 	if cl.PC {

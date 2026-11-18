@@ -40,6 +40,7 @@ func newUser(db *gorm.DB, opts ...gen.DOOption) user {
 	_user.PasswordHistory = field.NewString(tableName, "password_history")
 	_user.FailedLogins = field.NewInt(tableName, "failed_logins")
 	_user.LockedUntil = field.NewTime(tableName, "locked_until")
+	_user.TokenVersion = field.NewInt(tableName, "token_version")
 
 	_user.fillFieldMap()
 
@@ -63,6 +64,7 @@ type user struct {
 	PasswordHistory    field.String
 	FailedLogins       field.Int
 	LockedUntil        field.Time
+	TokenVersion       field.Int
 
 	fieldMap map[string]field.Expr
 }
@@ -92,6 +94,7 @@ func (u *user) updateTableName(table string) *user {
 	u.PasswordHistory = field.NewString(table, "password_history")
 	u.FailedLogins = field.NewInt(table, "failed_logins")
 	u.LockedUntil = field.NewTime(table, "locked_until")
+	u.TokenVersion = field.NewInt(table, "token_version")
 
 	u.fillFieldMap()
 
@@ -116,7 +119,7 @@ func (u *user) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *user) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 13)
+	u.fieldMap = make(map[string]field.Expr, 14)
 	u.fieldMap["id"] = u.ID
 	u.fieldMap["username"] = u.Username
 	u.fieldMap["password_hash"] = u.PasswordHash
@@ -130,6 +133,7 @@ func (u *user) fillFieldMap() {
 	u.fieldMap["password_history"] = u.PasswordHistory
 	u.fieldMap["failed_logins"] = u.FailedLogins
 	u.fieldMap["locked_until"] = u.LockedUntil
+	u.fieldMap["token_version"] = u.TokenVersion
 }
 
 func (u user) clone(db *gorm.DB) user {
