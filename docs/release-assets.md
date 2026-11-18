@@ -22,6 +22,7 @@
 | 软件包 | `syedge_<版本>_amd64.deb` + `syedge-agent_<版本>_amd64.deb`（arm64 同理） | deb 系统；`syedge` 是数据面，`syedge-agent` 是接入控制台的节点代理与 wrapper |
 | 软件包 | `syedge-<版本>-1.x86_64.rpm` + `syedge-agent-<版本>-1.x86_64.rpm`（aarch64 同理） | rpm 系统 |
 | 一键安装（root） | `syedge-node-<版本>-linux-amd64.tar.gz` / `-linux-arm64.tar.gz` | 解压后执行 `install.sh` |
+| 整合包（推荐不接入控制台、或要国密 / Lua 的场景） | `syedge-all-<版本>-linux-amd64.tar.gz` / `-linux-arm64.tar.gz` | 节点包 + 国密版 + Lua 附加包，三者版本配套。`sudo ./install.sh` 装标准版 + Lua，`--gmssl` 装国密版 + Lua，`--no-lua` 不装 Lua，`--lua-standalone` 一步启用独立模式 Lua。只在正式标签发布；经控制台升级仍用下面的签名单包 |
 | 免 root 安装 | `syedge-node-user-<版本>-linux-amd64.tar.gz` / `-linux-arm64.tar.gz` | 普通用户解压后执行 `install-user.sh`，装在用户目录，只能使用 1024 以上端口（见包内 README.txt） |
 
 ### 交付客户：经控制台统一升级 / 扩展（先在离线签名机上签名，再导入控制台“版本库”）

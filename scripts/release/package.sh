@@ -9,6 +9,9 @@
 #       节点包（仅 Linux）：syedge 数据面 + syedge-agent + syedge-wrapper + systemd 单元 + install.sh
 #       产物 syedge-node-<ver>-linux-<goarch>.tar.gz
 #
+#   scripts/release/package.sh all <goarch> <节点包> <国密基础包> <Lua 附加包>
+#       整合包：节点包 + extras/gmssl（国密版二进制）+ extras/lua（Lua 附加包），产物 syedge-all-<ver>-linux-<goarch>.tar.gz
+#
 #   scripts/release/package.sh node-user <goarch> <syedge tarball>
 #       user 模式节点包（不需要 root，设计 0001 第 6 节）：bin/ + sbin/ + modules/ + install-user.sh
 #       产物 syedge-node-user-<ver>-linux-<goarch>.tar.gz
@@ -240,6 +243,30 @@ case "${1:-}" in
     cp docs/NOTICE "$d/NOTICE"
     prefix_template scripts/release/README-node.txt "$d/README.txt"
     chmod 0755 "$d/install.sh" "$d/uninstall.sh"
+    rebrand "$d"; brand_scan "$d"
+    tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
+    echo "$OUT/$name.tar.gz"
+    ;;
+  all)
+    # 整合包：节点包 + 国密版二进制 + Lua 附加包，首次安装时由 install.sh --gmssl / --no-lua 选择。
+    # 只用于首次安装与手动升级；经控制台升级仍使用厂商签名的单独升级包，整合包不进入验签流程。
+    arch=${2:?goarch}; node_tgz=${3:?node tarball}; gm_tgz=${4:?gmssl base tarball}; lua_tgz=${5:?lua addon tarball}
+    [[ "$arch" == amd64 || "$arch" == arm64 ]] || { echo "bad architecture $arch" >&2; exit 2; }
+    src_name="$SLUG-node-$VERSION-linux-$arch"; name="$SLUG-all-$VERSION-linux-$arch"
+    d="$WORK/$name"; x="$WORK/all-src"; g="$WORK/all-gm"; l="$WORK/all-lua"
+    mkdir -p "$x" "$g" "$l"
+    tar -C "$x" -xzf "$node_tgz"
+    [[ -d "$x/$src_name/rootfs" && -f "$x/$src_name/install.sh" ]] || { echo "$node_tgz 不是 $src_name 节点包" >&2; exit 2; }
+    mv "$x/$src_name" "$d"
+    tar -C "$g" -xzf "$gm_tgz"
+    gm_bin=$(find "$g" -type f -path "*/sbin/$B" | head -1)
+    [[ -n "$gm_bin" ]] || { echo "$gm_tgz 中没有 sbin/$B" >&2; exit 2; }
+    tar -C "$l" -xzf "$lua_tgz"
+    [[ -f "$l/addon/VERSION" && -f "$l/install.sh" && -f "$l/uninstall.sh" ]] || { echo "$lua_tgz 不是 Lua 附加包" >&2; exit 2; }
+    mkdir -p "$d/extras/gmssl" "$d/extras/lua"
+    install -m 0755 "$gm_bin" "$d/extras/gmssl/$B"
+    cp -r "$l/install.sh" "$l/uninstall.sh" "$l/addon" "$d/extras/lua/"
+    prefix_template scripts/release/README-all.txt "$d/README.txt"
     rebrand "$d"; brand_scan "$d"
     tar -C "$WORK" --owner=0 --group=0 -czf "$OUT/$name.tar.gz" "$name"
     echo "$OUT/$name.tar.gz"

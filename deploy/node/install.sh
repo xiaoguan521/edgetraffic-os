@@ -10,6 +10,10 @@
 #                                                       同时启用节点防火墙（可选，见 syedge-firewall）
 #   sudo ./install.sh --root-master                     兼容模式：与传统 Web 服务器相同由 root 运行 master（worker 仍以 syedge 运行）。
 #                                                       内核或 systemd 不支持 ambient 能力（如 CentOS 7）时自动使用
+#   整合包（syedge-all）另有：
+#   sudo ./install.sh --gmssl                           安装国密版（默认标准版）
+#   sudo ./install.sh --no-lua                          不安装 Lua 附加包（整合包默认安装）
+#   sudo ./install.sh --lua-standalone                  不接入控制台时，一步启用独立模式 Lua 并 reload
 #
 # 可重复执行：已有的配置版本、注册身份都会保留，只更新程序文件。
 set -euo pipefail
@@ -18,6 +22,7 @@ umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LEGACY_ROOT=/opt/"syedge" # 不随编译前缀模板替换；旧版本使用 /var 下的运行目录
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
+USE_GM=0; NO_LUA=0; LUA_STANDALONE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)         SERVER="$2"; shift 2 ;;
@@ -27,21 +32,31 @@ while [[ $# -gt 0 ]]; do
     --firewall-ssh-from) FW_FROM="$2"; shift 2 ;;
     --replace-local-config) REPLACE_LOCAL=(-replace-local-config); shift ;;
     --root-master)    ROOT_MASTER=(--root-master); shift ;;
-    -h|--help)        sed -n '2,13p' "$0"; exit 0 ;;
+    --gmssl)          USE_GM=1; shift ;;
+    --no-lua)         NO_LUA=1; shift ;;
+    --lua-standalone) LUA_STANDALONE=1; shift ;;
+    -h|--help)        sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
 die() { echo "install: $*" >&2; exit 1; }
+# 整合包专属参数：在要求 root 之前校验，普通节点包（没有 extras）收到时明确拒绝，不能悄悄装成标准版
+[[ "$USE_GM" -eq 0 || -x "$HERE/extras/gmssl/syedge" ]] || die "--gmssl 需要 syedge-all 整合包（本包不含国密版）"
+[[ "$LUA_STANDALONE" -eq 0 || -f "$HERE/extras/lua/install.sh" ]] || die "--lua-standalone 需要 syedge-all 整合包（本包不含 Lua 附加包）"
+[[ "$NO_LUA" -eq 0 || "$LUA_STANDALONE" -eq 0 ]] || die "--no-lua 与 --lua-standalone 互斥"
+[[ "$LUA_STANDALONE" -eq 0 || -z "$SERVER$TOKEN$CAFP" ]] || die "独立模式 Lua（--lua-standalone）只用于不接入控制台的节点，不能与 --server 同时使用"
 [[ $EUID -eq 0 ]] || die "请以 root 运行"
 [[ -d "$HERE/rootfs/opt/syedge" ]] || die "请在解压后的发布包目录中运行"
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die "需要 systemd"
 command -v sudo >/dev/null || die "缺少 sudo（apt install sudo / dnf install sudo）"
 command -v runuser >/dev/null || die "缺少 runuser（apt install util-linux / dnf install util-linux）"
 
-missing=$(ldd "$HERE/rootfs/opt/syedge/sbin/syedge" 2>&1 | awk '/not found/{print $1}' || true)
+DP_BIN="$HERE/rootfs/opt/syedge/sbin/syedge"
+[[ "$USE_GM" -eq 0 ]] || DP_BIN="$HERE/extras/gmssl/syedge"
+missing=$(ldd "$DP_BIN" 2>&1 | awk '/not found/{print $1}' || true)
 if [[ -n "$missing" ]]; then
   echo "缺少运行库：" $missing >&2
-  if ldd "$HERE/rootfs/opt/syedge/sbin/syedge" 2>&1 | grep -q 'GLIBC_'; then
+  if ldd "$DP_BIN" 2>&1 | grep -q 'GLIBC_'; then
     echo "glibc 版本过低：需要 2.17 及以上" >&2
   fi
   exit 1
@@ -111,7 +126,7 @@ mkdir -p "$R/conf/releases"
 # 避免可预测临时文件被替换，同时以 rename 更新正在运行的二进制。
 mkdir -p "$R/sbin"
 dp_tmp=$(mktemp "$R/.syedge-bin.XXXXXX")
-if ! install -o root -g root -m 0755 "$HERE/rootfs/opt/syedge/sbin/syedge" "$dp_tmp" || ! mv -f "$dp_tmp" "$R/sbin/syedge"; then
+if ! install -o root -g root -m 0755 "$DP_BIN" "$dp_tmp" || ! mv -f "$dp_tmp" "$R/sbin/syedge"; then
   rm -f "$dp_tmp"
   die "安装数据面二进制失败"
 fi
@@ -173,6 +188,21 @@ else
 fi
 echo "$($R/sbin/syedge -v 2>&1)，systemd 单元 syedge.service 已启动"
 
+LUA_NOTE=""
+if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
+  echo "== 安装 Lua 附加包"
+  lua_args=()
+  [[ "$LUA_STANDALONE" -eq 0 ]] || lua_args=(--standalone)
+  # 附加包自检失败会恢复原状；此时 syedge 已按基础配置运行，不受影响
+  (cd "$HERE/extras/lua" && bash install.sh ${lua_args[@]+"${lua_args[@]}"}) || die "Lua 附加包安装失败（syedge 已按基础配置运行，不受影响）"
+  if [[ "$LUA_STANDALONE" -eq 1 ]]; then
+    systemctl reload syedge.service || die "独立模式 Lua 已写入配置，但 reload 失败；请先看 $LOG_DIR/error.log"
+    LUA_NOTE="Lua 附加包已安装，独立模式已启用并 reload；自己的 Lua 文件放在 $R/lualib/"
+  else
+    LUA_NOTE="Lua 附加包已安装；没有写 lua_package_path 的配置也能 require $R/lualib 下的库"
+  fi
+fi
+
 if [[ -n "$SERVER$TOKEN$CAFP" ]]; then
   [[ -n "$SERVER" && -n "$TOKEN" && -n "$CAFP" ]] || die "--server、--token、--ca-fingerprint 需同时提供"
   echo "== 注册到控制台 $SERVER"
@@ -203,6 +233,7 @@ printf '%s\n' \
   "安装根目录   $R" \
   "主配置       $R/conf/current/syedge.conf" \
   "站点配置目录 $R/conf/current/conf.d/" \
+  ${LUA_NOTE:+"Lua          $LUA_NOTE"} \
   "错误日志     $LOG_DIR/error.log" \
   "校验配置     sudo $R/sbin/syedge -p $R -c $R/conf/current/syedge.conf -e stderr -t" \
   "平滑重载     sudo systemctl reload syedge" \

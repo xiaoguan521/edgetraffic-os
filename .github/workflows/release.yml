@@ -179,6 +179,9 @@ jobs:
             gm_ver="$dp-1"
             SYEDGE_UPGRADE_VERSION="$gm_ver" scripts/release/package.sh syedge-upgrade ${{ matrix.arch }} dist/syedge-gm/syedge-*-gmssl-*.tar.gz gmssl
             scripts/release/package.sh lua-upgrade dist/syedge-lua/syedge-lua-*.tar.gz "$gm_ver" "$(uname -m)"
+            # 整合包：节点包 + 国密版 + Lua 附加包（首次安装与手动升级用；经控制台升级仍用上面的签名单包）
+            scripts/release/package.sh all ${{ matrix.arch }} "$OUT/syedge-node-$VERSION-linux-${{ matrix.arch }}.tar.gz" \
+              dist/syedge-gm/syedge-*-gmssl-*.tar.gz dist/syedge-lua/syedge-lua-*.tar.gz
             SYEDGE_GM_UPGRADE_PACKAGE="$OUT/syedge-$gm_ver-gmssl-${{ matrix.arch }}.tar.gz" \
               go test -mod=vendor -count=1 -run TestReleaseGMUpgradePackage ./internal/wrapper/
           fi
@@ -225,6 +228,20 @@ jobs:
           tar -C /tmp/smoke-pkg -czf /tmp/smoke-node.tar.gz .
           LIC_TOOL=/tmp/lic LIC_KEY=/tmp/keys/etos-ci-ephemeral.key LIC_KID=etos-ci-ephemeral \
             scripts/release/smoke-node.sh /tmp/smoke-node.tar.gz /tmp/smoke-console
+      # 整合包只在正式标签构建（需要国密版与 Lua 附加包）。装一遍国密版 + Lua，再卸载，宿主机恢复干净。
+      # 首次引入，暂不阻塞发布（continue-on-error）；确认在真实 runner 上稳定后改为必过。
+      - name: smoke test all-in-one bundle (GM + Lua install, tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        run: |
+          trap 'echo "::warning title=all-bundle smoke::exit $? at: $BASH_COMMAND"' ERR
+          d=$(mktemp -d); tar -C "$d" -xzf "$OUT"/syedge-all-$VERSION-linux-${{ matrix.arch }}.tar.gz
+          cd "$d"/syedge-all-*
+          sudo ./install.sh --gmssl
+          sudo "$SYEDGE_PREFIX/sbin/syedge" -V 2>&1 | grep -q enable-ntls
+          test -f "$SYEDGE_PREFIX/modules/lua/ngx_http_lua_module.so"
+          systemctl is-active syedge.service
+          sudo ./uninstall.sh --purge
       - name: release binaries have no CI key and run
         run: |
           pub=$(grep -oE '"[A-Za-z0-9+/=]{44}"' /tmp/keygen.txt | tail -1 | tr -d '"')

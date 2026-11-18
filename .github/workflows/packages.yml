@@ -10,6 +10,7 @@ on:
       - "deploy/**"
       - "dataplane/**"
       - "scripts/release/**"
+      - "scripts/ci/all-package.sh"
       - "cmd/syedge-wrapper/**"
       - "cmd/syedge-agent/**"
       - "cmd/syedge-instance/**"
@@ -23,6 +24,7 @@ on:
       - "deploy/**"
       - "dataplane/**"
       - "scripts/release/**"
+      - "scripts/ci/all-package.sh"
       - "cmd/syedge-wrapper/**"
       - "cmd/syedge-agent/**"
       - "cmd/syedge-instance/**"
@@ -89,6 +91,7 @@ jobs:
       - name: GM and Lua upgrade package layout
         run: |
           bash scripts/ci/addon-package.sh
+          bash scripts/ci/all-package.sh
           bash scripts/ci/package-prefix.sh
       - name: build web
         run: cd web && pnpm install --frozen-lockfile && pnpm build
