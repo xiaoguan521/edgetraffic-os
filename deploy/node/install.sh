@@ -224,7 +224,14 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
     if [[ -n "$SW_OAP" ]]; then
       echo "== 安装 SkyWalking 库与初始化文件"
       sw_conf_dir="$(cd -P "$R/conf/current" && pwd -P)/conf.d"
-      sw_apply "$R" "$HERE/extras/skywalking/lualib" "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir" "$SW_STAGE/t.err" || die "SkyWalking 安装已中止并还原（上面是原因）；Lua 独立模式配置已写入但尚未 reload，运行中的 syedge 不受影响，修正后重新执行 install.sh 即可"
+      if ! sw_apply "$R" "$HERE/extras/skywalking/lualib" "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir" "$SW_STAGE/t.err"; then
+        # SkyWalking 的文件已还原；同时停用刚启用的 Lua 独立模式，让系统回到“尚未启用 Lua”的状态，
+        # 这样修正问题后重新执行 install.sh 才不会被 Lua 安装器以“主配置已含 load_module”拒绝
+        if (cd "$HERE/extras/lua" && bash install.sh --standalone-disable); then
+          die "SkyWalking 安装已中止并还原（上面是原因）；Lua 独立模式也已停用，运行中的 syedge 不受影响。修正后重新执行 install.sh 即可"
+        fi
+        die "SkyWalking 安装已中止并还原（上面是原因），但自动停用 Lua 独立模式失败：请先在 $HERE/extras/lua 执行 bash install.sh --standalone-disable，再重新执行 install.sh；运行中的 syedge 不受影响"
+      fi
     fi
     systemctl reload syedge.service || die "独立模式 Lua 已写入配置，但 reload 失败；请先看 $LOG_DIR/error.log"
     LUA_NOTE="Lua 附加包已安装，独立模式已启用并 reload；自己的 Lua 文件放在 $R/lualib/"

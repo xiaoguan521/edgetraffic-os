@@ -749,11 +749,6 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 				upd("FAILED", "读取节点状态失败："+err.Error(), "", true)
 				return
 			}
-			if checksErr != nil {
-				// 不带探活下发等于放弃业务验证：宁可不发布，也不静默省略
-				upd("FAILED", "无法生成探活计划，已停止下发："+checksErr.Error(), "", true)
-				return
-			}
 			var res *agentv1.CommandResult
 			if dep.Kind == "rollback" && !isLegacyRevision(rev) {
 				// 回滚优先切换节点本地已有的版本：不依赖授权状态，过期时也可用（规格书 8.6）
@@ -765,6 +760,12 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			// Native versions must always use the signed digest in Apply. A local
 			// rollback alone could execute files modified after the review.
 			if res == nil && err == nil {
+				if checksErr != nil {
+					// 要下发完整版本就必须带探活：不带探活等于放弃业务验证，宁可不发布，也不静默省略。
+					// （回滚到节点本地已有版本不需要探活计划，不在这里拦截。）
+					upd("FAILED", "无法生成探活计划，已停止下发："+checksErr.Error(), "", true)
+					return
+				}
 				msg := &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
 					RevisionId: rev.ID, ParentRevisionId: cur.AppliedRevision, BundleSha256: rev.Digest, PostChecks: checks, TimeoutSeconds: int32(ApplyTimeout / time.Second),
 				}}}
@@ -823,6 +824,10 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 		if failed == 0 {
 			status = "PENDING_NODES" // 全部离线：版本已生成，节点上线后对齐
 		}
+	}
+	if checksErr != nil && (status == "PENDING_NODES" || (status == "APPLIED" && applied == 0)) {
+		// 没有任何节点真正生效（无节点或全部离线）：读不出来的版本不能成为节点组当前版本
+		status = "FAILED"
 	}
 	q := d.q()
 	dp := q.Deployment
