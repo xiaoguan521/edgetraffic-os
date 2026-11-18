@@ -994,4 +994,4 @@ sudo ./install.sh \
 - SkyWalking 三个参数必须一起给，会自动按 `--lua-standalone` 处理（不接入控制台的节点才可用，不能与 `--no-lua`、`--server` 同时使用）；值在要求 root 之前校验（OAP 只接受 `http(s)://主机:端口`，名字只含字母、数字、点、下划线、连字符），示例地址会被拒绝。
   库放到 `<前缀>/lualib/`，`<前缀>/lualib` 下已有内容不同的同名文件、或 `conf.d/` 里已有文件定义了 `init_worker_by_lua_block` / `tracing_buffer` 时会停止，不覆盖也不制造重复定义。
   配置校验不通过会撤销写入的初始化文件。需要链路的 location 里的 `start` / `finish` / `prepareForReport` 仍由你写在站点配置里，见包内 `extras/skywalking/LUA-PLACEMENT.md`。
-- 结构与参数边界由 `scripts/ci/all-package.sh` 覆盖；真实安装由 release 工作流在正式标签上冒烟（首次引入，暂不阻塞发布）。
+- 结构与参数边界由 `scripts/ci/all-package.sh` 覆盖；真实安装由 release 工作流在正式标签上冒烟（失败会阻塞发布；其中 SkyWalking 参数的冒烟首次引入，暂不阻塞）。
