@@ -972,3 +972,20 @@ sudo sed -n '1,160p' /etc/syedge-console/console.env
 - [国密 TLCP 说明](gm.md)
 - [Lua 访问规则与附加包说明](lua.md)
 - [控制台高可用说明](ha.md)
+
+### 整合包（syedge-all）
+
+发布页的 `syedge-all-<版本>-linux-<架构>.tar.gz` 是节点包加国密版二进制和 Lua 附加包，首次安装时选变体，不用再分别下载、核对版本：
+
+```bash
+tar -xzf syedge-all-<版本>-linux-<架构>.tar.gz && cd syedge-all-<版本>-linux-<架构>
+sudo ./install.sh                    # 标准版 + Lua 附加包（默认）
+sudo ./install.sh --gmssl            # 国密版 + Lua 附加包
+sudo ./install.sh --no-lua           # 不装 Lua 附加包
+sudo ./install.sh --lua-standalone   # 不接入控制台：一步启用独立模式 Lua 并 reload
+```
+
+- 变体只在安装时选择；重复执行只更新文件，运行中的 master 不重启，新二进制在下次二进制热升级时生效。
+- 已装标准版的节点换国密版，用控制台的数据面热升级，不靠重装。
+- 整合包只用于首次安装与手动升级；经控制台升级仍使用厂商签名的单独升级包，整合包不进入验签流程。
+- 结构与参数边界由 `scripts/ci/all-package.sh` 覆盖；真实安装由 release 工作流在正式标签上冒烟（首次引入，暂不阻塞发布）。

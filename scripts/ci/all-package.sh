@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# 检查整合包（syedge-all）的目录结构与 install.sh 的参数边界：不需要 root、systemd 或真实数据面。
+#   整合包 = 节点包 + extras/gmssl（国密版二进制）+ extras/lua（Lua 附加包）。
+#   真实安装由 release 工作流在正式标签上的整合包冒烟步骤覆盖。
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$ROOT"
+W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+PREFIX=${SYEDGE_PREFIX:-/opt/syedge}
+[[ "$PREFIX" =~ ^(/[A-Za-z0-9._@+-]+)+$ ]] || { echo "SYEDGE_PREFIX must be a clean absolute path" >&2; exit 2; }
+fail=0
+ok()  { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=$((fail+1)); }
+
+# 假的节点包：只放整合包打包与 install.sh 参数检查需要的文件；install.sh 用真实模板（带编译前缀替换）
+VER=9.9.9
+N="$W/node/syedge-node-$VER-linux-amd64"
+mkdir -p "$N/rootfs$PREFIX/sbin" "$W/out"
+printf 'standard binary\n' > "$N/rootfs$PREFIX/sbin/syedge"
+sed "s|/opt/syedge|$PREFIX|g" deploy/node/install.sh > "$N/install.sh"
+sed "s|/opt/syedge|$PREFIX|g" deploy/node/uninstall.sh > "$N/uninstall.sh"
+chmod 0755 "$N/install.sh" "$N/uninstall.sh"
+cp docs/NOTICE "$N/NOTICE"
+tar -C "$W/node" -czf "$W/node.tar.gz" "syedge-node-$VER-linux-amd64"
+
+# 假的国密基础包（与真实包一样，目录树以编译前缀为根）
+mkdir -p "$W/gm$PREFIX/sbin"
+printf 'gmssl binary\n' > "$W/gm$PREFIX/sbin/syedge"
+tar -C "$W/gm" -czf "$W/gm.tar.gz" "${PREFIX#/}"
+
+# 假的 Lua 附加包（未改写版本的原始包：版本与数据面一致，标准版与国密版通用）
+mkdir -p "$W/lua/addon/lualib"
+printf '{"name":"syedge-lua","version":"1.30.6","syedge":"1.30.6"}\n' > "$W/lua/addon/VERSION"
+printf '%s\n' "$PREFIX" > "$W/lua/addon/PREFIX"
+printf 'syedge-lua 1.30.6\n' > "$W/lua/addon/NOTICE"
+cp dataplane/lua/install.sh dataplane/lua/uninstall.sh "$W/lua/"
+tar -C "$W/lua" -czf "$W/lua.tar.gz" install.sh uninstall.sh addon
+
+OUT="$W/out" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" > "$W/pack.log" 2>&1 \
+  || { cat "$W/pack.log"; echo "FAIL package.sh all 失败"; exit 1; }
+PKG="$W/out/syedge-all-$VER-linux-amd64.tar.gz"
+[[ -f "$PKG" ]] && ok "产出 syedge-all-$VER-linux-amd64.tar.gz" || { bad "没有产出整合包"; exit 1; }
+
+A="$W/x"; mkdir -p "$A"; tar -C "$A" -xzf "$PKG"
+D="$A/syedge-all-$VER-linux-amd64"
+[[ -d "$D" ]] && ok "解压目录名为 syedge-all-<版本>-linux-<架构>" || bad "解压目录名不对：$(ls "$A")"
+[[ -x "$D/install.sh" && -x "$D/uninstall.sh" ]] && ok "含 install.sh 与 uninstall.sh" || bad "缺少 install.sh / uninstall.sh"
+[[ $(cat "$D/rootfs$PREFIX/sbin/syedge") == 'standard binary' ]] && ok "rootfs 里是标准版二进制" || bad "rootfs 二进制不是标准版"
+[[ $(cat "$D/extras/gmssl/syedge" 2>/dev/null) == 'gmssl binary' && -x "$D/extras/gmssl/syedge" ]] && ok "extras/gmssl/syedge 是国密版二进制" || bad "缺少国密版二进制"
+[[ -f "$D/extras/lua/install.sh" && -f "$D/extras/lua/uninstall.sh" && -f "$D/extras/lua/addon/VERSION" ]] && ok "extras/lua 是完整的附加包" || bad "extras/lua 不完整"
+grep -q '"version":"1.30.6"' "$D/extras/lua/addon/VERSION" && ok "附加包版本保持原样（标准版与国密版通用）" || bad "附加包版本被改写"
+[[ -f "$D/README.txt" ]] && grep -q -- '--gmssl' "$D/README.txt" && ok "README 说明了变体选择" || bad "README 缺少 --gmssl 说明"
+if tar -tzf "$PKG" | grep -q 'extras/lua/addon/.*\.\./'; then bad "包内含上级目录路径"; else ok "包内没有 .. 路径"; fi
+
+# install.sh 的参数边界：全部发生在要求 root 之前，普通用户即可验证
+run() { bash "$D/install.sh" "$@" 2>&1 || true; }
+out=$(run --gmssl);                  [[ "$out" == *"请以 root"* ]] && ok "--gmssl 在整合包中被接受（随后因非 root 停止）" || bad "--gmssl 在整合包中不应被拒绝：$out"
+out=$(run --no-lua);                 [[ "$out" == *"请以 root"* ]] && ok "--no-lua 被接受" || bad "--no-lua 被拒绝：$out"
+out=$(run --lua-standalone);         [[ "$out" == *"请以 root"* ]] && ok "--lua-standalone 被接受" || bad "--lua-standalone 被拒绝：$out"
+out=$(run --no-lua --lua-standalone); [[ "$out" == *"互斥"* ]] && ok "--no-lua 与 --lua-standalone 互斥" || bad "互斥参数没有被拒绝：$out"
+out=$(run --lua-standalone --server h:1 --token t --ca-fingerprint f); [[ "$out" == *"独立模式"* && "$out" != *"请以 root"* ]] && ok "--lua-standalone 不能与控制台注册同时使用" || bad "独立模式与注册没有互斥：$out"
+
+# 普通节点包（没有 extras）收到整合包专属参数时要明确拒绝，不能悄悄装成标准版
+mkdir -p "$W/plain"; tar -C "$W/plain" -xzf "$W/node.tar.gz"
+P="$W/plain/syedge-node-$VER-linux-amd64"
+out=$(bash "$P/install.sh" --gmssl 2>&1 || true);  [[ "$out" == *"整合包"* && "$out" != *"请以 root"* ]] && ok "节点包不含国密版时 --gmssl 被拒绝并指向整合包" || bad "节点包没有拒绝 --gmssl：$out"
+out=$(bash "$P/install.sh" --lua-standalone 2>&1 || true); [[ "$out" == *"整合包"* && "$out" != *"请以 root"* ]] && ok "节点包不含 Lua 时 --lua-standalone 被拒绝" || bad "节点包没有拒绝 --lua-standalone：$out"
+out=$(bash "$P/install.sh" --no-lua 2>&1 || true); [[ "$out" == *"请以 root"* ]] && ok "节点包上 --no-lua 无害" || bad "节点包上的 --no-lua 被拒绝：$out"
+
+# 打包本身的边界
+if OUT="$W/out2" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/node.tar.gz" >/dev/null 2>&1; then bad "把不是附加包的文件当 Lua 附加包也被接受"; else ok "Lua 附加包结构不对时拒绝打包"; fi
+if OUT="$W/out3" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/lua.tar.gz" "$W/lua.tar.gz" >/dev/null 2>&1; then bad "没有国密版二进制的包也被接受"; else ok "国密包里没有 sbin/syedge 时拒绝打包"; fi
+
+echo "---- $fail failed"
+[[ $fail -eq 0 ]] || exit 1
+echo 'syedge-all 整合包结构与 install.sh 参数：OK'
