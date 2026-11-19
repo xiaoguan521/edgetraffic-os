@@ -14,16 +14,14 @@ func instanceProfile() Profile {
 	return Profile{Instance: "blue", HTTPPort: 18080, HTTPSPort: 18443, StatusPort: 8082}
 }
 
+// 不再有旧布局：空 Root 的档案跟随编译期默认根目录。
 func TestHistoricalProfileDoesNotFollowCompiledDefault(t *testing.T) {
 	l, err := (Profile{}).Layout()
-	if err != nil || l.Root() != "/opt/syedge" {
-		t.Fatalf("historical empty profile root = %q, %v", l.Root(), err)
+	if err != nil || l.Root() != layout.DefaultSystemRoot() {
+		t.Fatalf("empty profile root = %q, %v; want %q", l.Root(), err, layout.DefaultSystemRoot())
 	}
-	if !(Profile{}).SameInstance(Profile{Mode: "system", Root: "/opt/syedge"}) {
-		t.Fatal("historical and explicit legacy profiles differ")
-	}
-	if layout.DefaultSystemRoot() != "/opt/syedge" && (Profile{}).SameInstance(Profile{Mode: "system", Root: layout.DefaultSystemRoot()}) {
-		t.Fatal("new compiled root was mistaken for a legacy profile")
+	if !(Profile{}).SameInstance(Profile{Mode: "system", Root: layout.DefaultSystemRoot()}) {
+		t.Fatal("empty profile and explicit compiled-root profile differ")
 	}
 }
 
