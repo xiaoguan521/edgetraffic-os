@@ -15,6 +15,17 @@
 
 控制台也可以直接用镜像 `ghcr.io/xiaoguan521/edgetraffic-os/console:<版本>`。
 
+节点镜像（amd64 / arm64）：
+
+| 镜像 | 内容 | 构建时机 |
+|---|---|---|
+| `node` | 标准版数据面 + agent | 每次发布 |
+| `node-lua` | `node` + Lua 附加包（标准版模块） | 仅正式标签 |
+| `node-gm-lua` | 国密版数据面 + Lua 附加包（国密版模块） | 仅正式标签 |
+
+变体镜像用附加包自带的 `install.sh` 安装，路径与整合包一致；附加包副本留在镜像的 `/usr/local/share/syedge-lua/`。
+独立使用时启用独立模式 Lua：`docker exec <容器> bash /usr/local/share/syedge-lua/install.sh --standalone`，再 `-s reload`。
+
 ### 交付客户：边缘节点首次安装（装在每台 syedge 服务器上，四种方式任选一种）
 
 | 方式 | 文件 | 说明 |

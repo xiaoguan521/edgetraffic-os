@@ -8,7 +8,7 @@
 #   控制台包  syedge-console-<ver>-{linux,darwin}-{amd64,arm64}.tar.gz、-windows-{amd64,arm64}.zip
 #   节点包    syedge-node-<ver>-linux-{amd64,arm64}.tar.gz（syedge + agent + wrapper + install.sh）
 #   软件包    syedge / syedge-agent / syedge-console 的 RPM 与 DEB（amd64 / arm64），在 9 个发行版上安装冒烟
-#   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}，linux/amd64 + linux/arm64
+#   镜像      ghcr.io/xiaoguan521/edgetraffic-os/{console,node,demo-backend}（正式标签另有 node-lua、node-gm-lua），linux/amd64 + linux/arm64
 #
 # syedge 是 C 程序，在 x86_64 与 arm64 runner 上原生编译（manylinux2014 容器，glibc 2.17，OpenSSL / PCRE2 / zlib 静态链接），不用 QEMU；
 # Go 程序 CGO_ENABLED=0 交叉编译；构建任务先上传 Actions artifact，由 x86_64 发布任务统一上传到 Release 并生成 SHA256SUMS。
@@ -339,6 +339,40 @@ jobs:
             fi
             docker push -q "$ref"
           done
+          # 节点镜像变体（只在正式标签构建，Lua 附加包与国密版只在标签构建）：node-lua = 标准版 + Lua，node-gm-lua = 国密版 + Lua
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            base="$REGISTRY/node:$TAG-${{ matrix.arch }}"
+            V=$(mktemp -d)
+            mkdir -p "$V/lua" "$V/gm" "$V/gmx"
+            tar -C "$V/lua" -xzf "$OUT"/syedge-lua-*.tar.gz
+            tar -C "$V/gmx" -xzf dist/syedge-gm/syedge-*-gmssl-*.tar.gz
+            gm_bin=$(find "$V/gmx" -type f -path '*/sbin/syedge' | head -1)
+            [[ -n "$gm_bin" ]] || { echo 'no sbin/syedge in GM tarball' >&2; exit 1; }
+            for v in node-lua node-gm-lua; do
+              ctx=$(mktemp -d); cp -r "$V/lua" "$ctx/lua"
+              [[ $v == node-gm-lua ]] && { mkdir -p "$ctx/gm"; cp "$gm_bin" "$ctx/gm/syedge"; }
+              vref="$REGISTRY/$v:$TAG-${{ matrix.arch }}"
+              docker build -q --build-arg "BASE=$base" -f deploy/docker/node-variant.Dockerfile "${labels[@]}" -t "$vref" "$ctx"
+              docker run --rm --entrypoint test "$vref" -f "$SYEDGE_PREFIX/modules/lua/ngx_http_lua_module.so"
+              if [[ $v == node-gm-lua ]]; then
+                docker run --rm --entrypoint syedge "$vref" -V 2>&1 | grep -q enable-ntls
+              else
+                ! docker run --rm --entrypoint syedge "$vref" -V 2>&1 | grep -q enable-ntls
+              fi
+              docker run --rm --entrypoint syedge "$vref" -v
+              c=$(docker run -d "$vref")
+              ready=0
+              for i in $(seq 1 30); do
+                if docker logs "$c" 2>&1 | grep -q 'syedge started:'; then ready=1; break; fi
+                [[ $(docker inspect -f '{{.State.Running}}' "$c") == true ]] || break
+                sleep 1
+              done
+              docker logs "$c"
+              docker rm -f "$c" >/dev/null 2>&1 || true
+              [[ "$ready" == 1 ]] || { echo "$v image failed to start through its entrypoint" >&2; exit 1; }
+              docker push -q "$vref"
+            done
+          fi
 
   publish:
     needs: [meta, build]
@@ -352,7 +386,9 @@ jobs:
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           short=${GITHUB_SHA::7}
-          for name in console node demo-backend; do
+          names=(console node demo-backend)
+          [[ "$GITHUB_REF_TYPE" == tag ]] && names+=(node-lua node-gm-lua)
+          for name in "${names[@]}"; do
             tags=(-t "$REGISTRY/$name:$TAG" -t "$REGISTRY/$name:sha-$short")
             [[ "${{ needs.meta.outputs.stable }}" == true ]] && tags+=(-t "$REGISTRY/$name:latest")
             docker buildx imagetools create "${tags[@]}" "$REGISTRY/$name:$TAG-amd64" "$REGISTRY/$name:$TAG-arm64"
@@ -388,6 +424,7 @@ jobs:
             echo '```'
             echo "docker pull $REGISTRY/console:$TAG"
             echo "docker pull $REGISTRY/node:$TAG"
+            [[ "$GITHUB_REF_TYPE" == tag ]] && { echo "docker pull $REGISTRY/node-lua:$TAG"; echo "docker pull $REGISTRY/node-gm-lua:$TAG"; }
             echo "docker pull $REGISTRY/demo-backend:$TAG"
             echo '```'
             echo '```'; cat SHA256SUMS; echo '```'
