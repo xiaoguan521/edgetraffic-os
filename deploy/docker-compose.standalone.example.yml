@@ -1,24 +1,35 @@
 # 独立数据面（Docker）：只跑 syedge，不接控制台，配置由你手工维护。
-# 镜像：ghcr.io/xiaoguan521/edgetraffic-os/node:<版本>（amd64 / arm64）。不注册，容器里的 agent 就不会启动。
 #
+# ── 1. 下载镜像（ghcr.io/xiaoguan521/edgetraffic-os/，同一标签自动选 amd64 / arm64）────────────────
+#   node          标准版
+#   node-lua      标准版 + Lua
+#   node-gm-lua   国密版（铜锁）+ Lua
+#     docker pull ghcr.io/xiaoguan521/edgetraffic-os/node:<版本>
+#     docker pull ghcr.io/xiaoguan521/edgetraffic-os/node-lua:<版本>
+#     docker pull ghcr.io/xiaoguan521/edgetraffic-os/node-gm-lua:<版本>
+#   版本用 ETOS_TAG 指定（如 0.5.0），镜像名在下面 image 一行改；不注册控制台，容器里的 agent 就不会启动。
+#
+# ── 2. 路径约定 ─────────────────────────────────────────────────────────────────────────────────────
 # 镜像内安装根目录 P = 发布时的编译前缀（发布镜像为 /home/atwasoft/syedge）。卷只能挂 P 下的子目录，
-# 不能覆盖整个 P（里面有二进制）。配置、日志、pid、临时目录都在 P 下，手工运维只需 -p P，不需要 -c/-e。
+# 不能覆盖整个 P（里面有二进制）。配置、日志、pid、临时目录都在 P 下，手工运维只需 -p P，不需要 -c / -e。
+# 首次启动：目录为空时自动写入基线配置（conf/current -> releases/r000000，未匹配域名直接断开）。
 #
-# 首次启动：目录为空时自动写入基线配置（conf/current -> releases/r000000，未匹配域名直接断开，
-# 本机状态页 127.0.0.1:8081/__syedge_status）。启动后在宿主机编辑 ./conf/current/ 下的文件即可。
-#
+# ── 3. 第一次使用 ────────────────────────────────────────────────────────────────────────────────────
+#   export ETOS_TAG=0.5.0
 #   docker compose -f docker-compose.standalone.example.yml up -d
-#   cp 站点.conf ./conf/current/conf.d/www.conf
+#   mkdir -p conf/current/conf.d                 # 站点配置目录，首次需要自己建（主配置已 include conf.d/*.conf）
+#   docker compose exec syedge cat /home/atwasoft/syedge/share/defaults/standalone-example.conf > conf/current/conf.d/www.conf
+#   vi conf/current/conf.d/www.conf              # 改域名与后端（Linux 宿主机上文件属 root，用 sudo 编辑）
 #   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -t
 #   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
-# 生效配置只用 reload，不要 docker restart。
+# 之后改配置都是：编辑 -> -t 校验 -> -s reload。生效配置只用 reload，不要 docker restart。
 name: syedge
 
 services:
   syedge:
-    image: ghcr.io/xiaoguan521/edgetraffic-os/node:${ETOS_TAG:-latest}
+    image: ghcr.io/xiaoguan521/edgetraffic-os/node:${ETOS_TAG:-latest}   # 或 node-lua / node-gm-lua
     restart: unless-stopped
-    stop_grace_period: 30s              # 停止时 quit，优雅排空连接
+    stop_grace_period: 30s              # 停止时容器内执行 quit，优雅排空连接
     ulimits: { nofile: { soft: 65535, hard: 65535 } }
     ports:
       - "80:80"
@@ -26,27 +37,40 @@ services:
     volumes:
       # 配置：整个版本目录（syedge.conf、conf.d/、证书、Lua 脚本都在 conf/current 下）。
       - ./conf:/home/atwasoft/syedge/conf
-      # 日志：error.log、access.json（宿主机可直接查看、交给日志采集；目录会被容器内改属主给运行用户）。
+      # 日志：error.log、access.json（宿主机可直接查看、交给日志采集）。
       - ./logs:/home/atwasoft/syedge/logs
       # 站点静态文件（可选）：配置里 root 指向 /home/atwasoft/syedge/html/xxx
       # - ./html:/home/atwasoft/syedge/html:ro
-      # 你自己的 Lua 库（可选，需要 Lua 附加包，见下）：require("hello") 加载
+      # 你自己的 Lua 库（可选，node-lua / node-gm-lua）：require("hello") 加载
       # - ./lualib:/home/atwasoft/syedge/lualib:ro
       # cache/、run/ 不需要持久化。
+    healthcheck:                        # 本机状态页，只监听容器内回环地址
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/__syedge_status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # 需要时区或额外环境变量可加 environment；日志里的时间默认是 UTC
+    # environment: { TZ: Asia/Shanghai }
 
 # ---------------------------------------------------------------------------
-# 目录对应（宿主机 -> 配置里写的路径，include 一律用相对路径）
-#   ./conf/current/syedge.conf        主配置（include conf.d/*.conf）
-#   ./conf/current/conf.d/*.conf      你的站点配置
-#   ./conf/current/ssl/<域名>.crt|.key  证书：目录自己建；配置里写绝对路径
-#                                     ssl_certificate /home/atwasoft/syedge/conf/current/ssl/www.crt;
-#                                     私钥权限 0640，属组 syedge
-#   ./logs/                           日志，对应 P/logs
-# 注意：conf/current 是指向 releases/r000000 的软链，文件实际在 ./conf/releases/r000000/ 下；
-#       在宿主机编辑 ./conf/current/... 即可（软链是相对的，挂载后仍有效）。
-# Lua / 国密：用 node-lua（标准版 + Lua）或 node-gm-lua（国密版 + Lua）镜像，替换上面的 image 名即可。
-#   启用独立模式 Lua（配置已挂载持久化，只做一次）：
+# 目录对应（宿主机 -> 配置里写的路径；include 一律用相对路径，文件路径写绝对路径）
+#   ./conf/current/syedge.conf          主配置
+#   ./conf/current/conf.d/*.conf        你的站点配置
+#   ./conf/current/ssl/<域名>.crt|.key   证书：目录自己建，配置里写
+#                                       ssl_certificate     /home/atwasoft/syedge/conf/current/ssl/www.crt;
+#                                       ssl_certificate_key /home/atwasoft/syedge/conf/current/ssl/www.key;
+#                                       私钥放进去后在容器内保证 syedge 可读：
+#                                       docker compose exec chgrp syedge /home/atwasoft/syedge/conf/current/ssl/www.key
+#   ./logs/                             日志，对应 P/logs（error.log、access.json）
+# 注意：conf/current 是指向 releases/r000000 的相对软链，文件实际在 ./conf/releases/r000000/ 下；
+#       在宿主机编辑 ./conf/current/... 即可。不要删除或替换 ./conf/current 这个软链本身。
+#
+# Lua / 国密：换 image 为 node-lua（标准版 + Lua）或 node-gm-lua（国密版 + Lua）。
+#   启用独立模式 Lua（配置已挂载持久化，只做一次；节点不能已接入控制台）：
 #     docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone
 #     docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
-# 升级：保留 ./conf ./logs，替换镜像并重建容器；配置不变。
+#   国密证书与指令见仓库 docs/gm.md，Lua 用法见 docs/lua.md。
+#
+# 升级：保留 ./conf ./logs，把 ETOS_TAG 改成新版本，docker compose pull && docker compose up -d；配置不变。
 # 旧版（≤0.4.8）布局的目录与新布局不兼容，请用新目录重新开始。
