@@ -6,9 +6,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
+	agentv1 "github.com/xiaoguan521/edgetraffic-os/api/gen/agent/v1"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/storetest"
@@ -228,5 +232,129 @@ func TestApprovalCancelAndNoChanges(t *testing.T) {
 	}
 	if _, err := d.RequestRelease(g.ID, "nothing", "alice", ""); !errors.Is(err, ErrNoChanges) {
 		t.Fatalf("no changes: %v", err)
+	}
+}
+
+type recordedApply struct {
+	node     uint
+	revision string
+}
+
+// recordApplyAgents 记录收到的 Apply，节点一律回报成功。
+type recordApplyAgents struct{ sends chan recordedApply }
+
+func (a *recordApplyAgents) Online(uint) bool { return true }
+func (a *recordApplyAgents) Send(_ context.Context, node uint, msg *agentv1.ServerMessage, _ time.Duration) (*agentv1.CommandResult, error) {
+	if msg.GetApply() != nil {
+		a.sends <- recordedApply{node: node, revision: msg.GetApply().RevisionId}
+	}
+	return &agentv1.CommandResult{Status: agentv1.CommandResult_APPLIED}, nil
+}
+
+// 批准读到待审批请求后，另一位管理员驳回成功；批准不能再下发已驳回的版本。
+func TestApproveCannotDeliverARequestRejectedMeanwhile(t *testing.T) {
+	d, g := newTestService(t)
+	if err := d.SetApproval(true, "admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	addSite(t, d, g, "race-site")
+	node := &store.Node{GroupID: g.ID, Name: "edge", Status: "online"}
+	if err := query.Use(d.Store.DB).Node.WithContext(context.Background()).Create(node); err != nil {
+		t.Fatal(err)
+	}
+	agents := &recordApplyAgents{sends: make(chan recordedApply, 4)}
+	d.Agents = agents
+	baseline := currentRev(t, d, g)
+	req, err := d.RequestRelease(g.ID, "race", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 批准请求读到 pending 之后暂停（不占用数据库连接）
+	reached, resume := make(chan struct{}), make(chan struct{})
+	var paused atomic.Bool
+	db := d.Store.DB
+	if err := db.Callback().Query().After("gorm:query").Register("test:pause_after_pending", func(tx *gorm.DB) {
+		if tx.Statement.Table == "release_requests" && paused.CompareAndSwap(false, true) {
+			close(reached)
+			<-resume
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Callback().Query().Remove("test:pause_after_pending") }()
+
+	approved := make(chan error, 1)
+	go func() { _, err := d.Approve(req.ID, "approved", "bob", ""); approved <- err }()
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("approve never read the pending request")
+	}
+	if err := d.Reject(req.ID, "rejected", "carol", ""); err != nil {
+		close(resume)
+		t.Fatalf("reject: %v", err)
+	}
+	close(resume)
+	select {
+	case err := <-approved:
+		if !errors.Is(err, ErrRequestClosed) {
+			t.Fatalf("approve error = %v, want ErrRequestClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("approve did not finish")
+	}
+	select {
+	case s := <-agents.sends:
+		t.Fatalf("rejected request was delivered to node %d as %s", s.node, s.revision)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if cur := currentRev(t, d, g); cur != baseline {
+		t.Fatalf("group current revision changed to %s by a rejected request", cur)
+	}
+	detail, err := d.GetRequest(req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Status != ApprovalRejected {
+		t.Fatalf("request status = %s, want rejected", detail.Status)
+	}
+}
+
+// 正常批准仍会下发，请求记录批准人与对应的发布记录。
+func TestApproveStillDeliversAndLinksTheDeployment(t *testing.T) {
+	d, g := newTestService(t)
+	if err := d.SetApproval(true, "admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	addSite(t, d, g, "ok-site")
+	node := &store.Node{GroupID: g.ID, Name: "edge", Status: "online"}
+	if err := query.Use(d.Store.DB).Node.WithContext(context.Background()).Create(node); err != nil {
+		t.Fatal(err)
+	}
+	agents := &recordApplyAgents{sends: make(chan recordedApply, 4)}
+	d.Agents = agents
+	req, err := d.RequestRelease(g.ID, "ok", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := d.Approve(req.ID, "go", "bob", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := waitDone(t, d, dep); done.Status != "APPLIED" {
+		t.Fatalf("deployment status = %s", done.Status)
+	}
+	select {
+	case s := <-agents.sends:
+		if s.revision != req.RevisionID {
+			t.Fatalf("delivered %s, want %s", s.revision, req.RevisionID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approved release was not delivered")
+	}
+	detail, _ := d.GetRequest(req.ID)
+	if detail.Status != ApprovalApproved || detail.ReviewedBy != "bob" || detail.DeploymentID != dep.ID {
+		t.Fatalf("request = %+v", detail.ReleaseRequest)
 	}
 }

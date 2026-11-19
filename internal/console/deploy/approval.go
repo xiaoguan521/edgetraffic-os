@@ -254,11 +254,13 @@ func (d *Service) Approve(id uint, comment, user, ip string) (*store.Deployment,
 		return nil, err
 	}
 	note := strings.TrimSpace(fmt.Sprintf("%s（审批 #%d：%s 提交，%s 批准）", req.Note, req.ID, req.RequestedBy, user))
-	dep, err := d.start(lk, g, rev, "publish", note, user, nil) // start 负责释放锁
+	// 先把请求原子地改为已批准，再向节点下发：读取 pending 到这里之间另一位管理员可能已驳回或撤回，
+	// 此时 close 返回 ErrRequestClosed，发布记录标记失败，不会向任何节点发送已关闭的请求的版本。
+	// start 负责释放锁。
+	dep, err := d.startWithMode(lk, g, rev, "publish", note, user, nil, false, func(depID uint) error {
+		return d.close(d.q(), id, ApprovalApproved, user, comment, depID)
+	})
 	if err != nil {
-		return nil, err
-	}
-	if err := d.close(d.q(), id, ApprovalApproved, user, comment, dep.ID); err != nil {
 		return nil, err
 	}
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.approve", ObjectType: "release_request", ObjectID: fmt.Sprint(id),
