@@ -118,19 +118,20 @@ ci_fail() { # <日志> <行数>：在 GitHub Actions 中把失败日志的末尾
 
 # 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
 # auth_request：规则积木的外部鉴权（P10）
+# 配置、pid、日志、临时目录都编译为相对前缀的路径（与 openresty 相同）：以 -p <实例前缀> 启动即可，不需要 -c、-e。
 CONF=(\
   --prefix="$PREFIX" \
   --sbin-path="$PREFIX/sbin/$B" \
-  --conf-path="$PREFIX/conf/current/$B.conf" \
-  --pid-path=/run/$B/$B.pid \
-  --lock-path=/run/$B/$B.lock \
-  --error-log-path=/var/log/$B/error.log \
-  --http-log-path=/var/log/$B/access.log \
-  --http-client-body-temp-path=/var/cache/$B/client_temp \
-  --http-proxy-temp-path=/var/cache/$B/proxy_temp \
-  --http-fastcgi-temp-path=/var/cache/$B/fastcgi_temp \
-  --http-uwsgi-temp-path=/var/cache/$B/uwsgi_temp \
-  --http-scgi-temp-path=/var/cache/$B/scgi_temp \
+  --conf-path=conf/current/$B.conf \
+  --pid-path=run/$B.pid \
+  --lock-path=run/$B.lock \
+  --error-log-path=logs/error.log \
+  --http-log-path=logs/access.log \
+  --http-client-body-temp-path=cache/client_temp \
+  --http-proxy-temp-path=cache/proxy_temp \
+  --http-fastcgi-temp-path=cache/fastcgi_temp \
+  --http-uwsgi-temp-path=cache/uwsgi_temp \
+  --http-scgi-temp-path=cache/scgi_temp \
   --user=$B --group=$B \
   --with-threads --with-file-aio --with-compat \
   --with-http_ssl_module --with-http_v2_module --with-http_v3_module \

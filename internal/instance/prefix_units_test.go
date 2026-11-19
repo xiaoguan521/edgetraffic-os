@@ -8,20 +8,15 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/layout"
 )
 
-func TestCompiledNonLegacyRootUsesItsOwnDirectories(t *testing.T) {
+// 软件包单元的路径都以编译期默认根目录为前缀，默认根目录（不在 /home 下）不需要改写。
+func TestCompiledRootUnitIsUnchanged(t *testing.T) {
 	root := layout.DefaultSystemRoot()
-	if root == layout.LegacySystemRoot() {
-		t.Skip("requires a non-legacy compiled prefix")
+	if strings.HasPrefix(root, "/home/") {
+		t.Skip("a /home compiled prefix needs the home sandbox rewrite")
 	}
-	src := "[Service]\nStateDirectory=syedge-agent\nReadWritePaths=/var/lib/syedge-agent /var/log/syedge /var/cache/syedge\n"
-	got := prefixUnit(src, root, true)
-	for _, want := range []string{root + "/agent", root + "/logs", root + "/cache"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in %q", want, got)
-		}
-	}
-	if strings.Contains(got, "StateDirectory=") {
-		t.Error("legacy state directory remained")
+	src := "[Service]\nReadWritePaths=" + root + "/agent " + root + "/logs " + root + "/cache\nExecStart=" + root + "/sbin/syedge -p " + root + "\n"
+	if got := prefixUnit(src, root, true); got != src {
+		t.Errorf("default root unit rewritten:\n%s", got)
 	}
 }
 
@@ -30,11 +25,10 @@ func TestPrefixUnitCustomRootIsIdempotent(t *testing.T) {
 ConditionPathExists=/opt/syedge/instances/%i/instance.json
 
 [Service]
-ReadWritePaths=/opt/syedge/instances/%i/conf /var/lib/syedge-agent-%i /run/syedge-agent-%i -/run/syedge-%i /var/log/syedge-%i /var/cache/syedge-%i -/opt/syedge/versions /opt/syedge/sbin
-StateDirectory=syedge-agent-%i
+ReadWritePaths=/opt/syedge/instances/%i/conf /opt/syedge/instances/%i/agent /run/syedge-agent-%i /opt/syedge/instances/%i/run /opt/syedge/instances/%i/logs /opt/syedge/instances/%i/cache -/opt/syedge/versions /opt/syedge/sbin
 ExecStart=/usr/bin/syedge-agent run -instance %i
-ExecStartPre=/opt/syedge/sbin/syedge -t -q -c /opt/syedge/instances/%i/conf/current/syedge.conf
-ExecReload=/opt/syedge/sbin/syedge -s reload
+ExecStartPre=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i -t -q
+ExecReload=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i -s reload
 `
 	got := prefixUnit(src, "/data/syedge", true)
 	if !strings.Contains(got, "ConditionPathExists=/data/syedge/instances/%i/instance.json") {
@@ -43,14 +37,15 @@ ExecReload=/opt/syedge/sbin/syedge -s reload
 	if !strings.Contains(got, "ReadWritePaths=/data/syedge/instances/%i/conf /data/syedge/instances/%i/agent") {
 		t.Error("read-write paths were not rebased")
 	}
-	if strings.Contains(got, "StateDirectory=") {
-		t.Error("StateDirectory must be removed for a custom root")
+	// 数据面只带 -p，不追加 -c、-e
+	if !strings.Contains(got, "ExecStartPre=/data/syedge/sbin/syedge -p /data/syedge/instances/%i -t -q\n") {
+		t.Errorf("custom ExecStartPre = %q", got)
 	}
-	if !strings.Contains(got, "ExecStartPre=/data/syedge/sbin/syedge -t -q -c /data/syedge/instances/%i/conf/current/syedge.conf -e /data/syedge/instances/%i/logs/error.log -p /data/syedge") {
-		t.Error("custom ExecStartPre was not completed")
+	if !strings.Contains(got, "ExecReload=/data/syedge/sbin/syedge -p /data/syedge/instances/%i -s reload\n") {
+		t.Error("custom ExecReload was not rebased")
 	}
-	if !strings.Contains(got, "ExecReload=/data/syedge/sbin/syedge -s reload -c /data/syedge/conf/current/syedge.conf -e /data/syedge/logs/error.log -p /data/syedge") {
-		t.Error("custom ExecReload was not completed")
+	if strings.Contains(got, " -e ") || strings.Contains(got, " -c ") {
+		t.Errorf("unit must not carry -c/-e:\n%s", got)
 	}
 	if again := prefixUnit(got, "/data/syedge", true); again != got {
 		t.Error("prefixUnit is not idempotent")

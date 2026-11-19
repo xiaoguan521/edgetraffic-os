@@ -33,14 +33,8 @@ import (
 // bg 用于不依附单个请求的统计查询。
 var bg = context.Background()
 
-// 旧档案的空根目录始终表示历史安装；新建节点组显式保存当前发行包的默认目录。
-func defaultGroupProfile() string {
-	if layout.DefaultSystemRoot() == layout.LegacySystemRoot() {
-		return ""
-	}
-	b, _ := json.Marshal(render.Profile{Mode: string(layout.ModeSystem), Root: layout.DefaultSystemRoot()})
-	return string(b)
-}
+// 空档案表示编译期默认安装根目录（layout.DefaultSystemRoot），新建节点组不需要显式保存。
+func defaultGroupProfile() string { return "" }
 
 func (s *Server) q() *query.Query { return query.Use(s.Store.DB) }
 

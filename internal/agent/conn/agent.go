@@ -49,12 +49,12 @@ import (
 // Config 是 agent 的运行参数。
 type Config struct {
 	Server       string         // 控制台 gRPC 地址 host:port
-	StateDir     string         // /var/lib/syedge-agent
+	StateDir     string         // <前缀>/agent
 	DataplaneBin string         // /opt/syedge/sbin/syedge（只读取 -V 与 sha256，不直接执行变更）
 	StatusURL    string         // http://127.0.0.1:8081/__syedge_status
 	VersionURL   string         // http://127.0.0.1:8081/__syedge_version：本实例 worker 实际运行的版本
 	Profile      render.Profile // 本机实例档案（默认实例为零值），注册与上线时上报
-	AccessLog    string         // /var/log/syedge/access.json
+	AccessLog    string         // <前缀>/logs/access.json
 	Heartbeat    time.Duration
 	Apply        apply.Config
 	Modules      string // /opt/syedge/modules（syedge-lua 附加包，只读取版本信息上报）

@@ -28,15 +28,13 @@ http {
       '"status":$status,"bytes":$body_bytes_sent,"rt":$request_time,'
       '"urt":"$upstream_response_time","ua":"$http_user_agent"}';
     access_log  {{ .P.AccessLog }}  edge_json;
-{{- if .P.CustomTemp }}
 
-    # 本实例的临时目录（覆盖编译期默认值）
+    # 本实例的临时目录（始终显式写出，配置不依赖二进制的编译期默认值）
     client_body_temp_path  {{ .P.TempDir }}/client_temp;
     proxy_temp_path        {{ .P.TempDir }}/proxy_temp;
     fastcgi_temp_path      {{ .P.TempDir }}/fastcgi_temp;
     uwsgi_temp_path        {{ .P.TempDir }}/uwsgi_temp;
     scgi_temp_path         {{ .P.TempDir }}/scgi_temp;
-{{- end }}
 
     client_header_timeout  10s;
     client_body_timeout    10s;

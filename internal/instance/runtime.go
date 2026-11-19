@@ -251,14 +251,14 @@ func (e Env) preserveInstanceData(l layout.Layout) (string, error) {
 func (e Env) writeIndependentUnits(l layout.Layout) error {
 	unit := fmt.Sprintf(`[Service]
 ExecStartPre=
-ExecStartPre=%[1]s -p %[4]s -t -q -e %[2]s -c %[3]s
+ExecStartPre=%[1]s -p %[2]s -t -q
 ExecStart=
-ExecStart=%[1]s -p %[4]s -e %[2]s -c %[3]s
+ExecStart=%[1]s -p %[2]s
 ExecReload=
-ExecReload=%[1]s -p %[4]s -e %[2]s -c %[3]s -s reload
+ExecReload=%[1]s -p %[2]s -s reload
 ExecStop=
-ExecStop=%[1]s -p %[4]s -e %[2]s -c %[3]s -s quit
-`, l.Bin(), l.ErrorLog(), l.CurrentConf(), l.RuntimeRoot())
+ExecStop=%[1]s -p %[2]s -s quit
+`, l.Bin(), l.Prefix())
 	agent := fmt.Sprintf("[Service]\nReadWritePaths=%s %s %s\n", filepath.Dir(l.Bin()), l.Versions(), l.Modules())
 	for _, item := range []struct{ unit, body string }{{l.DataplaneUnit(), unit}, {l.AgentUnit(), agent}} {
 		dir := e.path("/etc/systemd/system/" + item.unit + ".d")

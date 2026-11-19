@@ -17,11 +17,7 @@ W=$(mktemp -d); JAR=$W/jar
 B=http://127.0.0.1:18443/api/v1
 ROOT=${SMOKE_PREFIX:-${SYEDGE_PREFIX:-/opt/syedge}}
 DEFAULT_ROOT=${SYEDGE_PREFIX:-/opt/syedge}
-if [[ "$ROOT" == /opt/syedge ]]; then
-  LOG_DIR=/var/log/syedge
-else
-  LOG_DIR="$ROOT/logs"
-fi
+LOG_DIR="$ROOT/logs"
 PREFIX_ARGS=()
 [[ -z "${SMOKE_PREFIX:-}" ]] || PREFIX_ARGS=(--prefix "$SMOKE_PREFIX")
 [[ "${SMOKE_ROOT_MASTER:-}" != 1 ]] || PREFIX_ARGS+=(--root-master)
@@ -101,7 +97,7 @@ expect "worker 以 syedge 用户运行" "$(ps -o user= -C syedge | sort -u | tr 
 if ps -eo args | grep -v grep | grep -qi 'ngi''nx'; then bad "进程列表出现上游名"; else ok "进程列表无上游名"; fi
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/ || true)
 expect "基线配置：未知域名直接断开" "$code" "000"
-MASTER=$(cat /run/syedge/syedge.pid)
+MASTER=$(cat $ROOT/run/syedge.pid)
 if [[ "${SMOKE_HOME_SANDBOX:-}" == 1 ]]; then
   expect "数据面 home 沙箱" "$(systemctl show syedge.service -p ProtectHome --value)" "tmpfs"
   check_home_sandbox "$MASTER" "数据面"
@@ -128,7 +124,7 @@ if out=$(sudo syedge-instance add solo --http 28080 --https 28443 --status 28081
   ok "独立实例创建成功"
   expect "独立实例 systemd 服务运行" "$(systemctl is-active syedge@solo.service)" "active"
   expect "独立实例资源列表" "$(sudo syedge-instance runtimes)" "$(printf 'solo\tindependent\t%s/instances/solo' "$ROOT")"
-  SOLO_PID=$(cat /run/syedge-solo/syedge.pid 2>/dev/null || true)
+  SOLO_PID=$(cat $ROOT/instances/solo/run/syedge.pid 2>/dev/null || true)
   expect "独立实例使用自己的程序" "$(sudo readlink "/proc/$SOLO_PID/exe" 2>/dev/null)" "$ROOT/instances/solo/sbin/syedge"
   if sudo syedge-instance reopen-all >/dev/null 2>&1; then ok "共享及独立实例日志轮转"; else bad "独立实例日志重新打开失败"; fi
 else
@@ -173,7 +169,7 @@ fi
 expect "重复安装保留静态文件" "$(cat "$ROOT/html/index.html")" "standalone-static-preserved"
 expect "重复安装保留轮转策略" "$(cat /etc/logrotate.d/syedge)" "smoke-logrotate-policy"
 if [[ -n "$SOLO_PID" ]]; then
-  expect "重复安装保留独立实例" "$(cat /run/syedge-solo/syedge.pid 2>/dev/null)" "$SOLO_PID"
+  expect "重复安装保留独立实例" "$(cat $ROOT/instances/solo/run/syedge.pid 2>/dev/null)" "$SOLO_PID"
   expect "独立实例状态页" "$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:28081/__syedge_status)" "200"
 fi
 online=0
@@ -202,7 +198,7 @@ done
 expect "发布生效" "$st" "APPLIED"
 expect "站点返回内容" "$(curl -s --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "smoke ok"
 expect "Server 头为 SyEdge" "$(curl -sI --max-time 3 -H 'Host: smoke.local' http://127.0.0.1/)" "Server: SyEdge"
-expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat /run/syedge/syedge.pid)" "$MASTER"
+expect "发布与升级全程未重启 syedge（master PID 不变）" "$(cat $ROOT/run/syedge.pid)" "$MASTER"
 if [[ -n "$SOLO_PID" ]]; then
   if [[ "$ROOT" != /opt/syedge ]]; then
     printf 'preserved\n' | sudo tee "$ROOT/instances/solo/logs/preserve-smoke.log" "$ROOT/instances/solo/cache/preserve-smoke.cache" >/dev/null
@@ -215,7 +211,7 @@ if [[ -n "$SOLO_PID" ]]; then
       bad "独立实例删除时未保留日志或缓存"
     fi
   fi
-  expect "删除独立实例不影响默认实例" "$(cat /run/syedge/syedge.pid)" "$MASTER"
+  expect "删除独立实例不影响默认实例" "$(cat $ROOT/run/syedge.pid)" "$MASTER"
 fi
 
 echo "== systemd 优雅停止时保留正在传输的连接"

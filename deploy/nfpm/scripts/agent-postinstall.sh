@@ -11,12 +11,8 @@ if [ -e /etc/syedge/prefix ] && ! runuser -u syedge-agent -- test -r /etc/syedge
   echo "syedge-agent: 无法读取 /etc/syedge/prefix，请检查父目录权限" >&2
   exit 1
 fi
-if [ "$r" = "$LEGACY_ROOT" ]; then
-  state=/var/lib/syedge-agent
-else
-  state="$r/agent"
-fi
-mkdir -p "$state" /run/syedge-agent /run/syedge "$r/conf/releases" "$r/versions" "$r/modules"
+state="$r/agent"
+mkdir -p "$state" /run/syedge-agent "$r/run" "$r/conf/releases" "$r/versions" "$r/modules"
 chmod 0750 "$state"
 if command -v visudo >/dev/null 2>&1; then
   if ! visudo -cf /etc/sudoers.d/syedge-agent >/dev/null 2>&1; then

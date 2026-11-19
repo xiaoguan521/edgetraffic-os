@@ -14,7 +14,7 @@ func prefixUnitHeader() string { return "# " + brand.ID() + "-instance prefix �
 // prefixUnit 把软件包提供的 systemd 单元改写为自定义安装根目录。它只改写
 // 路径与数据面启动参数，并且对已生成的内容再次执行仍得到相同结果。
 func prefixUnit(src, root string, homeSandbox bool) string {
-	if root == "" || (root == layout.DefaultSystemRoot() && root == layout.LegacySystemRoot()) {
+	if root == "" || !needsUnitRewrite(root) {
 		return src
 	}
 	var b strings.Builder
@@ -23,9 +23,6 @@ func prefixUnit(src, root string, homeSandbox bool) string {
 	for _, raw := range strings.Split(strings.TrimRight(src, "\n"), "\n") {
 		t := strings.TrimSpace(raw)
 		if strings.HasPrefix(t, prefixUnitHeader()) || strings.HasPrefix(t, "# 每次执行 "+brand.ID()+"-instance nonroot 都会按软件包单元重新生成；删除安装根目录标记") {
-			continue
-		}
-		if root != layout.LegacySystemRoot() && strings.HasPrefix(t, "StateDirectory=") {
 			continue
 		}
 		if strings.HasPrefix(root, "/home/") {
@@ -43,52 +40,24 @@ func prefixUnit(src, root string, homeSandbox bool) string {
 				continue
 			}
 		}
-		line := raw
-		var replacements []struct{ from, to string }
-		if root != layout.LegacySystemRoot() {
-			replacements = append(replacements, []struct{ from, to string }{
-				{"/var/lib/" + brand.Agent() + "-%i", root + "/instances/%i/agent"},
-				{"/var/lib/" + brand.Agent(), root + "/agent"},
-				{"/var/log/" + brand.ID() + "-%i", root + "/instances/%i/logs"},
-				{"/var/log/" + brand.ID(), root + "/logs"},
-				{"/var/cache/" + brand.ID() + "-%i", root + "/instances/%i/cache"},
-				{"/var/cache/" + brand.ID(), root + "/cache"},
-			}...)
-		}
-		replacements = append(replacements, struct{ from, to string }{layout.DefaultSystemRoot(), root})
-		for _, r := range replacements {
-			line = strings.ReplaceAll(line, r.from, r.to)
-		}
-		if strings.Contains(line, "/sbin/"+brand.ID()) && (strings.HasPrefix(t, "ExecStart") || strings.HasPrefix(t, "ExecReload") || strings.HasPrefix(t, "ExecStop")) {
-			conf := root + "/conf/current/" + brand.ConfName()
-			errlog := layout.SystemAt(root, "").ErrorLog()
-			if strings.Contains(line, "/instances/%i/") {
-				conf = root + "/instances/%i/conf/current/" + brand.ConfName()
-				if root == layout.LegacySystemRoot() {
-					errlog = "/var/log/" + brand.ID() + "-%i/error.log"
-				} else {
-					errlog = root + "/instances/%i/logs/error.log"
-				}
-			}
-			if !strings.Contains(line, " -c ") {
-				line += " -c " + conf
-			}
-			if !strings.Contains(line, " -e ") {
-				line += " -e " + errlog
-			}
-			if !strings.Contains(line, " -p ") {
-				line += " -p " + root
-			}
-		}
+		// 软件包单元里的路径都以编译期默认根目录为前缀（数据面、日志、pid、agent 状态都在其下），
+		// 自定义根目录只需整体替换该前缀；数据面启动参数只有 -p，不带 -c、-e。
+		line := strings.ReplaceAll(raw, layout.DefaultSystemRoot(), root)
 		b.WriteString(line + "\n")
 	}
 	return b.String()
 }
 
-// customSystemRoot 报告本机 system 模式是否使用了非默认根目录。
+// needsUnitRewrite 报告该根目录下的软件包单元是否需要改写：非编译期默认根目录，
+// 或位于 /home 下（需要沙箱适配）。
+func needsUnitRewrite(root string) bool {
+	return root != layout.DefaultSystemRoot() || strings.HasPrefix(root, "/home/")
+}
+
+// customSystemRoot 报告本机 system 模式的单元是否需要按根目录改写。
 func (e Env) customSystemRoot() (string, bool) {
 	root := e.lay("").Root()
-	return root, root != layout.DefaultSystemRoot() || root != layout.LegacySystemRoot()
+	return root, needsUnitRewrite(root)
 }
 
 var prefixUnits = []string{
@@ -123,10 +92,7 @@ func (e Env) writePrefixUnits() error {
 		}
 		e.say("   %s：已按 %s 生成自定义根目录单元 /etc/systemd/system/%s", unit, src, unit)
 	}
-	if root != layout.LegacySystemRoot() {
-		return e.writeLogrotate(root)
-	}
-	return nil
+	return e.writeLogrotate(root)
 }
 
 func (e Env) homeSandbox() bool { return e.HomeSandbox != nil && e.HomeSandbox() }

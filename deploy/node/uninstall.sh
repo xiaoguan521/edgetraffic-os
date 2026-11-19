@@ -21,7 +21,6 @@ done
 [[ $EUID -eq 0 ]] || { echo "uninstall: 请以 root 运行" >&2; exit 1; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LEGACY_ROOT=/opt/"syedge" # 不随编译前缀模板替换
 if [[ -x "$HERE/rootfs/usr/sbin/syedge-instance" ]]; then
   instance_tool="$HERE/rootfs/usr/sbin/syedge-instance"
 elif [[ -x /usr/libexec/syedge/syedge-instance ]]; then
@@ -41,15 +40,10 @@ else
 fi
 [[ -n "$R" && "$R" != / ]] || { echo "uninstall: 安装根目录无效" >&2; exit 1; }
 [[ ! -L "$R" ]] || { echo "uninstall: 安装根目录不能是符号链接" >&2; exit 1; }
-if [[ "$R" == "$LEGACY_ROOT" ]]; then
-  LOG_DIR=/var/log/syedge
-  CACHE_DIR=/var/cache/syedge
-  STATE_DIR=/var/lib/syedge-agent
-else
-  LOG_DIR="$R/logs"
-  CACHE_DIR="$R/cache"
-  STATE_DIR="$R/agent"
-fi
+LOG_DIR="$R/logs"
+CACHE_DIR="$R/cache"
+RUN_DIR="$R/run"
+STATE_DIR="$R/agent"
 
 purge_arg=(); [[ $PURGE -eq 1 ]] && purge_arg=(--purge)
 if [[ -n "$INSTANCE" ]]; then
@@ -76,8 +70,8 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   fi
 fi
 
-if [[ -f /run/syedge/syedge.pid && -x "$R/sbin/syedge" ]]; then
-  "$R/sbin/syedge" -p "$R" -e "$LOG_DIR/error.log" -c "$R/conf/current/syedge.conf" -s quit >/dev/null 2>&1 || true
+if [[ -f "$RUN_DIR/syedge.pid" && -x "$R/sbin/syedge" ]]; then
+  "$R/sbin/syedge" -p "$R" -s quit >/dev/null 2>&1 || true
 fi
 
 rm -f /usr/sbin/syedge /usr/bin/syedge-agent /usr/libexec/syedge/syedge-wrapper /usr/sbin/syedge-firewall
@@ -95,7 +89,7 @@ fi
 
 if [[ $PURGE -eq 1 ]]; then
   # 安装根目录可能与控制台或其他应用共用，绝不能整棵删除。
-  rm -rf "$R/conf" "$R/agent" "$R/logs" "$R/cache" "$R/share" "$R/html" "$R/instances" "$R/removed-instances"
+  rm -rf "$R/conf" "$R/agent" "$R/logs" "$R/cache" "$R/run" "$R/share" "$R/html" "$R/instances" "$R/removed-instances"
   rm -rf "$STATE_DIR" /var/lib/syedge-agent-* /var/lib/syedge-firewall "$LOG_DIR" "$CACHE_DIR" /etc/syedge-agent /run/syedge /run/syedge-* /run/syedge-agent /run/syedge-agent-*
   rmdir "$R" 2>/dev/null || echo "保留 $R 下不属于节点的文件。"
   rm -f /etc/syedge/prefix

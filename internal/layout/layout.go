@@ -60,11 +60,8 @@ func DefaultSystemRoot() string {
 	if defaultSystemRoot != "" {
 		return defaultSystemRoot
 	}
-	return LegacySystemRoot()
+	return "/opt/" + brand.ID()
 }
-
-// LegacySystemRoot 是历史版本和未显式指定根目录的节点组档案所使用的固定路径。
-func LegacySystemRoot() string { return "/opt/" + brand.ID() }
 
 // System 返回 system 模式下的布局。根目录从 /etc/syedge/prefix 读取一次；标记
 // 缺失时使用 DefaultSystemRoot。实例名非法或标记无效时 panic：命令入口应在
@@ -128,9 +125,6 @@ func ValidateSystemRoot(root string) error {
 	}
 	if root != DefaultSystemRoot() && strings.HasPrefix(root, DefaultSystemRoot()+"/") {
 		return fmt.Errorf("system install root %s is inside the default installation", root)
-	}
-	if root != LegacySystemRoot() && strings.HasPrefix(root, LegacySystemRoot()+"/") {
-		return fmt.Errorf("system install root %s is inside the legacy installation", root)
 	}
 	return nil
 }
@@ -217,35 +211,17 @@ func (l Layout) Versions() string { return path.Join(l.runtimeRoot(), "versions"
 // Modules 返回实例使用的共享或独立动态模块目录。
 func (l Layout) Modules() string { return path.Join(l.runtimeRoot(), "modules") }
 
+// 实例的全部运行文件都在实例前缀 P 下（与数据面编译期的相对路径 run/、logs/、cache/ 一致），
+// 因此以 -p P 启动的数据面不需要 -c、-e。
+
 // RunDir 返回实例的运行目录（pid、锁）。
-func (l Layout) RunDir() string {
-	if l.mode == ModeUser {
-		return path.Join(l.Prefix(), "run")
-	}
-	return "/run/" + brand.ID() + l.suffix()
-}
+func (l Layout) RunDir() string { return path.Join(l.Prefix(), "run") }
 
 // LogDir 返回实例的日志目录。
-func (l Layout) LogDir() string {
-	if l.mode == ModeUser {
-		return path.Join(l.Prefix(), "logs")
-	}
-	if l.root != LegacySystemRoot() {
-		return path.Join(l.Prefix(), "logs")
-	}
-	return "/var/log/" + brand.ID() + l.suffix()
-}
+func (l Layout) LogDir() string { return path.Join(l.Prefix(), "logs") }
 
 // CacheDir 返回实例的临时文件目录。
-func (l Layout) CacheDir() string {
-	if l.mode == ModeUser {
-		return path.Join(l.Prefix(), "cache")
-	}
-	if l.root != LegacySystemRoot() {
-		return path.Join(l.Prefix(), "cache")
-	}
-	return "/var/cache/" + brand.ID() + l.suffix()
-}
+func (l Layout) CacheDir() string { return path.Join(l.Prefix(), "cache") }
 
 // PidFile 返回实例 master 的 pid 文件。
 func (l Layout) PidFile() string { return path.Join(l.RunDir(), brand.PidName()) }
@@ -257,15 +233,7 @@ func (l Layout) ErrorLog() string { return path.Join(l.LogDir(), "error.log") }
 func (l Layout) AccessLog() string { return path.Join(l.LogDir(), "access.json") }
 
 // AgentState 返回该实例 agent 的身份与状态目录。
-func (l Layout) AgentState() string {
-	if l.mode == ModeUser {
-		return path.Join(l.Prefix(), "agent")
-	}
-	if l.root != LegacySystemRoot() {
-		return path.Join(l.Prefix(), "agent")
-	}
-	return "/var/lib/" + brand.Agent() + l.suffix()
-}
+func (l Layout) AgentState() string { return path.Join(l.Prefix(), "agent") }
 
 // AgentLock 返回该实例 agent 的发布互斥锁。
 func (l Layout) AgentLock() string {
@@ -374,20 +342,6 @@ func LoadSystemRootAt(fsroot string) (string, error) {
 	fi, err := os.Lstat(marker)
 	if errors.Is(err, os.ErrNotExist) {
 		root := DefaultSystemRoot()
-		if root != LegacySystemRoot() {
-			legacy := filepath.Join(fsroot, filepath.FromSlash(LegacySystemRoot()), "conf", "current")
-			if _, e := os.Lstat(legacy); e == nil {
-				current := filepath.Join(fsroot, filepath.FromSlash(root), "conf", "current")
-				if _, e = os.Lstat(current); e == nil {
-					return "", fmt.Errorf("both legacy and default installations exist; specify %s", PrefixMarker())
-				} else if !errors.Is(e, os.ErrNotExist) {
-					return "", e
-				}
-				root = LegacySystemRoot()
-			} else if !errors.Is(e, os.ErrNotExist) {
-				return "", e
-			}
-		}
 		if err := ValidateSystemRoot(root); err != nil {
 			return "", err
 		}

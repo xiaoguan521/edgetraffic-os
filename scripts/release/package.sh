@@ -238,7 +238,6 @@ case "${1:-}" in
     done
     install -m 0755 dataplane/packaging/firewall/syedge-firewall "$r/usr/sbin/syedge-firewall"
     prefix_template dataplane/packaging/logrotate/syedge "$r/etc/logrotate.d/syedge"
-    mkdir -p "$r/etc/tmpfiles.d" && prefix_template dataplane/packaging/tmpfiles/syedge.conf "$r/etc/tmpfiles.d/syedge.conf"
     prefix_template deploy/node/install.sh "$d/install.sh"
     prefix_template deploy/node/uninstall.sh "$d/uninstall.sh"
     cp docs/NOTICE "$d/NOTICE"
@@ -328,7 +327,6 @@ case "${1:-}" in
     prefix_template dataplane/packaging/systemd/syedge.service "$st/syedge/syedge.service"
     prefix_template dataplane/packaging/systemd/syedge@.service "$st/syedge/syedge@.service"
     prefix_template dataplane/packaging/logrotate/syedge "$st/syedge/logrotate"
-    prefix_template dataplane/packaging/tmpfiles/syedge.conf "$st/syedge/tmpfiles.conf"
     gobuild linux "$arch" "$st/agent" ./cmd/syedge-agent ./cmd/syedge-wrapper ./cmd/syedge-instance
     cp dataplane/packaging/sudoers/syedge-agent "$st/agent/sudoers"
     prefix_template dataplane/packaging/systemd/syedge-agent.service "$st/agent/syedge-agent.service"

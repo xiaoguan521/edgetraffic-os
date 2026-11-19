@@ -5,6 +5,16 @@
 - 涉及规格书章节：4 数据面、5 agent、6 渲染器、7 控制台、8 授权、9 安全、12 路线
 - 关联：ADR 0001（数据面只改名）、ADR 0002（agent 只主动外连）、提交 9b0716a（多实例 wrapper 初版）
 
+### 2026-11-19 修订：运行文件统一放在实例前缀下（免 `-c`、`-e`）
+
+本节取代下文关于 `/run/B[-I]`、`/var/log/B[-I]`、`/var/cache/B[-I]`、`/var/lib/B-agent[-I]` 以及 `-c`、`-e` 启动参数的描述。
+
+- 数据面编译期路径改为相对前缀：`--conf-path=conf/current/B.conf`、`--pid-path=run/B.pid`、`--lock-path=run/B.lock`、`--error-log-path=logs/error.log`、`--http-log-path=logs/access.log`、`--http-*-temp-path=cache/*`（只改 `configure` 参数，不改改名 patch）。以 `-p P` 启动时配置、pid、启动早期的日志、临时目录都落在 `P` 下，运维手工校验与重载不再需要 `-c`、`-e`。
+- 所有模式统一：配置 `P/conf`，日志 `P/logs`，临时目录 `P/cache`，pid 与锁 `P/run`，agent 状态 `P/agent`（默认实例 `P=R`，具名实例 `P=R/instances/I`）。agent 的发布锁仍在 `/run/B-agent[-I]/`。取消 `/opt/B` 历史布局（`/var/log/B` 等）与自动探测。
+- wrapper、`B-instance`、systemd 单元只传 `-p P`；具名实例的 `-p` 从共享根目录 `R` 改为实例前缀 `P`，其 `load_module` 由渲染器写绝对路径（默认实例保持相对路径 `modules/...`）。
+- 渲染器始终显式写出 `*_temp_path`，配置不依赖二进制的编译期默认值。
+- 不兼容旧布局：已安装节点需重装；新布局节点不能回滚到旧布局的数据面二进制（见 `install-maintenance.md` 第 4 节）。
+
 ### 2026-11-10 补充：共享与独立运行文件
 
 新建具名实例可以选择 `resource_mode=shared`（默认）或 `independent`；旧实例继续共享，不进行在线迁移。独立实例使用自己的 `instances/<实例>/sbin`、`versions` 和 `modules`，共享实例仍使用根目录下的对应目录。控制台按共享范围编排升级，独立实例不被同机其他实例带入；Lua 安装与卸载在多个实例时要求选择，并检查相应共享范围的配置。下文关于“所有实例共用二进制与模块”的描述为原始设计，仅适用于共享模式。

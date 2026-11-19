@@ -157,7 +157,7 @@ jobs:
           sudo tar -C / -xzf dist/syedge-*.tar.gz
           sudo useradd -r -s /usr/sbin/nologin syedge || true
           R=/opt/syedge/conf/releases/r000001
-          sudo mkdir -p $R/certs /run/syedge /var/log/syedge /var/cache/syedge /srv/syedge/sites/example/current
+          sudo mkdir -p $R/certs /opt/syedge/run /opt/syedge/logs /opt/syedge/cache /srv/syedge/sites/example/current
           sudo cp -r internal/render/testdata/golden/r000001/. $R/
           sudo cp /opt/syedge/share/defaults/mime.types $R/
           sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=www.example.com \
@@ -165,7 +165,7 @@ jobs:
           echo ok | sudo tee /srv/syedge/sites/example/current/index.html
           sudo ln -sfn releases/r000001 /opt/syedge/conf/current
           # 运行时不使用 root（设计 0001 D5）：单元以 syedge 运行；私钥按 agent 的方式组可读（0640，组 syedge）
-          sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge
+          sudo chown -R syedge:syedge /opt/syedge/run /opt/syedge/logs /opt/syedge/cache
           sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf && sudo chmod 0640 $R/certs/site-example.key
           sudo cp dataplane/packaging/systemd/syedge.service /etc/systemd/system/
           sudo systemctl daemon-reload

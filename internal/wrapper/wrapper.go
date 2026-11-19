@@ -73,15 +73,10 @@ func BuildAt(root string, argv []string) (Command, error) {
 	if err != nil {
 		return Command{}, ErrUsage
 	}
-	bin, releasesDir, currentConf := l.Bin(), l.ReleasesDir(), ""
-	early := []string{"-p", l.RuntimeRoot()}
-	customSystem := l.Mode() == layout.ModeSystem && l.Root() != layout.LegacySystemRoot()
-	if root != "" || customSystem {
-		currentConf = l.CurrentConf() // user / 自定义 system 根目录：总是显式指定配置与错误日志
-		early = append(early, "-e", l.ErrorLog())
-	} else if instance != "" || l.Root() != layout.DefaultSystemRoot() {
-		currentConf = l.CurrentConf()
-	}
+	bin, releasesDir := l.Bin(), l.ReleasesDir()
+	// 数据面的配置、日志、pid、临时目录编译为相对 -p 的路径（conf/、logs/、run/、cache/），
+	// 因此只需指定实例前缀，不再传 -c（reload 等）与 -e。
+	early := []string{"-p", l.Prefix()}
 	c := Command{Root: root, Instance: instance, Path: bin, Env: SafeEnv}
 	switch argv[0] {
 	case "test":
@@ -95,11 +90,7 @@ func BuildAt(root string, argv []string) (Command, error) {
 		if len(argv) != 1 {
 			return Command{}, ErrUsage
 		}
-		c.Args = append([]string{}, early...)
-		if currentConf != "" {
-			c.Args = append(c.Args, "-c", currentConf)
-		}
-		c.Args = append(c.Args, "-s", argv[0])
+		c.Args = append(append([]string{}, early...), "-s", argv[0])
 		return c, nil
 	case "upgrade-start":
 		if len(argv) != 2 || !versionRe.MatchString(argv[1]) {

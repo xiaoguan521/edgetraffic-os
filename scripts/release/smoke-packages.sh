@@ -4,7 +4,7 @@
 #
 # 用法：scripts/release/smoke-packages.sh <软件包目录> <goarch>
 # 环境变量：SMOKE_SET=full（默认）| pr；SMOKE_JOBS 并行数（默认 6）；
-# SMOKE_PREVIOUS_DIR 为 v0.4.2 软件包目录，设置时还测试从旧版依次升级数据面与 agent。
+# 不再测试从 v0.4.2 及更早版本顺序升级：运行文件布局改为统一放在实例前缀下，旧版节点需要重装。
 # SMOKE_FILTER 可按场景函数和名称筛选，CI 默认不筛选。
 # 发行版覆盖（full）：CentOS 7（glibc 2.17）、Rocky 8（2.28，与麒麟 V10、统信 UOS 20 相同）、Rocky 9、openEuler 22.03、
 #                     Debian 12 / 13、Ubuntu 20.04 / 22.04 / 24.04，以及 Rocky 9 / Debian 12 的独立模式。
@@ -29,15 +29,15 @@ dockerrun() { # 场景编号 docker run 参数……
   return $rc
 }
 run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
-  local name=$1 image=$2 install=$3 prefix=${4:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: prefix_mode_check=: logdir
+  local name=$1 image=$2 install=$3 prefix=${4:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: prefix_mode_check=:
   local base_root=$DEFAULT_ROOT
   if [[ -n "$prefix" ]]; then
     root=$prefix
     prefix_setup="mkdir -p /etc/syedge; install -d -m 0751 '$prefix'; printf '%s\\n' '$prefix' > /etc/syedge/prefix"
     prefix_mode_check="test \"\$(stat -c %a '$prefix')\" = 751"
   fi
-  if [[ "$root" == /opt/syedge ]]; then logdir=/var/log/syedge; else logdir="$root/logs"; fi
-  dp_opts="-p $root -e $logdir/error.log -c $root/conf/current/syedge.conf"
+  # 运维的日常用法：只给实例前缀，不带 -c、-e（配置、日志、pid 都编译为相对 -p 的路径）
+  dp_opts="-p $root"
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -e "SYEDGE_PREFIX=$base_root" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -e
     $prefix_setup
@@ -80,14 +80,14 @@ el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm 
 # 独立模式：只装 syedge 软件包，按说明加一个站点后能直接服务；之后装 syedge-agent，
 # 注册时因为有本机自定义配置而被拒绝（不会被控制台静默替换）。
 standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命令 [自定义根目录]
-  local name=$1 image=$2 install=$3 agent=$4 prefix=${5:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=: logdir
+  local name=$1 image=$2 install=$3 agent=$4 prefix=${5:-} out root=$DEFAULT_ROOT dp_opts='' prefix_setup=:
   local base_root=$DEFAULT_ROOT
   if [[ -n "$prefix" ]]; then
     root=$prefix
     prefix_setup="mkdir -p /etc/syedge; printf '%s\\n' '$prefix' > /etc/syedge/prefix; umask 077"
   fi
-  if [[ "$root" == /opt/syedge ]]; then logdir=/var/log/syedge; else logdir="$root/logs"; fi
-  dp_opts="-p $root -e $logdir/error.log -c $root/conf/current/syedge.conf"
+  # 运维的日常用法：只给实例前缀，不带 -c、-e（配置、日志、pid 都编译为相对 -p 的路径）
+  dp_opts="-p $root"
   out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -e "SYEDGE_PREFIX=$base_root" -v "$DIR:/pkgs:ro" "$image" sh -c "
     set -ex
     $prefix_setup
@@ -122,7 +122,7 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
     fi
     umask 022
     wait \"\$probe\"
-    kill -0 \"\$(cat /run/syedge/syedge.pid)\"
+    kill -0 \"\$(cat '$root/run/syedge.pid')\"
     grep -q smoke-logrotate-policy /etc/logrotate.d/syedge
     test \"\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: shop.example.com' http://127.0.0.1/)\" = 200
     if [ '$root' != '$base_root' ]; then
@@ -158,40 +158,6 @@ standalone() { # 发行版名 镜像 安装 syedge 的命令 安装 agent 的命
   fi
 }
 
-upgrade() { # 发行版名 镜像 安装旧版命令 升级数据面命令 升级 agent 命令
-  local name=$1 image=$2 old=$3 dp=$4 agent=$5 out
-  out=$(dockerrun "$SCENARIO" --platform "linux/$ARCH" -v "$DIR:/pkgs:ro" -v "$SMOKE_PREVIOUS_DIR:/previous:ro" "$image" sh -c "
-    set -e
-    $old
-    test -x /usr/sbin/syedge-instance
-    if /usr/sbin/syedge-instance prefix >/dev/null 2>&1; then echo '旧版工具意外支持 prefix'; exit 1; fi
-    owner=\$(stat -Lc '%u:%g' /usr/sbin)
-    $dp
-    test \"\$(stat -Lc '%u:%g' /usr/sbin)\" = \"\$owner\"
-    test -x /usr/libexec/syedge/syedge-instance
-    test \"\$(/usr/libexec/syedge/syedge-instance prefix)\" = /opt/syedge
-    test -f /etc/logrotate.d/syedge
-    test -L /opt/syedge/conf/current
-    $agent
-    grep -Fq '/opt/syedge/sbin/syedge -p /opt/syedge' /opt/syedge/share/doc/STANDALONE.txt
-    test -x /usr/sbin/syedge-instance
-    test -f /etc/logrotate.d/syedge
-    if [ -f /etc/syedge/root-master ]; then
-      /usr/libexec/syedge/syedge-wrapper test r000000
-    else
-      runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper test r000000
-    fi
-    echo upgrade-ok
-  " 2>&1)
-  if [[ $? -eq 0 && "$out" == *upgrade-ok* ]]; then
-    echo "ok   $name v0.4.2 顺序升级：配置、系统目录属主与日志轮转保留"
-  else
-    echo "FAIL $name v0.4.2 顺序升级"
-    echo "$out" | tail -20 | sed 's/^/     /'
-    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=smoke-packages upgrade $name::$(echo "$out" | tail -6 | tr '\n' ' ')"
-    return 1
-  fi
-}
 sa_dnf='dnf install -y -q /pkgs/syedge-[0-9]*.rpm >/dev/null'
 sa_dnf_agent='dnf install -y -q /pkgs/syedge-agent-*.rpm >/dev/null'
 sa_deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq curl /pkgs/syedge_*.deb >/dev/null'
@@ -216,14 +182,6 @@ scenarios=(
   "pr|standalone|Debian 12 custom prefix|debian:12|$sa_deb|$sa_deb_agent|/srv/syedge-smoke"
   "pr|standalone|Debian 12 home prefix|debian:12|$sa_deb|$sa_deb_agent|/home/atwasoft/node"
 )
-if [[ -n "${SMOKE_PREVIOUS_DIR:-}" ]]; then
-  SMOKE_PREVIOUS_DIR=$(realpath "$SMOKE_PREVIOUS_DIR")
-  scenarios+=(
-    "pr|upgrade|Rocky Linux 9|rockylinux:9|dnf install -y -q /previous/syedge-0.4.2-1.*.rpm /previous/syedge-agent-0.4.2-1.*.rpm >/dev/null|rpm -U --oldpackage /pkgs/syedge-[0-9]*.rpm|rpm -U --oldpackage /pkgs/syedge-agent-*.rpm"
-    "pr|upgrade|Debian 12|debian:12|export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq /previous/syedge_0.4.2_*.deb /previous/syedge-agent_0.4.2_*.deb >/dev/null|dpkg -i --force-downgrade /pkgs/syedge_*.deb|dpkg -i --force-downgrade /pkgs/syedge-agent_*.deb"
-  )
-fi
-
 echo "== 软件包冒烟（${ARCH}，集合 ${SET}，并行 ${JOBS}，每个场景限时 ${LIMIT}s）"
 start=$SECONDS
 i=0; selected=()

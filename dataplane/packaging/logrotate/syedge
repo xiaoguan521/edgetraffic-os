@@ -1,4 +1,4 @@
-/var/log/syedge/*.log /var/log/syedge/*.json /var/log/syedge-*/*.log /var/log/syedge-*/*.json {
+/opt/syedge/logs/*.log /opt/syedge/logs/*.json /opt/syedge/instances/*/logs/*.log /opt/syedge/instances/*/logs/*.json {
     daily
     # 日志目录属于数据面用户：以该用户轮转（兼容模式下 root master 新建的日志同样在该目录中）
     su syedge syedge
@@ -15,9 +15,9 @@
         if [ -x /usr/sbin/syedge-instance ]; then
             /usr/sbin/syedge-instance reopen-all >/dev/null 2>&1 || true
         elif [ -f /etc/syedge/root-master ]; then
-            /opt/syedge/sbin/syedge -s reopen >/dev/null 2>&1 || true
+            /opt/syedge/sbin/syedge -p /opt/syedge -s reopen >/dev/null 2>&1 || true
         else
-            runuser -u syedge -- /opt/syedge/sbin/syedge -s reopen >/dev/null 2>&1 || true
+            runuser -u syedge -- /opt/syedge/sbin/syedge -p /opt/syedge -s reopen >/dev/null 2>&1 || true
         fi
     endscript
 }

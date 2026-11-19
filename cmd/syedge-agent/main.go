@@ -95,7 +95,7 @@ func main() {
 		Server: o.server, StateDir: o.stateDir, DataplaneBin: lay.Bin(), Modules: lay.Modules(),
 		StatusURL: lay.StatusURL(prof.Status()), VersionURL: lay.VersionURL(prof.Status()), AccessLog: lay.AccessLog(), Profile: prof,
 		Apply: apply.Config{
-			ConfRoot: o.confRoot, Prefix: lay.RuntimeRoot(), PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
+			ConfRoot: o.confRoot, Prefix: lay.Prefix(), PidFile: lay.PidFile(), ErrorLog: lay.ErrorLog(),
 			LockFile: lay.AgentLock(), Wrapper: strings.Fields(o.wrapper),
 			HTTPPort: prof.HTTP(), HTTPSPort: prof.HTTPS(),
 		},

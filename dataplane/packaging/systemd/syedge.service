@@ -12,10 +12,9 @@ Group=syedge
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
-PIDFile=/run/syedge/syedge.pid
-RuntimeDirectory=syedge
-# 停止服务时保留 /run/syedge，管理员随后手工执行 syedge -t 不会因缺少 pid 目录失败
-RuntimeDirectoryPreserve=yes
+# pid、日志、临时目录都在实例前缀下（run/、logs/、cache/），由安装程序创建并交给 syedge 用户；
+# 数据面的默认配置、pid、日志编译为相对 -p 的路径，因此手工执行 syedge -p <前缀> -t / -s reload 不需要 -c、-e
+PIDFile=/opt/syedge/run/syedge.pid
 ExecStartPre=/opt/syedge/sbin/syedge -p /opt/syedge -t -q
 ExecStart=/opt/syedge/sbin/syedge -p /opt/syedge
 ExecReload=/opt/syedge/sbin/syedge -p /opt/syedge -s reload

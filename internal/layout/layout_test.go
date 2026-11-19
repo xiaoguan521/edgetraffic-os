@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// 默认品牌、system 模式下的路径必须与重构前写死的值逐字相同，保证本次重构不改变任何已部署节点的行为。
-func TestSystemDefaultMatchesLegacyPaths(t *testing.T) {
+// 默认实例的所有运行文件都在实例前缀下（与数据面编译期的相对路径一致），不再使用 /var/log、/var/cache、/run。
+func TestSystemDefaultPaths(t *testing.T) {
 	l := System("")
 	for _, c := range []struct{ name, got, want string }{
 		{"Prefix", l.Prefix(), "/opt/syedge"},
@@ -17,12 +17,13 @@ func TestSystemDefaultMatchesLegacyPaths(t *testing.T) {
 		{"Bin", l.Bin(), "/opt/syedge/sbin/syedge"},
 		{"Versions", l.Versions(), "/opt/syedge/versions"},
 		{"Modules", l.Modules(), "/opt/syedge/modules"},
-		{"PidFile", l.PidFile(), "/run/syedge/syedge.pid"},
-		{"ErrorLog", l.ErrorLog(), "/var/log/syedge/error.log"},
-		{"AccessLog", l.AccessLog(), "/var/log/syedge/access.json"},
-		{"AgentState", l.AgentState(), "/var/lib/syedge-agent"},
+		{"PidFile", l.PidFile(), "/opt/syedge/run/syedge.pid"},
+		{"ErrorLog", l.ErrorLog(), "/opt/syedge/logs/error.log"},
+		{"AccessLog", l.AccessLog(), "/opt/syedge/logs/access.json"},
+		{"CacheDir", l.CacheDir(), "/opt/syedge/cache"},
+		{"AgentState", l.AgentState(), "/opt/syedge/agent"},
 		{"AgentLock", l.AgentLock(), "/run/syedge-agent/apply.lock"},
-		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syedge-agent/upgrade"},
+		{"UpgradeIncoming", l.UpgradeIncoming(), "/opt/syedge/agent/upgrade"},
 		{"WrapperBin", l.WrapperBin(), "/usr/libexec/syedge/syedge-wrapper"},
 		{"AgentBin", l.AgentBin(), "/usr/bin/syedge-agent"},
 		{"StatusURL", l.StatusURL(8081), "http://127.0.0.1:8081/__syedge_status"},
@@ -42,11 +43,11 @@ func TestSystemInstancePaths(t *testing.T) {
 		{"CurrentConf", l.CurrentConf(), "/opt/syedge/instances/blue/conf/current/syedge.conf"},
 		{"Bin", l.Bin(), "/opt/syedge/sbin/syedge"},
 		{"Versions", l.Versions(), "/opt/syedge/versions"},
-		{"PidFile", l.PidFile(), "/run/syedge-blue/syedge.pid"},
-		{"ErrorLog", l.ErrorLog(), "/var/log/syedge-blue/error.log"},
-		{"AgentState", l.AgentState(), "/var/lib/syedge-agent-blue"},
+		{"PidFile", l.PidFile(), "/opt/syedge/instances/blue/run/syedge.pid"},
+		{"ErrorLog", l.ErrorLog(), "/opt/syedge/instances/blue/logs/error.log"},
+		{"AgentState", l.AgentState(), "/opt/syedge/instances/blue/agent"},
 		{"AgentLock", l.AgentLock(), "/run/syedge-agent-blue/apply.lock"},
-		{"UpgradeIncoming", l.UpgradeIncoming(), "/var/lib/syedge-agent-blue/upgrade"},
+		{"UpgradeIncoming", l.UpgradeIncoming(), "/opt/syedge/instances/blue/agent/upgrade"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -62,7 +63,7 @@ func TestSystemCustomRootPaths(t *testing.T) {
 		{"Bin", l.Bin(), "/data/syedge/sbin/syedge"},
 		{"Versions", l.Versions(), "/data/syedge/versions"},
 		{"Modules", l.Modules(), "/data/syedge/modules"},
-		{"PidFile", l.PidFile(), "/run/syedge-blue/syedge.pid"},
+		{"PidFile", l.PidFile(), "/data/syedge/instances/blue/run/syedge.pid"},
 		{"ErrorLog", l.ErrorLog(), "/data/syedge/instances/blue/logs/error.log"},
 		{"CacheDir", l.CacheDir(), "/data/syedge/instances/blue/cache"},
 		{"AgentState", l.AgentState(), "/data/syedge/instances/blue/agent"},
@@ -112,7 +113,7 @@ func TestSystemRootRejectsSystemAndProtectedDirectories(t *testing.T) {
 	}
 }
 
-func TestCompiledRootDoesNotBypassSafetyOrChangeLegacyPaths(t *testing.T) {
+func TestCompiledRootDoesNotBypassSafetyAndAllRootsUseInstancePrefix(t *testing.T) {
 	old := defaultSystemRoot
 	t.Cleanup(func() { defaultSystemRoot = old })
 	defaultSystemRoot = "/usr"
@@ -121,7 +122,7 @@ func TestCompiledRootDoesNotBypassSafetyOrChangeLegacyPaths(t *testing.T) {
 	}
 	defaultSystemRoot = "/home/atwasoft/syedge"
 	for _, tc := range []struct{ root, log, state string }{
-		{"/opt/syedge", "/var/log/syedge", "/var/lib/syedge-agent"},
+		{"/opt/syedge", "/opt/syedge/logs", "/opt/syedge/agent"},
 		{defaultSystemRoot, defaultSystemRoot + "/logs", defaultSystemRoot + "/agent"},
 	} {
 		l := SystemAt(tc.root, "")
@@ -131,7 +132,8 @@ func TestCompiledRootDoesNotBypassSafetyOrChangeLegacyPaths(t *testing.T) {
 	}
 }
 
-func TestMissingMarkerKeepsLegacyInstallation(t *testing.T) {
+// 没有安装根目录标记时一律使用编译期默认根目录，不再探测历史 /opt 安装。
+func TestMissingMarkerUsesCompiledDefaultRoot(t *testing.T) {
 	old := defaultSystemRoot
 	t.Cleanup(func() { defaultSystemRoot = old })
 	defaultSystemRoot = "/home/atwasoft/syedge"
@@ -144,18 +146,8 @@ func TestMissingMarkerKeepsLegacyInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := LoadSystemRootAt(fsroot)
-	if err != nil || got != "/opt/syedge" {
-		t.Fatalf("legacy root = %q, %v", got, err)
-	}
-	newConf := filepath.Join(fsroot, "home/atwasoft/syedge/conf")
-	if err := os.MkdirAll(newConf, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("releases/r000000", filepath.Join(newConf, "current")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadSystemRootAt(fsroot); err == nil {
-		t.Fatal("ambiguous existing installations were silently selected")
+	if err != nil || got != "/home/atwasoft/syedge" {
+		t.Fatalf("root = %q, %v", got, err)
 	}
 }
 

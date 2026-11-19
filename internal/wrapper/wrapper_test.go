@@ -12,15 +12,16 @@ func TestBuildAllowed(t *testing.T) {
 		argv []string
 		want []string
 	}{
-		{[]string{"test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syedge/conf/releases/r000123/syedge.conf"}},
-		{[]string{"test", "r123456789012"}, []string{"-t", "-q", "-c", "/opt/syedge/conf/releases/r123456789012/syedge.conf"}},
-		{[]string{"reload"}, []string{"-s", "reload"}},
-		{[]string{"reopen"}, []string{"-s", "reopen"}},
-		{[]string{"quit"}, []string{"-s", "quit"}},
-		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-c", "/opt/syedge/instances/edge-a/conf/releases/r000123/syedge.conf"}},
-		{[]string{"--instance", "edge-2", "reload"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "reload"}},
-		{[]string{"--instance", "edge-2", "reopen"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "reopen"}},
-		{[]string{"--instance", "edge-2", "quit"}, []string{"-c", "/opt/syedge/instances/edge-2/conf/current/syedge.conf", "-s", "quit"}},
+		{[]string{"test", "r000123"}, []string{"-t", "-q", "-p", "/opt/syedge", "-c", "/opt/syedge/conf/releases/r000123/syedge.conf"}},
+		{[]string{"test", "r123456789012"}, []string{"-t", "-q", "-p", "/opt/syedge", "-c", "/opt/syedge/conf/releases/r123456789012/syedge.conf"}},
+		{[]string{"reload"}, []string{"-p", "/opt/syedge", "-s", "reload"}},
+		{[]string{"reopen"}, []string{"-p", "/opt/syedge", "-s", "reopen"}},
+		{[]string{"quit"}, []string{"-p", "/opt/syedge", "-s", "quit"}},
+		// 具名实例的前缀是实例目录；配置、日志、pid 都按它解析，不传 -c、-e
+		{[]string{"--instance", "edge-a", "test", "r000123"}, []string{"-t", "-q", "-p", "/opt/syedge/instances/edge-a", "-c", "/opt/syedge/instances/edge-a/conf/releases/r000123/syedge.conf"}},
+		{[]string{"--instance", "edge-2", "reload"}, []string{"-p", "/opt/syedge/instances/edge-2", "-s", "reload"}},
+		{[]string{"--instance", "edge-2", "reopen"}, []string{"-p", "/opt/syedge/instances/edge-2", "-s", "reopen"}},
+		{[]string{"--instance", "edge-2", "quit"}, []string{"-p", "/opt/syedge/instances/edge-2", "-s", "quit"}},
 	}
 	for _, c := range cases {
 		cmd, err := Build(c.argv)
@@ -29,11 +30,6 @@ func TestBuildAllowed(t *testing.T) {
 		}
 		if cmd.Path != DataplaneBin() {
 			t.Fatalf("%v: path = %q", c.argv, cmd.Path)
-		}
-		if len(c.want) > 1 && c.want[0] == "-t" {
-			c.want = append(c.want[:2], append([]string{"-p", "/opt/syedge"}, c.want[2:]...)...)
-		} else {
-			c.want = append([]string{"-p", "/opt/syedge"}, c.want...)
 		}
 		if !reflect.DeepEqual(cmd.Args, c.want) {
 			t.Fatalf("%v: args = %q, want %q", c.argv, cmd.Args, c.want)
