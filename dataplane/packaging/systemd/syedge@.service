@@ -28,6 +28,10 @@ KillSignal=SIGQUIT
 LimitNOFILE=65535
 PrivateTmp=true
 ProtectHome=true
+# 二进制、动态模块与版本库对本服务只读：worker 与 master 同一用户，被攻破的 worker 不能替换 master 之后（reload 加载模块、
+# 热升级执行新二进制）会用到的文件。升级由单元之外的 wrapper 写入，不受影响；前缀 - 表示目录不存在时忽略。
+# 老版 systemd（如 CentOS 7）不识别该指令，会忽略它，此时仍靠目录属主（兼容模式为 root）保护。
+ReadOnlyPaths=-/opt/syedge/sbin -/opt/syedge/modules -/opt/syedge/versions
 
 [Install]
 WantedBy=multi-user.target

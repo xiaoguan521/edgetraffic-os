@@ -149,7 +149,7 @@ func renderLuaRoute(s Site, r Route) string {
 // luaScriptRuntime 在 init_by_lua_block 中、etos.init 收紧环境之前执行：编译脚本并登记 etos.script。
 // 前面由渲染器写出 `local files = { [编号] = 路径, ... }`（全部为 \ddd 转义的字面量）。
 const luaScriptRuntime = `
-        local io_open, load, setfenv, setmetatable, pairs, error, tostring, type = io.open, load, setfenv, setmetatable, pairs, error, tostring, type
+        local io_open, load, setfenv, setmetatable, getmetatable, pairs, error, tostring, type = io.open, load, setfenv, setmetatable, getmetatable, pairs, error, tostring, type
         local compiled = {}
         for id, path in pairs(files) do
             local f, err = io_open(path, "rb")
@@ -194,12 +194,18 @@ const luaScriptRuntime = `
         local str = {}
         for k, v in pairs(string) do if k ~= "dump" then str[k] = v end end
         local json = ro(require("etos.json"), "etos.json")
+        -- 脚本只能给自己新建的表设置元表：已有元表的表（ngx.var / ngx.header / ngx.arg / 共享字典等整个 worker 共用的表，
+        -- 以及上面带 __metatable 的只读代理）不允许替换，否则一段脚本能让同一 worker 里其他站点与规则的行为失常
+        local function guarded_setmetatable(t, mt)
+            if getmetatable(t) ~= nil then error("cannot change a metatable that is already set", 2) end
+            return setmetatable(t, mt)
+        end
         local base = {
             ngx = safe_ngx, string = ro(str, "string"), table = ro(table, "table"), math = ro(math, "math"),
             os = ro({ time = os.time, date = os.date, clock = os.clock, difftime = os.difftime }, "os"),
             bit = ro(bit, "bit"), coroutine = ro(coroutine, "coroutine"),
             assert = assert, error = error, ipairs = ipairs, next = next, pairs = pairs, pcall = pcall, xpcall = xpcall,
-            select = select, tonumber = tonumber, tostring = tostring, type = type, unpack = unpack, setmetatable = setmetatable,
+            select = select, tonumber = tonumber, tostring = tostring, type = type, unpack = unpack, setmetatable = guarded_setmetatable,
             require = function(name)
                 if name == "etos.json" then return json end
                 error("module not allowed in lua scripts: " .. tostring(name), 2)

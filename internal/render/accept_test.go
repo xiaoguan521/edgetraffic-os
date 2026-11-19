@@ -71,6 +71,15 @@ r[#r + 1] = tostring(pcall(function() ngx.say = nil end))
 r[#r + 1] = tostring(pcall(function() ngx.req.get_headers = nil end))
 r[#r + 1] = tostring(require("etos.json").decode('{"a":7}').a)
 ngx.say(table.concat(r, " "))`}},
+			Route{Path: "/lua-meta", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `local r = {}
+r[#r + 1] = tostring(pcall(setmetatable, ngx.var, {}))
+r[#r + 1] = tostring(pcall(setmetatable, ngx.header, {}))
+r[#r + 1] = tostring(pcall(setmetatable, string, {}))
+local t = setmetatable({}, { __index = function() return 5 end })
+r[#r + 1] = tostring(t.x)
+r[#r + 1] = tostring(pcall(setmetatable, t, {}))
+r[#r + 1] = type(ngx.var.uri)
+ngx.say(table.concat(r, " "))`}},
 			Route{Path: "/lua-ext", Match: "exact", Mode: "static", Static: static, LuaScripts: map[string]string{"content": `local ok1, e1 = pcall(require, "resty.redis")
 local ok2, e2 = pcall(require, "resty.mysql")
 local ok3, e3 = pcall(require, "cjson")

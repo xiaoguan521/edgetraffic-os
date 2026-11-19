@@ -152,7 +152,7 @@ root 安装仍默认使用 `/opt/B`。如果发行版的 `/opt` 不适合放置�
 - `dataplane/patches/0001-syedge-rename.patch` 改为模板 `0001-rename.patch.tmpl`，由 `dataplane/gen-rename-patch` 根据品牌参数生成实际的 patch：
   - 字符串常量中的名字被替换为 `BRAND_PROC` 或 `BRAND_ID`。
   - 带长度的常量（例如 `ngx_cpymem(errstr, "SyEdge: ", 8)`）的长度值由生成器按新名字计算。
-  - HTTP/2 `server` 头的 HPACK 霍夫曼编码字节由现有的 `dataplane/hpack-gen` 生成。
+  - HTTP/2 `server` 头的 HPACK 霍夫曼编码字节由 `dataplane/gen-rename-patch` 生成（使用 `golang.org/x/net/http2/hpack`，支持大小写）。
   - 生成的 patch 仍然**只改字符串常量和宏的值**，ADR 0001 的约束不变。默认品牌生成的 patch 必须与现有 patch 逐字节相同，这一点作为测试。
 - `build-syedge.sh -b brand.env` 根据品牌设置 `--prefix`、`--sbin-path`、`--user` 等编译参数。
 - `rename-scan.sh` 和 `golden-rename.sh` 接收品牌参数。非默认品牌构建时，额外扫描二进制、安装包和运行日志，确认其中没有残留的 `syedge`（品牌泄漏扫描）。上游名 `nginx` 的检查保持不变。

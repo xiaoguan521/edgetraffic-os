@@ -216,7 +216,12 @@ func (e Env) rootMasterSetup(insts []Info) error {
 	if err := e.writeCompatUnits(); err != nil {
 		return err
 	}
-	// 运行时目录、日志与版本库仍交给数据面用户（worker 写日志、缓存；与默认模式一致，切回默认模式时无需再改）
+	// master 以 root 运行：它加载 modules/ 下的模块、热升级时执行 versions/ 下的二进制，这些代码目录必须属于 root。
+	// 此前处于普通模式时它们被交给了数据面用户，不改回来的话，被攻破的 worker 能替换文件并在下次 reload 时以 root 执行。
+	if err := e.setCodeOwner(insts, "root:root"); err != nil {
+		return err
+	}
+	// 运行时目录与日志仍交给数据面用户（worker 写日志、缓存）；切回默认模式时再把代码目录交给数据面用户
 	for _, in := range insts {
 		l := e.lay(in.Name)
 		for _, d := range []string{l.RunDir(), l.LogDir(), l.CacheDir()} {
@@ -299,4 +304,39 @@ func SystemdAtLeast(out string, v int) bool {
 		n = n*10 + int(c-'0')
 	}
 	return n >= v
+}
+
+// setCodeOwner 设置数据面代码目录（二进制目录、模块目录、版本库）的属主：sbin 与 modules 只改目录本身
+// （已安装的文件仍由 root 拥有），版本库递归。默认实例与各独立运行时的实例都处理。
+func (e Env) setCodeOwner(insts []Info, owner string) error {
+	seen := map[string]bool{}
+	apply := func(l layout.Layout) error {
+		for _, c := range [][]string{{"-R", owner, l.Versions()}, {owner, filepath.Dir(l.Bin())}, {owner, l.Modules()}} {
+			dir := c[len(c)-1]
+			if seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			if _, err := os.Stat(e.path(dir)); err != nil {
+				if err := os.MkdirAll(e.path(dir), 0o755); err != nil {
+					return err
+				}
+			}
+			if err := e.Run("chown", c...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := apply(e.lay("")); err != nil {
+		return err
+	}
+	for _, in := range insts {
+		if l := e.infoLayout(in); l.IndependentRuntime() {
+			if err := apply(l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

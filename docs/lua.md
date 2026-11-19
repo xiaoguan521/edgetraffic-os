@@ -272,6 +272,8 @@ sudo bash uninstall.sh --instance blue
   `pairs`、`pcall`、`tostring` 等基础函数；
 - 不可用：文件（`io`）、命令（`os.execute`）、加载代码（`load` / `loadstring` / `dofile`）、其他模块（`require` 只允许 `etos.json`）、
   FFI、`debug`、`package`、`jit`、`getmetatable` / `rawset` / `setfenv`；
+- `setmetatable` 只能给自己新建的、还没有元表的表设置元表；`ngx.var`、`ngx.header`、`ngx.arg`、共享字典等整个 worker 共用的表已有元表，
+  替换它们的元表会影响同一 worker 里其他站点与规则，所以被拒绝（报 `cannot change a metatable that is already set`）；
 - 不能写全局变量（请用 `local`），请求之间不共享状态；标准库、`ngx` 的顶层字段与子表（`ngx.req`、`ngx.re` …）只读（`ngx.status`、`ngx.ctx` 可写；`ngx.var`、`ngx.header`、`ngx.arg` 按请求读写）。
 
 **出错时**

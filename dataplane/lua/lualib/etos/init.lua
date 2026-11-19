@@ -8,6 +8,8 @@ local jwt = require "etos.jwt"
 local M = {}
 
 local ALLOWED = { "^etos%.", "^resty%.", "^ngx%.", "^table%.", "^string%.buffer$" }
+-- ngx.pipe 能启动外部进程：即使匹配上面的白名单也不允许（纵深防御；规则代码本来就不需要它）
+local DENIED = { "^ngx%.pipe" }
 
 local function sandbox()
     local real_require = require
@@ -41,6 +43,11 @@ local function sandbox()
             return loaded[name] or real_require(name)
         end
         if type(name) == "string" then
+            for _, p in ipairs(DENIED) do
+                if string.find(name, p) then
+                    error("etos: module not allowed: " .. tostring(name), 2)
+                end
+            end
             for _, p in ipairs(ALLOWED) do
                 if string.find(name, p) then
                     ok_names[name] = true
