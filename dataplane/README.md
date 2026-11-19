@@ -5,7 +5,7 @@ syedge = 官方 stable 源码（`UPSTREAM`）+ 唯一的改名 patch（`patches/
 ## 构建
 
 ```bash
-dataplane/build-syedge.sh -o dist          # 从官方 GitHub 镜像拉取 release-1.30.6 并校验提交哈希
+dataplane/build-syedge.sh -o dist          # 从官方 GitHub 镜像拉取 release-1.30.7 并校验提交哈希
 dataplane/build-syedge.sh -s ./nginx-src   # 或使用本地源码目录
 ```
 
