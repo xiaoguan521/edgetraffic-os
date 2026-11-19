@@ -384,8 +384,8 @@ function mb(b: number) {
             <a-radio value="legacy">兼容配置（原生 Lua）</a-radio>
           </a-radio-group>
         </a-form-item>
-        <a-form-item label="安装根目录" :extra="pform.mode === 'user' ? '节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。' : 'system 模式默认使用 /opt/syedge；填写后，软件包会把程序与实例数据放在该绝对路径，并写入 /etc/syedge/prefix。'">
-          <a-input v-model:value="pform.root" class="code" :disabled="locked" :placeholder="pform.mode === 'user' ? '/home/ops/edge' : '/data/syedge'" />
+        <a-form-item label="安装根目录" :extra="pform.mode === 'user' ? '节点上普通用户的安装目录（绝对路径），user 模式只能使用 1024 及以上的端口。' : `system 模式默认使用 /opt/${brand.id}；填写后，软件包会把程序与实例数据放在该绝对路径，并写入 /etc/${brand.id}/prefix。`">
+          <a-input v-model:value="pform.root" class="code" :disabled="locked" :placeholder="pform.mode === 'user' ? '/home/ops/edge' : `/data/${brand.id}`" />
         </a-form-item>
         <a-space wrap>
           <a-form-item label="HTTP 端口"><a-input-number v-model:value="pform.http_port" :min="1" :max="65535" /></a-form-item>
