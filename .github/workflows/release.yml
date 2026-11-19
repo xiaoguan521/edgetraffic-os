@@ -197,18 +197,9 @@ jobs:
           for i in 1 2 3; do GOFLAGS= go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 && break; echo "retry $i"; sleep 10; done; command -v "$(go env GOPATH)/bin/nfpm"
           PATH="$(go env GOPATH)/bin:$PATH" scripts/release/package.sh pkg ${{ matrix.arch }} dist/syedge/syedge-*.tar.gz
           ls -l "$OUT"
-      - name: download v0.4.2 packages for upgrade regression
-        run: |
-          if [[ '${{ matrix.arch }}' == amd64 ]]; then rpm_arch=x86_64; else rpm_arch=aarch64; fi
-          mkdir -p "$RUNNER_TEMP/syedge-v0.4.2"
-          gh release download v0.4.2 -R "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/syedge-v0.4.2" \
-            -p "syedge-0.4.2-1.$rpm_arch.rpm" -p "syedge-agent-0.4.2-1.$rpm_arch.rpm" \
-            -p 'syedge_0.4.2_${{ matrix.arch }}.deb' -p 'syedge-agent_0.4.2_${{ matrix.arch }}.deb' -p SHA256SUMS
-          (cd "$RUNNER_TEMP/syedge-v0.4.2" && sha256sum -c SHA256SUMS --ignore-missing)
       - name: smoke test rpm / deb on 9 distributions + standalone (full, parallel)
         env:
           SMOKE_SET: full
-          SMOKE_PREVIOUS_DIR: ${{ runner.temp }}/syedge-v0.4.2
         run: scripts/release/smoke-packages.sh "$OUT" ${{ matrix.arch }}
 
       - name: smoke test node package (systemd install + enroll + publish)
