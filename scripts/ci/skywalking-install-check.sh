@@ -105,5 +105,10 @@ rl=$(grep -n 'if ! systemctl reload syedge.service' deploy/node/install.sh | hea
 r1=$(grep -n 'sw_restore_conf' <<<"$body" | head -1 | cut -d: -f1); r2=$(grep -n 'standalone-disable' <<<"$body" | head -1 | cut -d: -f1)
 [[ -n "$r1" && -n "$r2" && "$r1" -lt "$r2" ]] && ok "reload 失败后先还原 SkyWalking 文件，再停用 Lua 独立模式" || bad "install.sh 的 reload 失败分支没有先还原 SkyWalking 文件再停用 Lua（restore=$r1 disable=$r2）"
 
+# 15. 记录 10-skywalking.conf 的快照必须在安装 Lua 附加包（启用独立模式）之前：之后才记录的话，快照失败只能 die，
+#     Lua 独立模式已启用却没有停用，重新执行会被“主配置已含 load_module”拒绝
+snap=$(grep -n 'sw_snapshot_conf "' deploy/node/install.sh | head -1 | cut -d: -f1); lua=$(grep -n 'echo "== 安装 Lua 附加包"' deploy/node/install.sh | head -1 | cut -d: -f1)
+[[ -n "$snap" && -n "$lua" && "$snap" -lt "$lua" ]] && ok "install.sh 在安装 Lua 附加包之前记录 10-skywalking.conf 快照" || bad "install.sh 的快照没有排在 Lua 附加包安装之前（snapshot=$snap lua=$lua）"
+
 echo "---- $fail failed"
 [[ $fail -eq 0 ]]

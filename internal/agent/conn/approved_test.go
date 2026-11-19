@@ -193,7 +193,9 @@ func TestRecordApprovedKeepsCorruptFile(t *testing.T) {
 	if err := os.WriteFile(e.a.path("approved.json"), bad, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e.a.recordApproved("r000009", "sha256:x")
+	if err := e.a.recordApproved("r000009", "sha256:x"); err == nil {
+		t.Fatal("recording into a corrupt approval file must report an error")
+	}
 	got, _ := os.ReadFile(e.a.path("approved.json"))
 	if !bytes.Equal(got, bad) {
 		t.Fatalf("corrupt approval record was rewritten: %q", got)
@@ -268,5 +270,56 @@ func TestReadOnlyRestoreRefusesWhenApprovedRecordIsCorrupt(t *testing.T) {
 	}}})
 	if r.Status == agentv1.CommandResult_APPLIED {
 		t.Fatalf("read-only restore accepted a forged revision with a corrupt approval record: %+v", r)
+	}
+}
+
+func (e *approvedEnv) applyThird(t *testing.T) *agentv1.CommandResult {
+	t.Helper()
+	c, k := testCertPair(t, "shop.example.com")
+	b3, d3, _ := renderSiteBundle(t, "r000003", c, k, "/v3")
+	e.bundles["r000003"] = b3
+	return e.exec(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{RevisionId: "r000003", ParentRevisionId: "r000002", BundleSha256: d3}}})
+}
+
+// approved.json 损坏时发布本身成功，但批准摘要没有记下：结果必须说明，否则操作员直到紧急回滚被拒绝才发现。
+func TestApplyWarnsWhenTheApprovalRecordCannotBeWritten(t *testing.T) {
+	e := newApprovedEnv(t)
+	if err := os.WriteFile(e.a.path("approved.json"), []byte("{malformed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := e.applyThird(t)
+	if r.Status != agentv1.CommandResult_APPLIED {
+		t.Fatalf("the release itself must still succeed: %+v", r)
+	}
+	if !strings.Contains(r.Message, "approved.json") {
+		t.Fatalf("result does not warn that the approval record was not written: %q", r.Message)
+	}
+}
+
+// 正常发布不带警告。
+func TestApplyHasNoWarningWhenTheApprovalRecordIsWritten(t *testing.T) {
+	e := newApprovedEnv(t)
+	r := e.applyThird(t)
+	if r.Status != agentv1.CommandResult_APPLIED || strings.Contains(r.Message, "approved.json") {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+	if e.a.approvedDigest("r000003") == "" {
+		t.Fatal("digest was not recorded")
+	}
+}
+
+// 记录文件所在目录不可写（磁盘满、权限错误）时同样要提示，而不是静默丢弃。
+func TestApplyWarnsWhenTheApprovalRecordWriteFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := newApprovedEnv(t)
+	if err := os.Chmod(e.a.path(""), 0o500); err != nil {
+		t.Skip("cannot restrict the state directory")
+	}
+	t.Cleanup(func() { _ = os.Chmod(e.a.path(""), 0o700) })
+	r := e.applyThird(t)
+	if r.Status != agentv1.CommandResult_APPLIED || !strings.Contains(r.Message, "approved.json") {
+		t.Fatalf("write failure was not reported: %+v", r)
 	}
 }

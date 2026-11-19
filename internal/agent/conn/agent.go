@@ -505,7 +505,9 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 			a.log.Info("restoring drifted release", "revision", b.Apply.RevisionId)
 			r := a.applier.Restore(ctx, b.Apply.RevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
 			if r.Status == apply.Applied {
-				a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256)
+				if err := a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256); err != nil {
+					r.Message += approvedWarning(err)
+				}
 			}
 			a.log.Info("restore result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
 			reply(status(r.Status), r.Message, r.Stderr)
@@ -514,7 +516,9 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		a.log.Info("applying", "revision", b.Apply.RevisionId, "parent", b.Apply.ParentRevisionId)
 		r := a.applier.Apply(ctx, b.Apply.RevisionId, b.Apply.ParentRevisionId, bundle, b.Apply.BundleSha256, checks(b.Apply.PostChecks))
 		if r.Status == apply.Applied {
-			a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256)
+			if err := a.recordApproved(b.Apply.RevisionId, b.Apply.BundleSha256); err != nil {
+				r.Message += approvedWarning(err)
+			}
 		}
 		a.log.Info("apply result", "revision", b.Apply.RevisionId, "status", r.Status, "message", r.Message)
 		reply(status(r.Status), r.Message, r.Stderr)
@@ -620,7 +624,7 @@ func (a *Agent) recordCurrentApproved() {
 		return
 	}
 	if d, err := a.applier.TreeDigest(); err == nil && !strings.HasPrefix(d, "drifted") {
-		a.recordApproved(cur, d)
+		_ = a.recordApproved(cur, d) // 重连时的首次信任记录：失败已在 recordApproved 里记日志
 	}
 }
 
@@ -642,22 +646,39 @@ func (a *Agent) readApproved() (map[string]string, error) {
 }
 
 // recordApproved 在 StateDir/approved.json 中记录已成功生效的 (revision -> manifest digest)。
-// 记录文件损坏时不改写它（从空表重写会丢掉全部历史摘要），只记日志，由运维检查后处理。
-func (a *Agent) recordApproved(rev, digest string) {
+// 记录文件损坏时不改写它（从空表重写会丢掉全部历史摘要）。没有记下时返回错误，由调用方写进发布结果：
+// 否则操作员要等到紧急回滚被拒绝才发现。
+func (a *Agent) recordApproved(rev, digest string) error {
 	if a.C.StateDir == "" || rev == "" || digest == "" {
-		return
+		return nil
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	m, err := a.readApproved()
 	if err != nil {
 		a.log.Error("approved.json is unreadable; not recording", "revision", rev, "err", err)
-		return
+		return err
 	}
 	m[rev] = digest
-	if b, err := json.Marshal(m); err == nil {
-		_ = os.WriteFile(a.path("approved.json"), b, 0o600)
+	b, err := json.Marshal(m)
+	if err == nil {
+		// 先写临时文件再改名：原地覆盖时中途中断会留下半截文件，之后所有回滚都会因记录损坏被拒绝
+		tmp := a.path("approved.json.tmp")
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			if err = os.Rename(tmp, a.path("approved.json")); err != nil {
+				_ = os.Remove(tmp)
+			}
+		}
 	}
+	if err != nil {
+		a.log.Error("approved.json could not be written", "revision", rev, "err", err)
+	}
+	return err
+}
+
+// approvedWarning 是发布成功但批准摘要没有记下时追加到结果里的提示（发布本身仍算成功）。
+func approvedWarning(err error) string {
+	return "；警告：批准摘要没有写入 approved.json（" + err.Error() + "），之后对该版本的回滚会被拒绝，请检查该文件"
 }
 
 // approvedLookup 返回版本的已批准摘要；没有记录返回空串，记录文件损坏返回错误。
