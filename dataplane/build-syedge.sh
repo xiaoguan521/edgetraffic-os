@@ -118,19 +118,16 @@ ci_fail() { # <日志> <行数>：在 GitHub Actions 中把失败日志的末尾
 
 # 不编译 auth_basic：渲染器不使用它，去掉后二进制不再依赖 libcrypt，便于跨发行版运行
 # auth_request：规则积木的外部鉴权（P10）
+# 日志与缓存默认路径：与安装布局一致（见 paths.sh）
+source "$HERE/paths.sh"
+mapfile -t PATH_OPTS < <(dataplane_path_flags "$PREFIX" "$B")
 CONF=(\
   --prefix="$PREFIX" \
   --sbin-path="$PREFIX/sbin/$B" \
   --conf-path="$PREFIX/conf/current/$B.conf" \
   --pid-path=/run/$B/$B.pid \
   --lock-path=/run/$B/$B.lock \
-  --error-log-path=/var/log/$B/error.log \
-  --http-log-path=/var/log/$B/access.log \
-  --http-client-body-temp-path=/var/cache/$B/client_temp \
-  --http-proxy-temp-path=/var/cache/$B/proxy_temp \
-  --http-fastcgi-temp-path=/var/cache/$B/fastcgi_temp \
-  --http-uwsgi-temp-path=/var/cache/$B/uwsgi_temp \
-  --http-scgi-temp-path=/var/cache/$B/scgi_temp \
+  "${PATH_OPTS[@]}" \
   --user=$B --group=$B \
   --with-threads --with-file-aio --with-compat \
   --with-http_ssl_module --with-http_v2_module --with-http_v3_module \
@@ -170,6 +167,11 @@ strip "$O/sbin/$B"
 
 # 构建后自检
 "$O/sbin/$B" -v 2>&1 | grep -q "^$P version: $P/$UPSTREAM_VERSION" || { echo "version check failed" >&2; exit 4; }
+# 编译期默认的日志与缓存路径必须落在预期位置（与安装布局一致，见 paths.sh）
+vout=$("$O/sbin/$B" -V 2>&1)
+for opt in "${PATH_OPTS[@]}"; do
+  grep -qF -- "$opt" <<<"$vout" || { echo "configure option missing from $B -V: $opt" >&2; exit 4; }
+done
 if strings "$O/sbin/$B" | grep -qi 'ngi''nx'; then
   echo "upstream name leaked into binary:" >&2
   strings "$O/sbin/$B" | grep -i 'ngi''nx' >&2

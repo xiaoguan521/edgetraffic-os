@@ -492,6 +492,7 @@ sudo syedge -t && sudo systemctl reload syedge
 | --- | --- |
 | `-p <prefix>` | 设置运行前缀；配置中的相对路径、相对 `include` 路径按该前缀解析 |
 | `-c <file>` | 指定配置文件；多实例场景建议使用绝对路径 |
+| `-e <file>` | 指定启动早期使用的错误日志；不指定时用编译期默认值：安装前缀是 `/opt/syedge` 时为 `/var/log/syedge/error.log`，其他前缀（如发布包的 `/home/atwasoft/syedge`）为 `<前缀>/logs/error.log` |
 | `-t` | 检查配置语法和文件路径，不启动服务 |
 | `-T` | 检查配置并输出展开后的全部配置 |
 | `-q` | 配置检查时只输出错误 |

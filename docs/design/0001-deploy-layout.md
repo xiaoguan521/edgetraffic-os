@@ -28,7 +28,7 @@
 | `syedge.conf.tmpl` | `pid`、`error_log`、`access_log` 是绝对路径；`listen 80/443`；状态页固定为 `127.0.0.1:8081`；有 `user syedge` | 实例之间冲突 | 普通用户无法监听 80/443，也写不了 `/run`、`/var/log` | 路径里带名字 |
 | `site.conf.tmpl` | `listen 80/443`；`alias /opt/syedge/conf/current/...` | 端口冲突，路径错到默认实例 | 同上 | 同上 |
 | 国密与 Lua 模板 | 证书、模块用 `/opt/syedge/...` 绝对路径 | 指向错误的实例 | 目录不存在 | 同上 |
-| `build-syedge.sh` | 编译期默认路径都在 `/opt/syedge`、`/run/syedge`、`/var/log/syedge`、`/var/cache/syedge` | 需要在运行时覆盖 | 同左 | 名字编译在二进制里 |
+| `build-syedge.sh` | 编译期默认路径都在 `/opt/syedge`、`/run/syedge`、`/var/log/syedge`、`/var/cache/syedge`；前缀不是 `/opt/syedge` 时（如发布构建的 `/home/atwasoft/syedge`），日志与缓存默认在 `<前缀>/logs`、`<前缀>/cache`，与安装布局一致（`dataplane/paths.sh`，由 `internal/layout` 的测试校验），手动启动不带 `-e` 也不会去写 `/var/log` | 需要在运行时覆盖 | 同左 | 名字编译在二进制里 |
 | 改名 patch | 64 处字符串常量写死为 `syedge`，其中部分带长度常量，HPACK 编码字节是预先算好的 | — | — | 换名要重新生成 patch |
 | agent `main.go` | PID、日志、状态地址、wrapper 写死；只有 `-conf-root` 可改 | 无法托管第二个实例 | 依赖 sudo | 名字写死 |
 | wrapper 与 sudoers | 路径写死；9b0716a 加了 `--instance`，同时新增一条 `--instance *` 通配 sudoers | 任一 agent 都能操作任一实例 | 依赖 sudo | 名字写死 |
