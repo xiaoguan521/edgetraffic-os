@@ -44,7 +44,9 @@ services:
 #   ./logs/                           日志，对应 P/logs
 # 注意：conf/current 是指向 releases/r000000 的软链，文件实际在 ./conf/releases/r000000/ 下；
 #       在宿主机编辑 ./conf/current/... 即可（软链是相对的，挂载后仍有效）。
-# Lua：基础节点镜像不含 Lua 模块；需要 *_by_lua* 时基于该镜像再构建一层，装入 Lua 附加包
-#   （模块在 P/modules/），并按附加包说明启用独立模式 Lua。
+# Lua / 国密：用 node-lua（标准版 + Lua）或 node-gm-lua（国密版 + Lua）镜像，替换上面的 image 名即可。
+#   启用独立模式 Lua（配置已挂载持久化，只做一次）：
+#     docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone
+#     docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
 # 升级：保留 ./conf ./logs，替换镜像并重建容器；配置不变。
 # 旧版（≤0.4.8）布局的目录与新布局不兼容，请用新目录重新开始。
