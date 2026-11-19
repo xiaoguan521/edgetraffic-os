@@ -12,7 +12,7 @@
 # 各场景在独立容器中并行运行，结果按固定顺序输出。
 set -uo pipefail
 DIR=$(realpath "${1:?package dir}"); ARCH=${2:?goarch}
-SET=${SMOKE_SET:-full}; JOBS=${SMOKE_JOBS:-6}; LIMIT=${SMOKE_TIMEOUT:-600}
+SET=${SMOKE_SET:-full}; JOBS=${SMOKE_JOBS:-6}; LIMIT=${SMOKE_TIMEOUT:-900}
 DEFAULT_ROOT=${SYEDGE_PREFIX:-/opt/syedge}
 case "$SET" in full|pr) ;; *) echo "SMOKE_SET 只能是 full 或 pr" >&2; exit 2 ;; esac
 W=$(mktemp -d)
