@@ -21,6 +21,7 @@ import (
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/gateway"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store/query"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/agentmsg"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/audit"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/secretbox"
@@ -43,7 +44,7 @@ type Service struct {
 	Log       *slog.Logger
 	MimeTypes []byte
 
-	Feature          func(name string) bool       // 授权功能检查（为空表示不检查）
+	Feature          func(name string) bool       // 授权功能检查；为空表示全部拒绝（fail-closed），见 featureOn
 	Agents           Agents                       // 数据面升级用；为空时使用 GW
 	PackageKeys      map[string]ed25519.PublicKey // 升级包签名公钥；为空时使用内置公钥
 	Box              *secretbox.Box               // JWT 规则密钥的加解密（P10）
@@ -161,7 +162,7 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 	if err != nil {
 		return in, fmt.Errorf("load streams: %w", err)
 	}
-	if len(sts) > 0 && d.Feature != nil && !d.Feature("stream") {
+	if len(sts) > 0 && !d.featureOn("stream") {
 		return in, ErrStreamNotLicensed
 	}
 	for _, st := range sts {
@@ -191,9 +192,13 @@ func (d *Service) Input(groupID uint, rev string) (render.Input, error) {
 // ErrGMNotLicensed 表示站点启用了国密双证书，但授权不包含 gm_tls（企业版）。
 var ErrGMNotLicensed = errors.New("LICENSE_FEATURE_DENIED: 当前授权不包含国密 TLCP（gm_tls），请去掉站点的国密证书")
 
+// featureOn 报告授权功能是否开启。没有接授权检查（Feature 为空）一律视为未授权：
+// 晚绑定漏接一行不能让需授权的功能静默放行。
+func (d *Service) featureOn(name string) bool { return d.Feature != nil && d.Feature(name) }
+
 // CheckGM：国密双证书只能下发到国密变体（铜锁构建）的节点，标准版 syedge -t 会拒绝这些指令。
 func (d *Service) CheckGM(groupID uint) error {
-	if d.Feature != nil && !d.Feature("gm_tls") {
+	if !d.featureOn("gm_tls") {
 		return ErrGMNotLicensed
 	}
 	nd := d.q().Node
@@ -753,7 +758,7 @@ func (d *Service) run(g *store.NodeGroup, rev *store.Revision, dep *store.Deploy
 			if dep.Kind == "rollback" && !isLegacyRevision(rev) {
 				// 回滚优先切换节点本地已有的版本：不依赖授权状态，过期时也可用（规格书 8.6）
 				res, err = ag.Send(context.Background(), n.ID, &agentv1.ServerMessage{Body: &agentv1.ServerMessage_Rollback{Rollback: &agentv1.Rollback{ToRevisionId: rev.ID}}}, ApplyTimeout)
-				if err == nil && res.Status == agentv1.CommandResult_REJECTED && strings.Contains(res.Message, "not present") {
+				if err == nil && res.Status == agentv1.CommandResult_REJECTED && agentmsg.IsRevisionNotPresent(res.Message) {
 					res = nil // 本地没有该版本：退回到重新下发
 				}
 			}

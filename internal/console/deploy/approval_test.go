@@ -24,7 +24,7 @@ import (
 func newTestService(t *testing.T) (*Service, *store.NodeGroup) {
 	t.Helper()
 	st := storetest.Open(t)
-	d := &Service{Store: st, Audit: &audit.Logger{DB: st.DB}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MimeTypes: render.DefaultMimeTypes()}
+	d := &Service{Store: st, Audit: &audit.Logger{DB: st.DB}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MimeTypes: render.DefaultMimeTypes(), Feature: func(string) bool { return true }}
 	g := &store.NodeGroup{Name: "default"}
 	if err := query.Use(st.DB).NodeGroup.WithContext(context.Background()).Create(g); err != nil {
 		t.Fatal(err)

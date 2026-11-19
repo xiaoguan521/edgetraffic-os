@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
+	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/agentmsg"
 	"github.com/xiaoguan521/edgetraffic-os/internal/pkg/configbundle"
 )
 
@@ -235,7 +236,7 @@ func (a *Applier) Rollback(ctx context.Context, rev string, checks []PostCheck, 
 	}
 	defer unlock()
 	if _, err := os.Stat(filepath.Join(a.releases(), rev, brand.ConfName())); err != nil {
-		return Result{Status: Rejected, Message: "revision not present on node"}
+		return Result{Status: Rejected, Message: agentmsg.RevisionNotPresent}
 	}
 	dir := filepath.Join(a.releases(), rev)
 	m, err := readManifest(dir)

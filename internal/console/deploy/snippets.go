@@ -132,7 +132,7 @@ func (d *Service) validateSnippet(in SnippetInput) (string, []render.SnippetIssu
 			return "", nil, fmt.Errorf("站点 %s 没有路由 %s", site.Name, in.RoutePath)
 		}
 		if sc == render.ScopeLua {
-			if d.Feature != nil && !d.Feature("lua") {
+			if !d.featureOn("lua") {
 				return "", nil, ErrLuaScriptNotLicensed
 			}
 			norm, err := render.ValidateLuaScript(in.Name, in.Content)
