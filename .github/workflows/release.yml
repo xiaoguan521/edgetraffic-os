@@ -344,7 +344,7 @@ jobs:
             base="$REGISTRY/node:$TAG-${{ matrix.arch }}"
             V=$(mktemp -d)
             mkdir -p "$V/lua" "$V/gm" "$V/gmx"
-            tar -C "$V/lua" -xzf "$OUT"/syedge-lua-*.tar.gz
+            tar -C "$V/lua" -xzf dist/syedge-lua/syedge-lua-*.tar.gz
             tar -C "$V/gmx" -xzf dist/syedge-gm/syedge-*-gmssl-*.tar.gz
             gm_bin=$(find "$V/gmx" -type f -path '*/sbin/syedge' | head -1)
             [[ -n "$gm_bin" ]] || { echo 'no sbin/syedge in GM tarball' >&2; exit 1; }
