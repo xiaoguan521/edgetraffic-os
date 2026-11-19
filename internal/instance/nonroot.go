@@ -49,6 +49,7 @@ func (e Env) Nonroot() error {
 		return e.rootMasterSetup(insts)
 	}
 	if _, custom := e.customSystemRoot(); custom {
+		e.removeCompatUnits() // 先离开兼容模式（含防火墙单元，它们不在自定义根目录改写的范围内）
 		if err := e.writePrefixUnits(); err != nil {
 			return err
 		}

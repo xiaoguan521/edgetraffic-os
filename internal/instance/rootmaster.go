@@ -75,13 +75,40 @@ func compatUnit(src, caps, dp string) string {
 	return b.String()
 }
 
-// unitSource 找到单元的软件包版本：先找软件包目录，再找 /etc/systemd/system（tar 包安装）。返回路径与内容。
+// unitOriginDir 保存 tar 包安装的原始单元副本：兼容模式与自定义根目录会在 /etc/systemd/system 里原位改写单元，
+// 改写前不留副本就无法再得到软件包版本（解压目录可能早已删除），切回普通模式时会继续沿用 User=root。
+func unitOriginDir() string { return "/etc/" + brand.ID() + "/unit-origin" }
+
+// generatedUnit 报告内容是否由本程序生成（兼容模式或自定义根目录），而不是软件包原样。
+func generatedUnit(b []byte) bool {
+	s := string(b)
+	return strings.HasPrefix(s, overrideHeader()) || strings.HasPrefix(s, prefixUnitHeader())
+}
+
+// unitSource 找到单元的软件包版本：先找软件包目录（rpm / deb）；tar 包安装时 /etc/systemd/system 里未被改写的文件就是软件包版本，
+// 同时记下原始副本（重新执行 install.sh 升级后会刷新）；文件已被改写时用记录的副本。返回路径与内容。
+// 只有既没有软件包目录、也没有原始副本时，才退回已改写的文件本身（升级到本版本之前进入兼容模式的节点）。
 func (e Env) unitSource(unit string) (string, []byte, bool) {
-	for _, d := range append(append([]string{}, vendorUnitDirs...), "/etc/systemd/system") {
+	for _, d := range vendorUnitDirs {
 		p := d + "/" + unit
 		if b, err := os.ReadFile(e.path(p)); err == nil {
 			return p, b, true
 		}
+	}
+	etc := "/etc/systemd/system/" + unit
+	cur, curErr := os.ReadFile(e.path(etc))
+	origin := unitOriginDir() + "/" + unit
+	if curErr == nil && !generatedUnit(cur) {
+		if err := os.MkdirAll(e.path(unitOriginDir()), 0o755); err == nil {
+			_ = writeFile(e.path(origin), cur, 0o644)
+		}
+		return etc, cur, true
+	}
+	if b, err := os.ReadFile(e.path(origin)); err == nil {
+		return origin, b, true
+	}
+	if curErr == nil {
+		return etc, cur, true
 	}
 	return "", nil, false
 }
@@ -136,8 +163,14 @@ func (e Env) removeCompatUnits() {
 		if vendor {
 			_ = os.Remove(p)
 			e.say("已删除兼容模式单元 /etc/systemd/system/%s，恢复软件包单元", unit)
+		} else if orig, err := os.ReadFile(e.path(unitOriginDir() + "/" + unit)); err == nil {
+			if err := writeFile(p, orig, 0o644); err != nil {
+				e.say("警告：无法恢复 /etc/systemd/system/%s：%v；请重新执行发布包中的 install.sh 恢复", unit, err)
+				continue
+			}
+			e.say("已用安装时记录的原始单元恢复 /etc/systemd/system/%s", unit)
 		} else {
-			e.say("警告：/etc/systemd/system/%s 是兼容模式单元（tar 包安装）：请重新执行发布包中的 install.sh 恢复", unit)
+			e.say("警告：/etc/systemd/system/%s 是兼容模式单元（tar 包安装），没有安装时记录的原始副本：请重新执行发布包中的 install.sh 恢复", unit)
 		}
 	}
 }
