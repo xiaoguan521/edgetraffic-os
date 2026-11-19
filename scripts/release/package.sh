@@ -271,12 +271,13 @@ case "${1:-}" in
     dp_base="${SYEDGE_DATAPLANE_VERSION%-*}"
     lua_base=$(sed -n 's/.*"syedge":"\([^"]*\)".*/\1/p' "$l/addon/VERSION")
     [[ "$lua_base" == "$dp_base" ]] || { echo "Lua 附加包的目标版本 $lua_base 与数据面版本 $SYEDGE_DATAPLANE_VERSION 不一致" >&2; exit 2; }
-    # 二进制里编进去的版本串（品牌改名后为 $B/N.N.N）：必须存在且一致
+    # 二进制里编进去的版本串：改名 patch 把 NGINX_VER 换成 "<进程名>/N.N.N"（进程名带大小写，如 SyEdge），
+    # 所以按进程名 $P、不区分大小写查找；必须存在且一致。
     for pair in "标准版:$d/rootfs$PREFIX/sbin/$B" "国密版:$gm_bin"; do
       label=${pair%%:*}; bin=${pair#*:}
-      bin_ver=$(grep -ao "$B/[0-9][0-9.]*" "$bin" | head -1 || true)
-      [[ -n "$bin_ver" ]] || { echo "$label 二进制 $bin 里找不到版本串 $B/N.N.N，无法核对版本" >&2; exit 2; }
-      [[ "${bin_ver#"$B"/}" == "$dp_base" ]] || { echo "$label 二进制的版本 ${bin_ver#"$B"/} 与数据面版本 $SYEDGE_DATAPLANE_VERSION 不一致" >&2; exit 2; }
+      bin_ver=$(grep -aoi "$P/[0-9][0-9.]*" "$bin" | head -1 || true)
+      [[ -n "$bin_ver" ]] || { echo "$label 二进制 $bin 里找不到版本串 $P/N.N.N，无法核对版本" >&2; exit 2; }
+      [[ "${bin_ver#*/}" == "$dp_base" ]] || { echo "$label 二进制的版本 ${bin_ver#*/} 与数据面版本 $SYEDGE_DATAPLANE_VERSION 不一致" >&2; exit 2; }
     done
     mkdir -p "$d/extras/gmssl" "$d/extras/lua"
     install -m 0755 "$gm_bin" "$d/extras/gmssl/$B"
