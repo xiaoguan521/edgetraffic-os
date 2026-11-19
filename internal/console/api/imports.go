@@ -211,7 +211,15 @@ type ApplyResult struct {
 	Sites     []ImportedSite `json:"sites"`
 	Snippets  []uint         `json:"snippets"` // 已提交、待另一人审批的片段
 	Errors    []string       `json:"errors"`
+	// State 是应用进度：applying 表示尚未记录完成（正在应用，或中途出错 / 进程中断，已建的草稿都在上面）；
+	// done 表示全部处理完。旧版本写入的结果没有该字段，按已完成处理。
+	State string `json:"state,omitempty"`
 }
+
+const (
+	importApplying = "applying"
+	importDone     = "done"
+)
 
 type ImportedSite struct {
 	ID         uint   `json:"id,omitempty"`
@@ -245,6 +253,36 @@ func (s *Server) applyImport(c *gin.Context) {
 	q := s.q()
 	res := ApplyResult{Upstreams: []string{}, Certs: []string{}, Sites: []ImportedSite{}, Snippets: []uint{}, Errors: []string{}}
 
+	// 每建好一项就把当前结果写回：中途出错或进程中断时，已建的草稿仍可复核；写入失败不能当成功返回。
+	save := func(state string) error {
+		res.State = state
+		rj, err := json.Marshal(res)
+		if err != nil {
+			return err
+		}
+		_, err = ci.WithContext(ctx).Where(ci.ID.Eq(row.ID)).Update(ci.Result, string(rj))
+		return err
+	}
+	// 一条草稿都还没建就记录不了进度：释放领取（证书放回内存，仍受 30 分钟限制），可以直接重试。
+	if err := save(importApplying); err != nil {
+		if len(certMat) > 0 {
+			importCerts.Store(row.ID, &pendingCerts{certs: certMat, expires: time.Now().Add(importCertTTL)})
+		}
+		if _, e := ci.WithContext(ctx).Where(ci.ID.Eq(row.ID)).UpdateSimple(ci.AppliedBy.Value(""), ci.AppliedAt.Null()); e != nil {
+			s.Log.Error("import apply: could not release the claim", "import", row.ID, "err", e)
+		}
+		s.Log.Error("import apply: could not record progress", "import", row.ID, "err", err)
+		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", "无法记录应用进度，尚未创建任何草稿，请稍后重试")
+		return
+	}
+	var saveErr error
+	checkpoint := func() bool {
+		if saveErr == nil {
+			saveErr = save(importApplying)
+		}
+		return saveErr == nil
+	}
+
 	// 上游：同名且内容相同则沿用，不同则改名
 	upName := map[string]string{}
 	for _, u := range rep.Upstreams {
@@ -276,10 +314,16 @@ func (s *Server) applyImport(c *gin.Context) {
 			continue
 		}
 		res.Upstreams = append(res.Upstreams, name)
+		if !checkpoint() {
+			break
+		}
 	}
 
 	snap := s.Lic.Snapshot()
 	for _, sr := range rep.Sites {
+		if saveErr != nil {
+			break
+		}
 		if sr.Status == importer.StatusFailed {
 			continue
 		}
@@ -343,6 +387,7 @@ func (s *Server) applyImport(c *gin.Context) {
 			continue
 		}
 		res.Sites = append(res.Sites, ImportedSite{ID: st.ID, SourceName: sr.Name, Name: name, Enabled: enabled, Note: note})
+		checkpoint()
 		s.audit(c, "site.create", "site", name, map[string]any{"group_id": row.GroupID, "domains": spec.Domains, "origin": "import", "import": row.ID, "enabled": enabled})
 
 		submit := func(in deploy.SnippetInput) {
@@ -355,6 +400,7 @@ func (s *Server) applyImport(c *gin.Context) {
 				res.Errors = append(res.Errors, fmt.Sprintf("站点 %s 的片段：%s", name, issues[0]))
 			default:
 				res.Snippets = append(res.Snippets, sn.ID)
+				checkpoint()
 			}
 		}
 		if sr.ServerSnippet != "" {
@@ -364,19 +410,27 @@ func (s *Server) applyImport(c *gin.Context) {
 			submit(deploy.SnippetInput{Scope: "location", RoutePath: p, Content: txt})
 		}
 	}
-	if rep.HTTPSnippet != "" {
+	if rep.HTTPSnippet != "" && saveErr == nil {
 		sn, issues, err := s.Deploy.SubmitSnippet(deploy.SnippetInput{GroupID: row.GroupID, Scope: "http", Name: fmt.Sprintf("import-%d", row.ID),
 			Content: rep.HTTPSnippet, Origin: "import", Note: fmt.Sprintf("配置导入 #%d", row.ID)}, user, ip)
 		if err == nil && len(issues) == 0 {
 			res.Snippets = append(res.Snippets, sn.ID)
+			checkpoint()
 		} else if err != nil {
 			res.Errors = append(res.Errors, "http 片段："+err.Error())
 		}
 	}
-	rj, _ := json.Marshal(res)
-	_, _ = ci.WithContext(ctx).Where(ci.ID.Eq(row.ID)).Update(ci.Result, string(rj))
+	if saveErr == nil {
+		saveErr = save(importDone)
+	}
 	s.audit(c, "config.import_apply", "config_import", fmt.Sprint(row.ID), map[string]any{"group": row.GroupID, "report_sha256": row.ReportSHA256,
-		"upstreams": res.Upstreams, "certificates": res.Certs, "sites": len(res.Sites), "snippets": res.Snippets, "errors": len(res.Errors)})
+		"upstreams": res.Upstreams, "certificates": res.Certs, "sites": len(res.Sites), "snippets": res.Snippets, "errors": len(res.Errors), "result_saved": saveErr == nil})
+	if saveErr != nil {
+		// 草稿已经建好，但进度没能完整记录：不能当成功返回。复核仍显示最后一次记录的内容；重复应用被拒绝，避免重复创建。
+		s.Log.Error("import apply: result not saved", "import", row.ID, "err", saveErr)
+		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", fmt.Sprintf("已创建 %d 个站点草稿、%d 个上游，但无法记录应用结果；请到站点页检查，复核按最后记录的进度显示", len(res.Sites), len(res.Upstreams)))
+		return
+	}
 	c.JSON(http.StatusOK, res)
 }
 

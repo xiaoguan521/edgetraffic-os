@@ -123,5 +123,9 @@ func (s *Server) reviewImport(c *gin.Context) {
 		}
 		snippets = append(snippets, r)
 	}
-	c.JSON(http.StatusOK, gin.H{"checked_at": time.Now(), "sites": sites, "snippets": snippets})
+	state := applied.State
+	if state == "" {
+		state = importDone // 旧版本写入的结果没有进度字段，都是完整结果
+	}
+	c.JSON(http.StatusOK, gin.H{"checked_at": time.Now(), "state": state, "sites": sites, "snippets": snippets})
 }

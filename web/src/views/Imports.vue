@@ -266,6 +266,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
           <a-button :loading="reviewing" @click="checkReview">重新校验草稿</a-button>
         </div>
         <a-alert v-if="reviewError" type="error" :message="reviewError" show-icon />
+        <a-alert v-if="review?.state === 'applying'" type="warning" show-icon message="导入尚未完整记录" description="应用过程中出错或被中断，下面是最后记录的进度。请到站点页检查已创建的草稿；该导入不能再次应用，需要时删除草稿后重新上传。" />
         <template v-if="review">
           <p>草稿模型通过 {{ review.sites.filter((s: any) => s.valid).length }} / {{ review.sites.length }} 个；片段待审批 {{ review.snippets.filter((s: any) => s.status === 'pending').length }} 个，已审批 {{ review.snippets.filter((s: any) => s.status === 'approved').length }} 个，已删除或不可用 {{ review.snippets.filter((s: any) => s.status === 'missing' || s.status === 'unavailable').length }} 个。检查时间：{{ dayjs(review.checked_at).format('MM-DD HH:mm:ss') }}</p>
           <a-alert type="info" show-icon message="这里检查的是当前草稿模型和片段状态，原报告中的未转换内容仍需人工核对；节点发布时还会执行实际配置校验。停用的站点不会出现在发布预览中。" />
