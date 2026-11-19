@@ -15,16 +15,36 @@
 
 控制台也可以直接用镜像 `ghcr.io/xiaoguan521/edgetraffic-os/console:<版本>`。
 
-节点镜像（amd64 / arm64）：
+### 交付客户：节点镜像（Docker，不是 Release 里的文件，用 `docker pull` 下载）
 
-| 镜像 | 内容 | 构建时机 |
+镜像在 `ghcr.io/xiaoguan521/edgetraffic-os/` 下，同一个标签自动选择 amd64 / arm64。`<版本>` 如 `0.5.0`。
+
+| 镜像 | 内容 | 适用 |
 |---|---|---|
-| `node` | 标准版数据面 + agent | 每次发布 |
-| `node-lua` | `node` + Lua 附加包（标准版模块） | 仅正式标签 |
-| `node-gm-lua` | 国密版数据面 + Lua 附加包（国密版模块） | 仅正式标签 |
+| `node` | 标准版数据面 + agent | 标准版，不用 Lua |
+| `node-lua` | `node` + Lua 附加包（标准版模块） | 要用 Lua 的标准版 |
+| `node-gm-lua` | 国密版数据面（铜锁）+ Lua 附加包 | 国密场景 |
 
-变体镜像用附加包自带的 `install.sh` 安装，路径与整合包一致；附加包副本留在镜像的 `/usr/local/share/syedge-lua/`。
-独立使用时启用独立模式 Lua：`docker exec <容器> bash /usr/local/share/syedge-lua/install.sh --standalone`，再 `-s reload`。
+`node-lua`、`node-gm-lua` 只在正式标签发布。
+
+**只要独立数据面（不接控制台，配置自己维护）**
+
+```bash
+docker pull ghcr.io/xiaoguan521/edgetraffic-os/node:<版本>          # 标准版
+docker pull ghcr.io/xiaoguan521/edgetraffic-os/node-lua:<版本>      # 标准版 + Lua
+docker pull ghcr.io/xiaoguan521/edgetraffic-os/node-gm-lua:<版本>   # 国密版 + Lua
+```
+
+不注册控制台，镜像里的 agent 就不会启动，只运行数据面。目录映射、启动、校验与 reload 的完整步骤见仓库
+`deploy/docker-compose.standalone.example.yml`：宿主机 `./conf` 挂到 `<安装目录>/conf`、`./logs` 挂到 `<安装目录>/logs`，
+首次启动自动写入基线配置，之后在 `./conf/current/` 下编辑，用 `syedge -p <安装目录> -t` 校验、`-s reload` 生效，不要 `docker restart`。
+`<安装目录>` 是镜像编译时的前缀，正式发布镜像为 `/home/atwasoft/syedge`。
+
+**接入控制台**：同一个镜像，在控制台“节点”页“添加节点”生成注册命令，在容器内执行；配置、证书、Lua 随后由控制台发布。
+
+**Lua 独立模式**（`node-lua` / `node-gm-lua`；节点不能已接入控制台）：
+`docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone`，再 `-s reload`。
+自己的 Lua 文件放宿主机 `./lualib/`（挂到 `<安装目录>/lualib`）。停用用 `--standalone-disable`。
 
 ### 交付客户：边缘节点首次安装（装在每台 syedge 服务器上，四种方式任选一种）
 
