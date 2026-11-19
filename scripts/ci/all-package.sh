@@ -16,7 +16,7 @@ bad() { echo "FAIL $1"; fail=$((fail+1)); }
 VER=9.9.9
 N="$W/node/syedge-node-$VER-linux-amd64"
 mkdir -p "$N/rootfs$PREFIX/sbin" "$W/out"
-printf 'standard binary syedge/1.30.6\n' > "$N/rootfs$PREFIX/sbin/syedge"
+printf 'standard binary SyEdge/1.30.6\n' > "$N/rootfs$PREFIX/sbin/syedge"
 sed "s|/opt/syedge|$PREFIX|g" deploy/node/install.sh > "$N/install.sh"
 sed "s|/opt/syedge|$PREFIX|g" deploy/node/uninstall.sh > "$N/uninstall.sh"
 chmod 0755 "$N/install.sh" "$N/uninstall.sh"
@@ -25,7 +25,7 @@ tar -C "$W/node" -czf "$W/node.tar.gz" "syedge-node-$VER-linux-amd64"
 
 # 假的国密基础包（与真实包一样，目录树以编译前缀为根）
 mkdir -p "$W/gm$PREFIX/sbin"
-printf 'gmssl binary syedge/1.30.6\n' > "$W/gm$PREFIX/sbin/syedge"
+printf 'gmssl binary SyEdge/1.30.6\n' > "$W/gm$PREFIX/sbin/syedge"
 tar -C "$W/gm" -czf "$W/gm.tar.gz" "${PREFIX#/}"
 
 # 假的 Lua 附加包（未改写版本的原始包：版本与数据面一致，标准版与国密版通用）
@@ -45,8 +45,8 @@ A="$W/x"; mkdir -p "$A"; tar -C "$A" -xzf "$PKG"
 D="$A/syedge-all-$VER-linux-amd64"
 [[ -d "$D" ]] && ok "解压目录名为 syedge-all-<版本>-linux-<架构>" || bad "解压目录名不对：$(ls "$A")"
 [[ -x "$D/install.sh" && -x "$D/uninstall.sh" ]] && ok "含 install.sh 与 uninstall.sh" || bad "缺少 install.sh / uninstall.sh"
-[[ $(cat "$D/rootfs$PREFIX/sbin/syedge") == 'standard binary syedge/1.30.6' ]] && ok "rootfs 里是标准版二进制" || bad "rootfs 二进制不是标准版"
-[[ $(cat "$D/extras/gmssl/syedge" 2>/dev/null) == 'gmssl binary syedge/1.30.6' && -x "$D/extras/gmssl/syedge" ]] && ok "extras/gmssl/syedge 是国密版二进制" || bad "缺少国密版二进制"
+[[ $(cat "$D/rootfs$PREFIX/sbin/syedge") == 'standard binary SyEdge/1.30.6' ]] && ok "rootfs 里是标准版二进制" || bad "rootfs 二进制不是标准版"
+[[ $(cat "$D/extras/gmssl/syedge" 2>/dev/null) == 'gmssl binary SyEdge/1.30.6' && -x "$D/extras/gmssl/syedge" ]] && ok "extras/gmssl/syedge 是国密版二进制" || bad "缺少国密版二进制"
 [[ -f "$D/extras/lua/install.sh" && -f "$D/extras/lua/uninstall.sh" && -f "$D/extras/lua/addon/VERSION" ]] && ok "extras/lua 是完整的附加包" || bad "extras/lua 不完整"
 grep -q '"version":"1.30.6"' "$D/extras/lua/addon/VERSION" && ok "附加包版本保持原样（标准版与国密版通用）" || bad "附加包版本被改写"
 [[ -f "$D/README.txt" ]] && grep -q -- '--gmssl' "$D/README.txt" && ok "README 说明了变体选择" || bad "README 缺少 --gmssl 说明"
@@ -107,9 +107,9 @@ if SYEDGE_DATAPLANE_VERSION=bogus OUT="$W/out6" VERSION=$VER scripts/release/pac
 # 必须给出数据面版本：缺省时不能退化为“只告警”而绕过检查
 if OUT="$W/out7" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" >"$W/unset.log" 2>&1; then bad "未设置 SYEDGE_DATAPLANE_VERSION 也能出整合包"; else grep -q 'SYEDGE_DATAPLANE_VERSION' "$W/unset.log" && ok "未设置 SYEDGE_DATAPLANE_VERSION 时拒绝打包" || bad "拒绝了但没说明原因：$(cat "$W/unset.log")"; fi
 # 二进制本身的版本也要核对：国密版、标准版与声明的数据面版本不一致都拒绝
-mkdir -p "$W/gmbad$PREFIX/sbin"; printf 'gmssl binary syedge/1.99.0\n' > "$W/gmbad$PREFIX/sbin/syedge"; tar -C "$W/gmbad" -czf "$W/gmbad.tar.gz" "${PREFIX#/}"
+mkdir -p "$W/gmbad$PREFIX/sbin"; printf 'gmssl binary SyEdge/1.99.0\n' > "$W/gmbad$PREFIX/sbin/syedge"; tar -C "$W/gmbad" -czf "$W/gmbad.tar.gz" "${PREFIX#/}"
 if SYEDGE_DATAPLANE_VERSION=1.30.6 OUT="$W/out8" VERSION=$VER scripts/release/package.sh all amd64 "$W/node.tar.gz" "$W/gmbad.tar.gz" "$W/lua.tar.gz" >"$W/gmbad.log" 2>&1; then bad "国密版二进制版本 1.99.0 与数据面 1.30.6 不一致却被打包"; else grep -q '1.99.0' "$W/gmbad.log" && ok "国密版二进制版本不一致时拒绝打包" || bad "拒绝了但没说明版本：$(cat "$W/gmbad.log")"; fi
-mkdir -p "$W/nodebad/syedge-node-$VER-linux-amd64/rootfs$PREFIX/sbin"; cp -r "$N/." "$W/nodebad/syedge-node-$VER-linux-amd64/"; printf 'standard binary syedge/1.99.0\n' > "$W/nodebad/syedge-node-$VER-linux-amd64/rootfs$PREFIX/sbin/syedge"
+mkdir -p "$W/nodebad/syedge-node-$VER-linux-amd64/rootfs$PREFIX/sbin"; cp -r "$N/." "$W/nodebad/syedge-node-$VER-linux-amd64/"; printf 'standard binary SyEdge/1.99.0\n' > "$W/nodebad/syedge-node-$VER-linux-amd64/rootfs$PREFIX/sbin/syedge"
 tar -C "$W/nodebad" -czf "$W/nodebad.tar.gz" "syedge-node-$VER-linux-amd64"
 if SYEDGE_DATAPLANE_VERSION=1.30.6 OUT="$W/out9" VERSION=$VER scripts/release/package.sh all amd64 "$W/nodebad.tar.gz" "$W/gm.tar.gz" "$W/lua.tar.gz" >"$W/nodebad.log" 2>&1; then bad "节点包二进制版本不一致却被打包"; else grep -q '1.99.0' "$W/nodebad.log" && ok "节点包二进制版本不一致时拒绝打包" || bad "拒绝了但没说明版本：$(cat "$W/nodebad.log")"; fi
 
