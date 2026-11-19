@@ -70,6 +70,9 @@ services:
 #   启用独立模式 Lua（配置已挂载持久化，只做一次；节点不能已接入控制台）：
 #     docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone
 #     docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
+#   自己的 Lua 文件放宿主机 ./lualib/（取消上面 volumes 里 ./lualib 一行的注释），配置里 require("hello") 加载 ./lualib/hello.lua；
+#   Lua 指令写在 conf.d 的站点配置里，校验通过后 reload。停用：先删站点里的 Lua 指令，再
+#     docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone-disable
 #   国密证书与指令见仓库 docs/gm.md，Lua 用法见 docs/lua.md。
 #
 # 升级：保留 ./conf ./logs，把 ETOS_TAG 改成新版本，docker compose pull && docker compose up -d；配置不变。
