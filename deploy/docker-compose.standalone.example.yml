@@ -18,7 +18,7 @@
 #   export ETOS_TAG=0.5.0
 #   docker compose -f docker-compose.standalone.example.yml up -d
 #   mkdir -p conf/current/conf.d                 # 站点配置目录，首次需要自己建（主配置已 include conf.d/*.conf）
-#   docker compose exec syedge cat /home/atwasoft/syedge/share/defaults/standalone-example.conf > conf/current/conf.d/www.conf
+#   docker compose exec -T syedge cat /home/atwasoft/syedge/share/defaults/standalone-example.conf > conf/current/conf.d/www.conf
 #   vi conf/current/conf.d/www.conf              # 改域名与后端（Linux 宿主机上文件属 root，用 sudo 编辑）
 #   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -t
 #   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
@@ -61,7 +61,7 @@ services:
 #                                       ssl_certificate     /home/atwasoft/syedge/conf/current/ssl/www.crt;
 #                                       ssl_certificate_key /home/atwasoft/syedge/conf/current/ssl/www.key;
 #                                       私钥放进去后在容器内保证 syedge 可读：
-#                                       docker compose exec chgrp syedge /home/atwasoft/syedge/conf/current/ssl/www.key
+#                                       docker compose exec syedge chgrp syedge /home/atwasoft/syedge/conf/current/ssl/www.key
 #   ./logs/                             日志，对应 P/logs（error.log、access.json）
 # 注意：conf/current 是指向 releases/r000000 的相对软链，文件实际在 ./conf/releases/r000000/ 下；
 #       在宿主机编辑 ./conf/current/... 即可。不要删除或替换 ./conf/current 这个软链本身。
