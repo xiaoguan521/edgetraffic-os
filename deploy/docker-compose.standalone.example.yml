@@ -1,0 +1,50 @@
+# 独立数据面（Docker）：只跑 syedge，不接控制台，配置由你手工维护。
+# 镜像：ghcr.io/xiaoguan521/edgetraffic-os/node:<版本>（amd64 / arm64）。不注册，容器里的 agent 就不会启动。
+#
+# 镜像内安装根目录 P = 发布时的编译前缀（发布镜像为 /home/atwasoft/syedge）。卷只能挂 P 下的子目录，
+# 不能覆盖整个 P（里面有二进制）。配置、日志、pid、临时目录都在 P 下，手工运维只需 -p P，不需要 -c/-e。
+#
+# 首次启动：目录为空时自动写入基线配置（conf/current -> releases/r000000，未匹配域名直接断开，
+# 本机状态页 127.0.0.1:8081/__syedge_status）。启动后在宿主机编辑 ./conf/current/ 下的文件即可。
+#
+#   docker compose -f docker-compose.standalone.example.yml up -d
+#   cp 站点.conf ./conf/current/conf.d/www.conf
+#   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -t
+#   docker compose exec -u syedge syedge /home/atwasoft/syedge/sbin/syedge -p /home/atwasoft/syedge -s reload
+# 生效配置只用 reload，不要 docker restart。
+name: syedge
+
+services:
+  syedge:
+    image: ghcr.io/xiaoguan521/edgetraffic-os/node:${ETOS_TAG:-latest}
+    restart: unless-stopped
+    stop_grace_period: 30s              # 停止时 quit，优雅排空连接
+    ulimits: { nofile: { soft: 65535, hard: 65535 } }
+    ports:
+      - "80:80"
+      - "443:443"                       # 站点还监听别的端口就在这里加
+    volumes:
+      # 配置：整个版本目录（syedge.conf、conf.d/、证书、Lua 脚本都在 conf/current 下）。
+      - ./conf:/home/atwasoft/syedge/conf
+      # 日志：error.log、access.json（宿主机可直接查看、交给日志采集；目录会被容器内改属主给运行用户）。
+      - ./logs:/home/atwasoft/syedge/logs
+      # 站点静态文件（可选）：配置里 root 指向 /home/atwasoft/syedge/html/xxx
+      # - ./html:/home/atwasoft/syedge/html:ro
+      # 你自己的 Lua 库（可选，需要 Lua 附加包，见下）：require("hello") 加载
+      # - ./lualib:/home/atwasoft/syedge/lualib:ro
+      # cache/、run/ 不需要持久化。
+
+# ---------------------------------------------------------------------------
+# 目录对应（宿主机 -> 配置里写的路径，include 一律用相对路径）
+#   ./conf/current/syedge.conf        主配置（include conf.d/*.conf）
+#   ./conf/current/conf.d/*.conf      你的站点配置
+#   ./conf/current/ssl/<域名>.crt|.key  证书：目录自己建；配置里写绝对路径
+#                                     ssl_certificate /home/atwasoft/syedge/conf/current/ssl/www.crt;
+#                                     私钥权限 0640，属组 syedge
+#   ./logs/                           日志，对应 P/logs
+# 注意：conf/current 是指向 releases/r000000 的软链，文件实际在 ./conf/releases/r000000/ 下；
+#       在宿主机编辑 ./conf/current/... 即可（软链是相对的，挂载后仍有效）。
+# Lua：基础节点镜像不含 Lua 模块；需要 *_by_lua* 时基于该镜像再构建一层，装入 Lua 附加包
+#   （模块在 P/modules/），并按附加包说明启用独立模式 Lua。
+# 升级：保留 ./conf ./logs，替换镜像并重建容器；配置不变。
+# 旧版（≤0.4.8）布局的目录与新布局不兼容，请用新目录重新开始。
