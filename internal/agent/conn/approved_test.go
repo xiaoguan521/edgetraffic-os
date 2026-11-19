@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +167,45 @@ func TestReconnectRecordsDigestWhenNoneRecorded(t *testing.T) {
 	e.a.recordCurrentApproved()
 	if e.a.approvedDigest("r000002") == "" {
 		t.Fatal("first-seen digest was not recorded")
+	}
+}
+
+// approved.json 损坏不同于“没有记录”：不得退回旧节点的只核对自洽性，回滚必须拒绝。
+func TestRollbackRefusesWhenApprovedRecordIsCorrupt(t *testing.T) {
+	e := newApprovedEnv(t)
+	e.forgeSelfConsistent("r000001")
+	if err := os.WriteFile(e.a.path("approved.json"), []byte("{malformed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := e.rollback("r000001")
+	if r.Status == agentv1.CommandResult_APPLIED {
+		t.Fatalf("rollback accepted a forged revision with a corrupt approval record: %+v", r)
+	}
+	if !strings.Contains(r.Message, "approved.json") {
+		t.Fatalf("message should name the corrupt record: %q", r.Message)
+	}
+}
+
+// 记录损坏时新的批准记录不得把整个文件从空表重写（会丢掉全部历史摘要）；文件原样保留供人工处理。
+func TestRecordApprovedKeepsCorruptFile(t *testing.T) {
+	e := newApprovedEnv(t)
+	bad := []byte("{malformed")
+	if err := os.WriteFile(e.a.path("approved.json"), bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.a.recordApproved("r000009", "sha256:x")
+	got, _ := os.ReadFile(e.a.path("approved.json"))
+	if !bytes.Equal(got, bad) {
+		t.Fatalf("corrupt approval record was rewritten: %q", got)
+	}
+}
+
+// 没有记录文件（旧节点）仍按既有兼容路径回滚，不受影响。
+func TestRollbackWithoutApprovedFileStillWorks(t *testing.T) {
+	e := newApprovedEnv(t)
+	_ = os.Remove(e.a.path("approved.json"))
+	if r := e.rollback("r000001"); r.Status != agentv1.CommandResult_APPLIED {
+		t.Fatalf("legacy rollback failed: %+v", r)
 	}
 }
 
