@@ -196,3 +196,54 @@ func TestAdminUpdateStillRevokesOnReset(t *testing.T) {
 		t.Fatalf("session survived reset: %d", code)
 	}
 }
+
+// 管理员读到旧的用户行后，该用户改密成功；管理员随后的解锁不能把旧口令写回。
+func TestStaleAdminUnlockDoesNotOverwriteAConcurrentPasswordChange(t *testing.T) {
+	f := newImportHTTP(t)
+	uq := f.s.q().User
+	user, err := uq.WithContext(context.Background()).Where(uq.Username.Eq("viewer")).First()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached, resume := make(chan struct{}), make(chan struct{})
+	var reads atomic.Int32
+	db := f.s.Store.DB
+	if err := db.Callback().Query().After("gorm:query").Register("test:pause_unlock_read", func(tx *gorm.DB) {
+		if tx.Statement.Context.Value(blockSaveKey{}) == true && tx.Statement.Table == "users" && reads.Add(1) == 2 {
+			close(reached)
+			<-resume
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Callback().Query().Remove("test:pause_unlock_read") }()
+
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/users/"+fmt.Sprint(user.ID), bytes.NewBufferString(`{"unlock":true}`))
+	r = r.WithContext(context.WithValue(r.Context(), blockSaveKey{}, true))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Requested-With", "etos")
+	r.AddCookie(f.cookies["admin"])
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { w := httptest.NewRecorder(); f.h.ServeHTTP(w, r); done <- w }()
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("admin request never reached the stale read")
+	}
+	const changed = "Changed@2026!pw1"
+	w := f.json(t, "viewer", http.MethodPut, "/auth/password", map[string]string{"old_password": sessionTestPassword, "new_password": changed})
+	requireStatus(t, w, http.StatusOK, "")
+	close(resume)
+	select {
+	case w = <-done:
+		requireStatus(t, w, http.StatusOK, "")
+	case <-time.After(5 * time.Second):
+		t.Fatal("admin request did not finish")
+	}
+	if got := f.json(t, "", http.MethodPost, "/auth/login", map[string]string{"username": "viewer", "password": changed}); got.Code != http.StatusOK {
+		t.Fatalf("new password no longer works after a stale unlock: %d", got.Code)
+	}
+	if got := f.json(t, "", http.MethodPost, "/auth/login", map[string]string{"username": "viewer", "password": sessionTestPassword}); got.Code == http.StatusOK {
+		t.Fatal("old password works again after a stale unlock")
+	}
+}

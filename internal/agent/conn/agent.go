@@ -591,7 +591,11 @@ func (a *Agent) sameAsApproved(rev string, bundle []byte) bool {
 	if render.Repack(nm.Revision, next).Manifest.Digest != nm.Digest {
 		return false
 	}
-	if want := a.approvedDigest(rev); want != "" {
+	want, err := a.approvedLookup(rev)
+	if err != nil {
+		return false // 记录损坏不同于“没有记录”：不能退回信任当前目录里（可能已被改写）的清单
+	}
+	if want != "" {
 		return nm.Digest == want
 	}
 	cur, err := a.applier.CurrentFiles()
