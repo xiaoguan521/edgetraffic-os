@@ -33,13 +33,13 @@ import (
 //	upgrade-commit       探活通过后：QUIT 给旧 master
 //	upgrade-abort        探活失败：HUP 给旧 master 拉起旧 worker，QUIT 给新 master，软链切回
 //
-// 升级包由 agent 放在 Incoming 目录（agent 可写），wrapper 以 root 读入内存后验签、解压，只用验过签的字节。
+// 升级包由 agent 放在 Incoming 目录（agent 可写），wrapper 读入内存后验签、解压，只用验过签的字节（wrapper 以数据面用户运行，兼容模式下为 root；信任来自签名，不来自目录属主）。
 
 // Paths 是升级涉及的路径与参数（生产值见 DefaultPaths；测试可替换）。
 type Paths struct {
 	Bin      string // 数据面二进制路径（首次升级后为指向 versions/<版本>/sbin/syedge 的软链）
 	Modules  string // 动态模块目录（syedge-lua 附加包，见 lua.go）；为空表示不处理附加包
-	Versions string // 已安装版本目录（root 所有）
+	Versions string // 已安装版本目录（普通模式属于数据面用户，兼容模式属于 root；.sha256 只防意外损坏，不是完整性锚点，信任来自签名）
 	Incoming string // 升级包投放目录（agent 可写）
 	PidFile  string
 	Conf     string
@@ -47,7 +47,7 @@ type Paths struct {
 	Keys     map[string]ed25519.PublicKey
 	Arch     string
 	Timeout  time.Duration
-	// Instance 是本次升级的实例（空串为默认实例）。升级状态按实例分别保存在 root 所有的 Versions 下：
+	// Instance 是本次升级的实例（空串为默认实例）。升级状态按实例分别保存在 Versions 下：
 	// 二进制同机共用，但每个实例的 master 各自经历 start / commit / abort（设计 0001 第 5.6 节）。
 	Instance string
 	// ErrorLog 非空时（user 或自定义 system 根目录）作为 -e 传给数据面，使启动早期的日志写到实例目录。

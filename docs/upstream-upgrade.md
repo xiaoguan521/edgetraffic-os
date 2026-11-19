@@ -115,7 +115,7 @@ make brand-matrix
 修复后同步更新 `dataplane/patches/README.md` 中的版本号和文件表。
 
 **HTTP/2 server 头：** 模板中的 `@HPACK@` 由 `gen-rename-patch` 按品牌自动计算，无需手工处理；
-需要单独查看编码值时可以运行 `go run ./dataplane/hpack-gen syedge`。
+`dataplane/hpack-gen` 是早期只支持小写字母的小工具，编码表不含大写字母，不能用于 `SyEdge`，仅保留作历史参考；以 `gen-rename-patch` 及其测试为准。
 
 ### 3.4 更新静态依赖（按需）
 

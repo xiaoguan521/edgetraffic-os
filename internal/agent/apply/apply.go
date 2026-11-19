@@ -796,7 +796,19 @@ func childPIDs(parent int) map[int]bool {
 
 // badLog：reload 失败的迹象。init_by_lua 出错（例如自定义 Lua 脚本的语法错误，syedge -t 不执行 init 阶段）只记为 [error]，
 // master 不加载新配置、继续以当前配置服务；按此识别可以立即回滚，并把脚本与行号带进发布记录。
-var badLog = regexp.MustCompile(`\[(emerg|crit)\]|init_by_lua(_block)? error`)
+//
+// 确认窗口内数据面照常处理流量，error.log 里会混入客户端触发的日志：握手失败、打不开某个静态文件、脚本的 ngx.log 等，
+// 这些行带连接编号（`*N`），无论什么级别（含脚本伪造的 "init_by_lua error" 文字）都不代表 reload 失败，不能据此回滚健康的发布。
+// reload 失败（配置错误、证书加载失败、端口绑定失败、worker 派生失败）的日志没有连接编号。
+var (
+	badLog     = regexp.MustCompile(`\[(emerg|crit)\]|init_by_lua(_block)? error`)
+	connScoped = regexp.MustCompile(`\[[a-z]+\] \d+#\d+: \*\d+ `)
+)
+
+// isBadLogLine 报告 error.log 的一行是否是 reload 失败的迹象。
+func isBadLogLine(line string) bool {
+	return badLog.MatchString(line) && !connScoped.MatchString(line)
+}
 
 // confirm 等待新一代 worker 全部起来，并检查 reload 期间的 error.log。
 func (a *Applier) confirm(ctx context.Context, before procSnapshot) error {
@@ -871,7 +883,7 @@ func (a *Applier) newErrors(off int64) string {
 	}
 	b, _ := io.ReadAll(io.LimitReader(f, maxErrLogScan))
 	for _, line := range strings.Split(string(b), "\n") {
-		if badLog.MatchString(line) {
+		if isBadLogLine(line) {
 			return line
 		}
 	}

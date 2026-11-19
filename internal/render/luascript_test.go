@@ -122,3 +122,17 @@ func TestNoLuaWithoutScripts(t *testing.T) {
 		t.Fatal("modules loaded without Lua rules or scripts")
 	}
 }
+
+// 脚本环境提供的 setmetatable 不能改动已有元表的表：ngx.var / ngx.header / ngx.arg / 共享字典等是整个 worker 共用的表，
+// 它们的元表被替换会影响其他站点与规则；只读代理的元表也由此受保护。真实行为由 lua 验收（/lua-meta）验证。
+func TestLuaScriptEnvironmentGuardsSetmetatable(t *testing.T) {
+	rt := luaScriptRuntime
+	if strings.Contains(rt, "setmetatable = setmetatable,") {
+		t.Error("the script environment exposes the raw setmetatable")
+	}
+	for _, want := range []string{"getmetatable(t) ~= nil", "already"} {
+		if !strings.Contains(rt, want) {
+			t.Errorf("script runtime does not contain the setmetatable guard (%q)", want)
+		}
+	}
+}

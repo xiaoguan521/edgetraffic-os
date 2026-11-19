@@ -261,12 +261,36 @@ func TestBadLogMatchesInitByLuaError(t *testing.T) {
 		`2026/11/07 07:10:01 [error] 12#12: init_by_lua error: init_by_lua(syedge.conf:40):12: lua script syntax error: api:p1:content:1: unfinished string`,
 		`2026/11/07 07:10:01 [error] 12#12: init_by_lua_block error: x`,
 	} {
-		if !badLog.MatchString(l) {
+		if !isBadLogLine(l) {
 			t.Errorf("not detected: %s", l)
 		}
 	}
-	if badLog.MatchString(`2026/11/07 07:10:01 [error] 13#13: *5 lua entry thread aborted: runtime error: api:p1:content:1: boom`) {
+	if isBadLogLine(`2026/11/07 07:10:01 [error] 13#13: *5 lua entry thread aborted: runtime error: api:p1:content:1: boom`) {
 		t.Error("a runtime error of one request must not fail the release")
+	}
+}
+
+// 确认窗口内数据面照常处理流量：带连接编号（*N）的日志属于某个连接或请求（客户端握手失败、脚本的 ngx.log 等），
+// 即使级别是 crit / emerg 也不是 reload 失败的迹象，不能让健康的发布被回滚；配置、启动、worker 派生等没有连接编号的才是。
+func TestBadLogIgnoresConnectionScopedLines(t *testing.T) {
+	for _, l := range []string{
+		`2026/11/19 10:00:01 [crit] 12#12: *901 SSL_do_handshake() failed (SSL: error:0A000126:SSL routines::unexpected eof) while SSL handshaking, client: 203.0.113.9, server: 0.0.0.0:443`,
+		`2026/11/19 10:00:01 [crit] 12#12: *902 open() "/opt/syedge/html/x" failed (13: Permission denied), client: 203.0.113.9`,
+		`2026/11/19 10:00:01 [emerg] 12#12: *903 [lua] content_by_lua(syedge.conf:40):1: client-triggered log, client: 203.0.113.9`,
+		`2026/11/19 10:00:01 [error] 12#12: *904 [lua] content_by_lua(syedge.conf:40):1: init_by_lua error (spoofed by a script), client: 203.0.113.9`,
+	} {
+		if isBadLogLine(l) {
+			t.Errorf("a connection-scoped line failed the release: %s", l)
+		}
+	}
+	for _, l := range []string{
+		`2026/11/19 10:00:01 [emerg] 12#12: unknown directive "x" in /opt/syedge/conf/releases/r000003/syedge.conf:5`,
+		`2026/11/19 10:00:01 [crit] 12#12: open() "/opt/syedge/conf/releases/r000003/syedge.conf" failed (13: Permission denied)`,
+		`2026/11/19 10:00:01 [emerg] 1#0: cannot load certificate "/x/y.pem": BIO_new_file() failed`,
+	} {
+		if !isBadLogLine(l) {
+			t.Errorf("a reload failure was not detected: %s", l)
+		}
 	}
 }
 

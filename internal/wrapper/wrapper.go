@@ -3,7 +3,7 @@
 // 安全要点：
 //   - 只接受固定的子命令 test / reload / reopen / quit / upgrade-start / upgrade-commit / upgrade-abort；
 //   - test 只接受一个 revision ID，且必须匹配 ^r[0-9]{6,12}$；upgrade-start 只接受 ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$；
-//   - 升级包必须带厂商升级包签名（与 License 签名密钥分开），由本程序以 root 验签后才使用（upgrade.go）；
+//   - 升级包必须带厂商升级包签名（与 License 签名密钥分开），由本程序验签后才使用（upgrade.go；信任来自签名，不来自目录属主）；
 //   - 二进制与配置路径全部由 internal/layout 按实例名计算，参数不参与路径以外的任何拼接；
 //   - 用切片方式执行，清空环境变量，绝不经过 shell；
 //   - 永远不提供 restart、-g、-p 或任意 -c。

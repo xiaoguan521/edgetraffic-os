@@ -187,6 +187,8 @@ check "access 脚本拒绝请求" "$(req -H "$H" 'http://127.0.0.1/lua?deny=1')"
 check "header_filter 脚本作用于跳转路由" "$(curl -s -D - -o /dev/null -H "$H" -H 'X-Forwarded-For: 10.250.0.2' http://127.0.0.1/lua-moved)" "X-Lua: 1"
 check "脚本受限：io / os.execute / load / ngx.socket / getmetatable / string.dump / debug / package / jit / rawset / setfenv 不可用，ffi / resty.rsa / string.buffer 被拒绝，不能写全局变量、标准库与 ngx 子表，可用 etos.json" \
   "$(req -H "$H" http://127.0.0.1/lua-sb)$(body)" "200nil nil nil nil nil nil nil nil nil nil nil nil false false false false false false false 7"
+check "脚本不能替换已有元表的共享表（ngx.var / ngx.header / string），自己新建的表仍可设置元表，之后 ngx.var 照常可用" \
+  "$(req -H "$H" http://127.0.0.1/lua-meta)$(body)" "200false false false 5 false string"
 check "运行时错误返回 500" "$(req -H "$H" http://127.0.0.1/lua-err)" "500"
 sleep 0.3
 check "运行时错误记入 error.log 并指出脚本" "$(sudo tail -50 "$LOG_DIR/error.log")" "lua-script-boom"
