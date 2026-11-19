@@ -4,6 +4,9 @@
 #   sw_apply R SWSRC STAGED_CONF CONFD ERRFILE
 #       先再检查一次，再写入库与 10-skywalking.conf 并用 syedge -t 校验；校验失败则还原写入前的状态
 #       （用户原有的 10-skywalking.conf 放回原处，本次新增的库文件删除），返回 1。
+#   sw_snapshot_conf CONFD SNAP / sw_restore_conf CONFD SNAP
+#       sw_apply 之前记下已有的 10-skywalking.conf（没有则不留快照）；之后 reload 失败时用 sw_restore_conf 放回，
+#       没有快照说明原先没有该文件，删除本次写入的。库文件不处理：没有初始化文件它们不会被加载。
 # 失败时都只返回非 0，由调用方决定如何退出。
 
 sw_precheck() {
@@ -55,4 +58,20 @@ sw_apply() {
   fi
   [[ -z "$bak" ]] || rm -f "$bak"
   return 0
+}
+
+sw_snapshot_conf() {
+  local CONFD=$1 SNAP=$2
+  rm -f -- "$SNAP" || return 1
+  [[ ! -e "$CONFD/10-skywalking.conf" ]] || cp -p -- "$CONFD/10-skywalking.conf" "$SNAP"
+}
+
+sw_restore_conf() {
+  local CONFD=$1 SNAP=$2
+  if [[ -d "$CONFD/10-skywalking.conf" ]]; then return 1; fi  # mv 会把文件放进同名目录而不是报错
+  if [[ -e "$SNAP" ]]; then
+    cp -p -- "$SNAP" "$CONFD/10-skywalking.conf.restore.$$" && mv -f -- "$CONFD/10-skywalking.conf.restore.$$" "$CONFD/10-skywalking.conf" || { rm -f -- "$CONFD/10-skywalking.conf.restore.$$"; return 1; }
+  else
+    rm -f -- "$CONFD/10-skywalking.conf" || return 1
+  fi
 }
