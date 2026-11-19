@@ -121,16 +121,8 @@ SA_LOAD_NDK="load_module  $ROOT/modules/lua/ndk_http_module.so;"
 SA_LOAD_LUA="load_module  $ROOT/modules/lua/ngx_http_lua_module.so;"
 SA_LOAD_UPSTREAM="load_module  $ROOT/modules/lua/ngx_http_lua_upstream_module.so;"
 
-# agent 状态目录，规则与 internal/layout/layout.go 的 Layout.AgentState 一致：
-# 用户模式（SYEDGE_ROOT）与非历史根目录为 <实例前缀>/agent；历史根目录 /opt/syedge 下默认实例为
-# /var/lib/syedge-agent，具名实例为 /var/lib/syedge-agent-<实例>。
-agent_state_dir() {
-  if [[ -z "${SYEDGE_ROOT:-}" && "$BASE_ROOT" == /opt/syedge ]]; then
-    if [[ "$SELECTED" == default ]]; then echo /var/lib/syedge-agent; else echo "/var/lib/syedge-agent-$SELECTED"; fi
-  else
-    echo "$IPREFIX/agent"
-  fi
-}
+# agent 状态目录，规则与 internal/layout/layout.go 的 Layout.AgentState 一致：<实例前缀>/agent。
+agent_state_dir() { echo "$IPREFIX/agent"; }
 
 # 同属性替换：REF 为参照文件，FILE 获得它的属主与权限（不原地编辑）
 same_attrs() { chown --reference="$1" "$2" && chmod --reference="$1" "$2"; }
