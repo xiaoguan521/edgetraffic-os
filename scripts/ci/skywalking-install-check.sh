@@ -9,11 +9,7 @@ LIB=deploy/node/skywalking-install.sh
 fail=0
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; [[ -z "${GITHUB_ACTIONS:-}" ]] || echo "::error title=skywalking-install-check::$1"; fail=$((fail+1)); }
-[[ -f "$LIB" ]] || { bad "缺少 $LIB"; # 12. SkyWalking 写入失败时，install.sh 要先停用刚启用的 Lua 独立模式，提示里的“重新执行”才真的可行
-dis=$(grep -n 'standalone-disable' deploy/node/install.sh | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1); apl=$(grep -n 'sw_apply "\$R"' deploy/node/install.sh | head -1 | cut -d: -f1)
-[[ -n "$dis" && -n "$apl" && "$dis" -gt "$apl" ]] && ok "sw_apply 失败后 install.sh 会停用 Lua 独立模式再退出" || bad "install.sh 没有在 sw_apply 失败后停用 Lua 独立模式（disable=$dis apply=$apl）"
-
-echo "---- $fail failed"; exit 1; }
+[[ -f "$LIB" ]] || { bad "缺少 $LIB"; echo "---- $fail failed"; exit 1; }
 # shellcheck source=/dev/null
 source "$LIB"
 
@@ -86,6 +82,28 @@ unset -f install
 # 8. install.sh 的顺序：预检在 Lua 附加包安装之前
 pre=$(grep -n 'sw_precheck' deploy/node/install.sh | head -1 | cut -d: -f1); lua=$(grep -n 'echo "== 安装 Lua 附加包"' deploy/node/install.sh | head -1 | cut -d: -f1)
 [[ -n "$pre" && -n "$lua" && "$pre" -lt "$lua" ]] && ok "install.sh 在安装 Lua 附加包之前运行冲突检查" || bad "install.sh 的冲突检查没有排在 Lua 附加包安装之前（pre=$pre lua=$lua）"
+
+# 12. SkyWalking 写入失败时，install.sh 要先停用刚启用的 Lua 独立模式，提示里的“重新执行”才真的可行
+dis=$(grep -n 'standalone-disable' deploy/node/install.sh | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1); apl=$(grep -n 'sw_apply "\$R"' deploy/node/install.sh | head -1 | cut -d: -f1)
+[[ -n "$dis" && -n "$apl" && "$dis" -gt "$apl" ]] && ok "sw_apply 失败后 install.sh 会停用 Lua 独立模式再退出" || bad "install.sh 没有在 sw_apply 失败后停用 Lua 独立模式（disable=$dis apply=$apl）"
+
+# 13. 初始化文件的快照与还原：reload 失败时让磁盘回到 sw_apply 之前，已有的 10-skywalking.conf 放回原处，原先没有则删除
+fresh 13; printf 'USER INIT\n' > "$CONFD/10-skywalking.conf"
+sw_snapshot_conf "$CONFD" "$STAGE/pre.conf" && printf 'NEW INIT\n' > "$CONFD/10-skywalking.conf"
+if sw_restore_conf "$CONFD" "$STAGE/pre.conf" && [[ "$(cat "$CONFD/10-skywalking.conf")" == "USER INIT" ]]; then ok "还原：原有的 10-skywalking.conf 放回原处"; else bad "还原没有放回原有的 10-skywalking.conf"; fi
+fresh 14
+sw_snapshot_conf "$CONFD" "$STAGE/pre.conf" && printf 'NEW INIT\n' > "$CONFD/10-skywalking.conf"
+if sw_restore_conf "$CONFD" "$STAGE/pre.conf" && [[ ! -e "$CONFD/10-skywalking.conf" ]]; then ok "还原：原先没有 10-skywalking.conf 则删除本次写入的"; else bad "还原没有删除本次新增的 10-skywalking.conf"; fi
+fresh 15; printf 'USER INIT\n' > "$CONFD/10-skywalking.conf"; sw_snapshot_conf "$CONFD" "$STAGE/pre.conf"
+rm -f "$CONFD/10-skywalking.conf"; mkdir "$CONFD/10-skywalking.conf"   # 目标位置被占，还原必须报错而不是假装成功
+if sw_restore_conf "$CONFD" "$STAGE/pre.conf" 2>/dev/null; then bad "还原失败却返回成功"; else ok "还原失败返回非 0"; fi
+
+# 14. 独立模式 reload 失败：install.sh 必须先还原 SkyWalking 初始化文件，再停用 Lua 独立模式
+#     （顺序不能反：停用后 init_worker_by_lua_block 没有 Lua 模块，配置校验会失败）
+rl=$(grep -n 'if ! systemctl reload syedge.service' deploy/node/install.sh | head -1 | cut -d: -f1)
+[[ -n "$rl" ]] && body=$(sed -n "$((rl-1)),$((rl+14))p" deploy/node/install.sh) || body=""
+r1=$(grep -n 'sw_restore_conf' <<<"$body" | head -1 | cut -d: -f1); r2=$(grep -n 'standalone-disable' <<<"$body" | head -1 | cut -d: -f1)
+[[ -n "$r1" && -n "$r2" && "$r1" -lt "$r2" ]] && ok "reload 失败后先还原 SkyWalking 文件，再停用 Lua 独立模式" || bad "install.sh 的 reload 失败分支没有先还原 SkyWalking 文件再停用 Lua（restore=$r1 disable=$r2）"
 
 echo "---- $fail failed"
 [[ $fail -eq 0 ]]

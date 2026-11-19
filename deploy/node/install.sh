@@ -224,6 +224,7 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
     if [[ -n "$SW_OAP" ]]; then
       echo "== 安装 SkyWalking 库与初始化文件"
       sw_conf_dir="$(cd -P "$R/conf/current" && pwd -P)/conf.d"
+      sw_snapshot_conf "$sw_conf_dir" "$SW_STAGE/10-skywalking.conf.pre" || die "无法记录原有的 10-skywalking.conf，尚未写入 SkyWalking 文件"
       if ! sw_apply "$R" "$HERE/extras/skywalking/lualib" "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir" "$SW_STAGE/t.err"; then
         # SkyWalking 的文件已还原；同时停用刚启用的 Lua 独立模式，让系统回到“尚未启用 Lua”的状态，
         # 这样修正问题后重新执行 install.sh 才不会被 Lua 安装器以“主配置已含 load_module”拒绝
@@ -233,7 +234,18 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
         die "SkyWalking 安装已中止并还原（上面是原因），但自动停用 Lua 独立模式失败：请先在 $HERE/extras/lua 执行 bash install.sh --standalone-disable，再重新执行 install.sh；运行中的 syedge 不受影响"
       fi
     fi
-    systemctl reload syedge.service || die "独立模式 Lua 已写入配置，但 reload 失败；请先看 $LOG_DIR/error.log"
+    if ! systemctl reload syedge.service; then
+      # reload 失败时运行中的 master 仍用旧配置，磁盘上却已是独立模式：让磁盘回到 reload 之前，
+      # 否则下次 reload 或开机会带着同样的问题，重新执行 install.sh 也会被“主配置已含 load_module”拒绝。
+      # 顺序：先还原 SkyWalking 初始化文件，再停用 Lua（停用后没有 Lua 模块，init_worker_by_lua_block 校验不过）
+      rb_ok=1
+      if [[ -n "$SW_OAP" ]]; then sw_restore_conf "$sw_conf_dir" "$SW_STAGE/10-skywalking.conf.pre" || rb_ok=0; fi
+      (cd "$HERE/extras/lua" && bash install.sh --standalone-disable) || rb_ok=0
+      if [[ "$rb_ok" -eq 1 ]]; then
+        die "独立模式 Lua 配置 reload 失败，已还原到 reload 之前的配置（运行中的 syedge 不受影响）；原因见 $LOG_DIR/error.log，修正后重新执行 install.sh 即可"
+      fi
+      die "独立模式 Lua 配置 reload 失败，自动还原也没有完成：请检查 $R/conf/current/conf.d/10-skywalking.conf，再在 $HERE/extras/lua 执行 bash install.sh --standalone-disable，原因见 $LOG_DIR/error.log；运行中的 syedge 不受影响"
+    fi
     LUA_NOTE="Lua 附加包已安装，独立模式已启用并 reload；自己的 Lua 文件放在 $R/lualib/"
     if [[ -n "$SW_OAP" ]]; then
       LUA_NOTE="$LUA_NOTE；SkyWalking 已装好（OAP $SW_OAP，服务 $SW_SVC，实例 $SW_INST），需要链路的 location 里还要写 start / finish / prepareForReport，见 $HERE/extras/skywalking/LUA-PLACEMENT.md"
