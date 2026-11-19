@@ -22,8 +22,8 @@ index 757808f..919f2ea 100644
 +++ b/src/core/nginx.h
 @@ -11,7 +11,7 @@
  
- #define nginx_version      1030006
- #define NGINX_VERSION      "1.30.6"
+ #define nginx_version      1030007
+ #define NGINX_VERSION      "1.30.7"
 -#define NGINX_VER          "nginx/" NGINX_VERSION
 +#define NGINX_VER          "SyEdge/" NGINX_VERSION
  
