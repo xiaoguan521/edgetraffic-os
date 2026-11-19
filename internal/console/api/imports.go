@@ -276,8 +276,13 @@ func (s *Server) applyImport(c *gin.Context) {
 		return
 	}
 	var saveErr error
+	var unrecorded []string // 已创建但最后一次成功记录之后才建的草稿，写进错误提示，方便手工检查
 	checkpoint := func() bool {
-		if saveErr == nil {
+		if saveErr != nil {
+			return false
+		}
+		// 偶发的一次写入失败重试一次；仍失败就停止创建，避免继续建出记不进结果的草稿
+		if saveErr = save(importApplying); saveErr != nil {
 			saveErr = save(importApplying)
 		}
 		return saveErr == nil
@@ -387,10 +392,15 @@ func (s *Server) applyImport(c *gin.Context) {
 			continue
 		}
 		res.Sites = append(res.Sites, ImportedSite{ID: st.ID, SourceName: sr.Name, Name: name, Enabled: enabled, Note: note})
-		checkpoint()
+		if !checkpoint() {
+			unrecorded = append(unrecorded, fmt.Sprintf("站点 %s（#%d）", name, st.ID))
+		}
 		s.audit(c, "site.create", "site", name, map[string]any{"group_id": row.GroupID, "domains": spec.Domains, "origin": "import", "import": row.ID, "enabled": enabled})
 
 		submit := func(in deploy.SnippetInput) {
+			if saveErr != nil {
+				return // 进度已经记不下去：不再创建片段
+			}
 			in.GroupID, in.SiteID, in.Origin, in.Note = row.GroupID, st.ID, "import", fmt.Sprintf("配置导入 #%d", row.ID)
 			sn, issues, err := s.Deploy.SubmitSnippet(in, user, ip)
 			switch {
@@ -400,7 +410,9 @@ func (s *Server) applyImport(c *gin.Context) {
 				res.Errors = append(res.Errors, fmt.Sprintf("站点 %s 的片段：%s", name, issues[0]))
 			default:
 				res.Snippets = append(res.Snippets, sn.ID)
-				checkpoint()
+				if !checkpoint() {
+					unrecorded = append(unrecorded, fmt.Sprintf("片段 #%d", sn.ID))
+				}
 			}
 		}
 		if sr.ServerSnippet != "" {
@@ -415,7 +427,9 @@ func (s *Server) applyImport(c *gin.Context) {
 			Content: rep.HTTPSnippet, Origin: "import", Note: fmt.Sprintf("配置导入 #%d", row.ID)}, user, ip)
 		if err == nil && len(issues) == 0 {
 			res.Snippets = append(res.Snippets, sn.ID)
-			checkpoint()
+			if !checkpoint() {
+				unrecorded = append(unrecorded, fmt.Sprintf("片段 #%d", sn.ID))
+			}
 		} else if err != nil {
 			res.Errors = append(res.Errors, "http 片段："+err.Error())
 		}
@@ -428,7 +442,11 @@ func (s *Server) applyImport(c *gin.Context) {
 	if saveErr != nil {
 		// 草稿已经建好，但进度没能完整记录：不能当成功返回。复核仍显示最后一次记录的内容；重复应用被拒绝，避免重复创建。
 		s.Log.Error("import apply: result not saved", "import", row.ID, "err", saveErr)
-		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", fmt.Sprintf("已创建 %d 个站点草稿、%d 个上游，但无法记录应用结果；请到站点页检查，复核按最后记录的进度显示", len(res.Sites), len(res.Upstreams)))
+		msg := fmt.Sprintf("已创建 %d 个站点草稿、%d 个上游，但无法记录应用结果；请到站点页检查，复核按最后记录的进度显示", len(res.Sites), len(res.Upstreams))
+		if len(unrecorded) > 0 {
+			msg += "。未记录进的草稿：" + strings.Join(unrecorded, "、")
+		}
+		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", msg)
 		return
 	}
 	c.JSON(http.StatusOK, res)

@@ -96,3 +96,50 @@ func TestImportApplyRecordsDone(t *testing.T) {
 		t.Fatalf("review is not marked done: %s", rv.Body)
 	}
 }
+
+// failResultWriteBetween 让包含 marker 的结果写入从第 from 次起到第 to 次（to<=0 表示一直）失败。
+func failResultWriteBetween(t *testing.T, f *importHTTP, marker string, from, to int32) {
+	t.Helper()
+	var hits atomic.Int32
+	db := f.s.Store.DB
+	err := db.Callback().Update().Before("gorm:update").Register("test:fail_result_range", func(tx *gorm.DB) {
+		if tx.Statement.Table != "config_imports" || !strings.Contains(fmt.Sprint(tx.Statement.Dest), marker) {
+			return
+		}
+		if n := hits.Add(1); n >= from && (to <= 0 || n <= to) {
+			_ = tx.AddError(errors.New("injected result write failure"))
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Update().Remove("test:fail_result_range") })
+}
+
+// 站点创建后记录进度失败：不能再继续创建它的片段（片段建了也记不进结果，复核看不到），错误里要点名未记录的站点。
+func TestImportApplyStopsCreatingAfterAProgressWriteFails(t *testing.T) {
+	f := newImportHTTP(t)
+	row := decodeImport(t, f.upload(t, "operator", "dump.txt", []byte(importDump)))
+	// 第 1 次是领取后的记录，第 2 次是上游，第 3 次起是站点之后的记录
+	failResultWriteBetween(t, f, `"state":"applying"`, 3, 0)
+	w := f.json(t, "operator", http.MethodPost, fmt.Sprintf("/imports/%d/apply", row.ID), map[string]any{})
+	requireStatus(t, w, http.StatusInternalServerError, "RESULT_NOT_SAVED")
+	if n, _ := f.s.q().Snippet.WithContext(context.Background()).Count(); n != 0 {
+		t.Fatalf("%d snippets were created after the progress write failed", n)
+	}
+	if !strings.Contains(w.Body.String(), "imported") {
+		t.Fatalf("message does not name the unrecorded site: %s", w.Body)
+	}
+}
+
+// 偶发的一次写入失败：重试一次即可恢复，整个导入照常完成。
+func TestImportApplyRetriesAProgressWriteOnce(t *testing.T) {
+	f := newImportHTTP(t)
+	row := decodeImport(t, f.upload(t, "operator", "dump.txt", []byte(importDump)))
+	failResultWriteBetween(t, f, `"state":"applying"`, 3, 3)
+	w := f.json(t, "operator", http.MethodPost, fmt.Sprintf("/imports/%d/apply", row.ID), map[string]any{})
+	requireStatus(t, w, http.StatusOK, "")
+	if _, res := importState(t, f, row.ID); !strings.Contains(res, `"state":"done"`) {
+		t.Fatalf("a single transient failure left the import incomplete: %s", res)
+	}
+}

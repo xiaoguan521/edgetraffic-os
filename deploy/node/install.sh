@@ -214,6 +214,8 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
     # shellcheck source=/dev/null
     source "$HERE/extras/skywalking/install-lib.sh"
     sw_precheck "$R" "$HERE/extras/skywalking/lualib" "$(cd -P "$R/conf/current" && pwd -P)/conf.d" || die "SkyWalking 预检未通过，尚未安装 Lua 附加包（上面是原因）"
+    # 先记下已有的 10-skywalking.conf（reload 失败时放回）：此时还没启用 Lua 独立模式，记不下来直接退出即可，不会留下半启用状态
+    sw_snapshot_conf "$(cd -P "$R/conf/current" && pwd -P)/conf.d" "$SW_STAGE/10-skywalking.conf.pre" || die "无法记录原有的 10-skywalking.conf，尚未安装 Lua 附加包"
   fi
   echo "== 安装 Lua 附加包"
   lua_args=()
@@ -224,7 +226,6 @@ if [[ -f "$HERE/extras/lua/install.sh" && "$NO_LUA" -eq 0 ]]; then
     if [[ -n "$SW_OAP" ]]; then
       echo "== 安装 SkyWalking 库与初始化文件"
       sw_conf_dir="$(cd -P "$R/conf/current" && pwd -P)/conf.d"
-      sw_snapshot_conf "$sw_conf_dir" "$SW_STAGE/10-skywalking.conf.pre" || die "无法记录原有的 10-skywalking.conf，尚未写入 SkyWalking 文件"
       if ! sw_apply "$R" "$HERE/extras/skywalking/lualib" "$SW_STAGE/10-skywalking.conf" "$sw_conf_dir" "$SW_STAGE/t.err"; then
         # SkyWalking 的文件已还原；同时停用刚启用的 Lua 独立模式，让系统回到“尚未启用 Lua”的状态，
         # 这样修正问题后重新执行 install.sh 才不会被 Lua 安装器以“主配置已含 load_module”拒绝
