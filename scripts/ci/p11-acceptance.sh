@@ -177,7 +177,7 @@ system_phase() {
   # 因此清空后重新列出旧版 root master 实际用到的能力
   printf '[Service]\nUser=\nGroup=\nAmbientCapabilities=\nCapabilityBoundingSet=\nCapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE\nNoNewPrivileges=no\n' > /etc/systemd/system/syedge.service.d/legacy-root.conf
   systemctl daemon-reload && systemctl restart syedge.service
-  local LD=/run/syedge/syedge.pid
+  local LD=/opt/syedge/run/syedge.pid
   [[ "$(uid_of "$(masterpid $LD)")" == 0 ]] && ok "模拟升级前：master 以 root 运行" || bad "模拟升级前的 master 不是 root"
   rm -f /etc/systemd/system/syedge.service.d/legacy-root.conf && systemctl daemon-reload   # 新版本的单元
   local m0; m0=$(masterpid $LD)
@@ -199,12 +199,13 @@ system_phase() {
     set -- $spec
     out=$(syedge-instance add "$1" --http "$2" --https "$3" --status "$4" 2>&1) && ok "添加实例 $1" || bad "添加 $1：$out"
   done
-  local D=/run/syedge/syedge.pid B=/run/syedge-blue/syedge.pid G=/run/syedge-green/syedge.pid
-  # 运行时目录登记在 tmpfiles：/run 开机清空，systemd 211 以下 RuntimeDirectory= 不生效时由 tmpfiles 重建（模拟开机）
+  local D=/opt/syedge/run/syedge.pid B=/opt/syedge/instances/blue/run/syedge.pid G=/opt/syedge/instances/green/run/syedge.pid
+  # agent 的发布锁目录登记在 tmpfiles：/run 开机清空，systemd 211 以下 RuntimeDirectory= 不生效时由 tmpfiles 重建（模拟开机）；
+  # 数据面的 pid 目录在实例前缀下的 run/，不在 /run
   rm -rf /run/syedge-agent-green
   systemd-tmpfiles --create /etc/tmpfiles.d/syedge-instances.conf
-  [[ "$(stat -c '%U %G %a' /run/syedge-agent-green 2>&1)" == "syedge-agent-green syedge 755" && "$(stat -c %U /run/syedge-green 2>&1)" == syedge ]] \
-    && ok "tmpfiles 重建实例的运行时目录（属主正确）" || bad "tmpfiles 未重建运行时目录：$(cat /etc/tmpfiles.d/syedge-instances.conf 2>&1 | tr '\n' ' ')"
+  [[ "$(stat -c '%U %G %a' /run/syedge-agent-green 2>&1)" == "syedge-agent-green syedge 755" && "$(stat -c %U /opt/syedge/instances/green/run 2>&1)" == syedge && ! -e /run/syedge-green ]] \
+    && ok "tmpfiles 重建 agent 的运行时目录（属主正确），数据面 run/ 在实例前缀下" || bad "运行时目录不符：$(cat /etc/tmpfiles.d/syedge-instances.conf 2>&1 | tr '\n' ' ')"
   # 实例增删后由刷新服务（防火墙用户）按实例配置放行
   nft list table inet syedge_fw 2>/dev/null | grep -q 28080 && ok "新增实例 green 后防火墙已放行 28080（刷新服务以非 root 运行）" \
     || bad "防火墙未放行 28080：$(journalctl -u syedge-firewall-refresh.service --no-pager -n 5 2>&1 | tr '\n' ' ')"
@@ -265,14 +266,14 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occu
     && bad "syedge-agent-blue 能操作默认实例" || ok "syedge-agent-blue 操作默认实例被拒绝"
 
   echo "== MI-07 reopen-all"
-  for f in /var/log/syedge/error.log /var/log/syedge-blue/error.log /var/log/syedge-green/error.log; do mv "$f" "$f.1" 2>/dev/null; done
+  for f in /opt/syedge/logs/error.log /opt/syedge/instances/blue/logs/error.log /opt/syedge/instances/green/logs/error.log; do mv "$f" "$f.1" 2>/dev/null; done
   syedge-instance reopen-all >/dev/null 2>&1; sleep 1
-  for f in /var/log/syedge/error.log /var/log/syedge-blue/error.log /var/log/syedge-green/error.log; do
+  for f in /opt/syedge/logs/error.log /opt/syedge/instances/blue/logs/error.log /opt/syedge/instances/green/logs/error.log; do
     [[ -f "$f" ]] && ok "重新打开 $f" || bad "reopen-all 后没有 $f"
   done
 
   echo "== MI-03 三个实例的主机级热升级，持续请求；blue 注入失败后重试"
-  for a in /var/lib/syedge-agent /var/lib/syedge-agent-blue /var/lib/syedge-agent-green; do
+  for a in /opt/syedge/agent /opt/syedge/instances/blue/agent /opt/syedge/instances/green/agent; do
     mkdir -p "$a/upgrade"; drop "$a/upgrade"
   done
   local newbin=/opt/syedge/versions/$UP/sbin/syedge
@@ -303,10 +304,10 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occu
   # 关闭后在 TIME_WAIT 中保留约 60 秒；恰好用到同一个号时，数据面监听该端口会报“地址已被占用”而启动失败
   out=$(syedge-instance add gold --http 28180 --https 28543 --status 8084 --resource-mode independent 2>&1) \
     && ok "创建独立实例 gold" || bad "创建独立实例：$out $(journalctl -u syedge@gold.service --no-pager -n 15 2>&1 | tr '\n' ' ')"
-  local GOLD=/run/syedge-gold/syedge.pid shared_pid shared_link
+  local GOLD=/opt/syedge/instances/gold/run/syedge.pid shared_pid shared_link
   shared_pid=$(masterpid "$D"); shared_link=$(readlink /opt/syedge/sbin/syedge)
   [[ "$(exe "$GOLD")" == /opt/syedge/instances/gold/sbin/syedge ]] && ok "gold 使用独立二进制" || bad "gold 二进制：$(exe "$GOLD")"
-  mkdir -p /var/lib/syedge-agent-gold/upgrade; drop /var/lib/syedge-agent-gold/upgrade
+  mkdir -p /opt/syedge/instances/gold/agent/upgrade; drop /opt/syedge/instances/gold/agent/upgrade
   local W_I=(runuser -u syedge-agent-gold -- sudo -n -u syedge /usr/libexec/syedge/syedge-wrapper --instance gold)
   out=$("${W_I[@]}" upgrade-start "$UP" 2>&1) && "${W_I[@]}" upgrade-commit >/dev/null 2>&1 \
     && ok "gold 独立热升级" || bad "gold 热升级：$out"
@@ -329,7 +330,7 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1])); time.sleep(120)' "$W/occu
 # 任何系统都可以用 --root-master 选择。CI 的内核支持 ambient，这里用 --root-master 进入同一套配置
 root_master_phase() {
   echo "== 兼容模式：master 以 root 运行（与传统 Web 服务器相同），worker 以 syedge 运行"
-  local D=/run/syedge/syedge.pid G=/run/syedge-green/syedge.pid dp; dp=$(id -u syedge)
+  local D=/opt/syedge/run/syedge.pid G=/opt/syedge/instances/green/run/syedge.pid dp; dp=$(id -u syedge)
   out=$(syedge-instance nonroot --root-master 2>&1) || bad "nonroot --root-master：$out"
   [[ -f /etc/syedge/root-master && "$(stat -c %u /etc/syedge/root-master)" == 0 ]] && ok "写入兼容模式标记（root 所有）" || bad "没有兼容模式标记"
   # 覆盖单元（不是附加配置）：只有一行能力边界，systemd 208 上也不会与软件包单元取交集而丢掉 CAP_SETGID
@@ -375,7 +376,7 @@ root_master_phase() {
   local UP2=9.2.0
   OUT="$W/pkg" SYEDGE_UPGRADE_VERSION=$UP2 scripts/release/package.sh syedge-upgrade "$ARCH" "$TGZ" >/dev/null
   "$W/lic" sign-package -key "$W/keys/etos-ci-pkg-ephemeral.key" -kid etos-ci-pkg-ephemeral -in "$W/pkg/syedge-$UP2-$ARCH.tar.gz" -name syedge -version "$UP2" -arch "$ARCH" -variant standard >/dev/null
-  for a in /var/lib/syedge-agent /var/lib/syedge-agent-green; do
+  for a in /opt/syedge/agent /opt/syedge/instances/green/agent; do
     mkdir -p "$a/upgrade"
     cp "$W/pkg/syedge-$UP2-$ARCH.tar.gz" "$a/upgrade/syedge-$UP2.tar.gz"; cp "$W/pkg/syedge-$UP2-$ARCH.tar.gz.sig" "$a/upgrade/syedge-$UP2.tar.gz.sig"
   done
@@ -392,9 +393,9 @@ root_master_phase() {
   [[ "$n" == 0 ]] && ok "兼容模式热升级期间持续请求零错误" || bad "兼容模式热升级 $n 次请求失败"
 
   echo "== 兼容模式下 logrotate 的 reopen-all（以 root 发信号）"
-  mv /var/log/syedge/error.log /var/log/syedge/error.log.r
+  mv /opt/syedge/logs/error.log /opt/syedge/logs/error.log.r
   syedge-instance reopen-all >/dev/null 2>&1; sleep 1
-  [[ -f /var/log/syedge/error.log ]] && ok "reopen-all 重新打开日志" || bad "兼容模式 reopen-all 后没有 error.log"
+  [[ -f /opt/syedge/logs/error.log ]] && ok "reopen-all 重新打开日志" || bad "兼容模式 reopen-all 后没有 error.log"
 }
 
 case "$PHASE" in

@@ -17,13 +17,9 @@ MAIN="$PREFIX/conf/releases/r000000/syedge.conf"
 NEWCONF="$PREFIX/conf/releases/r000000/conf.d/00-lua-standalone.conf"
 SITE="$PREFIX/conf/releases/r000000/conf.d/standalone-www.conf"
 DICT="$PREFIX/conf/releases/r000000/conf.d/standalone-ext-dicts.conf"
-PIDF=/run/syedge/syedge.pid
-# agent 状态目录：与 internal/layout/layout.go 的 AgentState 一致（历史根目录 /opt/syedge 用 /var/lib/syedge-agent，其他为 <前缀>/agent）
-if [[ "$PREFIX" == /opt/syedge ]]; then
-  LOG_DIR=/var/log/syedge; CACHE_DIR=/var/cache/syedge; STATE_DIR=/var/lib/syedge-agent
-else
-  LOG_DIR="$PREFIX/logs"; CACHE_DIR="$PREFIX/cache"; STATE_DIR="$PREFIX/agent"
-fi
+PIDF="$PREFIX/run/syedge.pid"
+# agent 状态目录：与 internal/layout/layout.go 的 AgentState 一致（<前缀>/agent）
+LOG_DIR="$PREFIX/logs"; CACHE_DIR="$PREFIX/cache"; STATE_DIR="$PREFIX/agent"; RUN_DIR="$PREFIX/run"
 NODE_JSON="$STATE_DIR/node.json"
 PARENT=$(dirname "$PREFIX")
 
@@ -72,13 +68,13 @@ GOFLAGS=-mod=vendor go run -ldflags "-X github.com/xiaoguan521/edgetraffic-os/in
 [[ -f "$W/defaults/share/defaults/baseline/syedge.conf" ]] || die "初始版本缺少主配置"
 getent group syedge >/dev/null || sudo groupadd -r syedge
 id syedge >/dev/null 2>&1 || sudo useradd -r -g syedge -s /usr/sbin/nologin syedge
-sudo mkdir -p -- "$PREFIX/conf/releases" "$LOG_DIR" "$CACHE_DIR" /run/syedge "$PREFIX/modules"
+sudo mkdir -p -- "$PREFIX/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR" "$PREFIX/modules"
 sudo cp -r -- "$W/defaults/share/defaults/baseline" "$PREFIX/conf/releases/r000000" || die "无法写入 r000000"
 sudo mkdir -p -- "$PREFIX/conf/releases/r000000/conf.d"
 sudo ln -sfn releases/r000000 "$PREFIX/conf/current"
 # 与 agent 写出的版本一致：root 所有，数据面用户所在组可读
 sudo chown -R root:syedge "$PREFIX/conf" && sudo chmod -R g+rX "$PREFIX/conf"
-sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge
+sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR"
 mkdir "$W/lua" && tar -C "$W/lua" -xzf "$luapkg" || die "附加包解包失败"
 
 echo "== 启动数据面（基线配置，以 syedge 运行，之后全程不重启）"

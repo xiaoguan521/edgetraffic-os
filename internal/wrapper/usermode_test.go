@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// user 模式（设计 0001 第 6.2 节）：同一套白名单，路径来自安装根目录，每条命令都带 -e <实例错误日志>。
+// user 模式（设计 0001 第 6.2 节）：同一套白名单，路径来自安装根目录，命令只带 -p <实例前缀>（reload 等不带 -c、-e）。
 func TestBuildUserMode(t *testing.T) {
 	root := "/home/ops/edge"
 	for _, c := range []struct {
@@ -16,18 +16,13 @@ func TestBuildUserMode(t *testing.T) {
 		path string
 		args []string
 	}{
-		{[]string{"test", "r000123"}, root + "/sbin/syedge", []string{"-t", "-q", "-e", root + "/logs/error.log", "-c", root + "/conf/releases/r000123/syedge.conf"}},
-		{[]string{"reload"}, root + "/sbin/syedge", []string{"-e", root + "/logs/error.log", "-c", root + "/conf/current/syedge.conf", "-s", "reload"}},
-		{[]string{"--instance", "blue", "quit"}, root + "/sbin/syedge", []string{"-e", root + "/instances/blue/logs/error.log", "-c", root + "/instances/blue/conf/current/syedge.conf", "-s", "quit"}},
+		{[]string{"test", "r000123"}, root + "/sbin/syedge", []string{"-t", "-q", "-p", root, "-c", root + "/conf/releases/r000123/syedge.conf"}},
+		{[]string{"reload"}, root + "/sbin/syedge", []string{"-p", root, "-s", "reload"}},
+		{[]string{"--instance", "blue", "quit"}, root + "/sbin/syedge", []string{"-p", root + "/instances/blue", "-s", "quit"}},
 	} {
 		cmd, err := BuildAt(root, c.argv)
 		if err != nil {
 			t.Fatalf("%q: %v", c.argv, err)
-		}
-		if len(c.args) > 1 && c.args[0] == "-t" {
-			c.args = append(c.args[:2], append([]string{"-p", root}, c.args[2:]...)...)
-		} else {
-			c.args = append([]string{"-p", root}, c.args...)
 		}
 		if cmd.Path != c.path || strings.Join(cmd.Args, " ") != strings.Join(c.args, " ") || cmd.Root != root {
 			t.Errorf("%q: %s %q (root %q)", c.argv, cmd.Path, cmd.Args, cmd.Root)
@@ -44,11 +39,8 @@ func TestBuildUserMode(t *testing.T) {
 		t.Errorf("system reload = %q", cmd.Args)
 	}
 	p, err := DefaultPathsAt(root, "blue")
-	if err != nil || p.Bin != root+"/sbin/syedge" || p.PidFile != root+"/instances/blue/run/syedge.pid" || p.ErrorLog != root+"/instances/blue/logs/error.log" {
+	if err != nil || p.Bin != root+"/sbin/syedge" || p.PidFile != root+"/instances/blue/run/syedge.pid" {
 		t.Fatalf("user upgrade paths = %+v %v", p, err)
-	}
-	if sp := DefaultPathsForInstance(""); sp.ErrorLog != "" {
-		t.Fatal("system mode must not pass -e")
 	}
 }
 

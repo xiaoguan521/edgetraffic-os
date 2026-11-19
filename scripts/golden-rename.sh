@@ -17,7 +17,7 @@ skipif() { echo "skip $1 ($2)"; skip=$((skip+1)); }
 check "-v 输出 syedge"                "\"$BIN\" -v 2>&1 | grep -q '^SyEdge version: SyEdge/'"
 check "-h 用法为 syedge 且无上游名"     "\"$BIN\" -h 2>&1 | grep -q '^Usage: syedge' && ! \"$BIN\" -h 2>&1 | grep -qi $name"
 check "-t 输出前缀为 SyEdge"           "\"$BIN\" -t 2>&1 | grep -q '^SyEdge: '"
-check "-V 配置路径"                   "\"$BIN\" -V 2>&1 | grep -q -- '--conf-path=/opt/syedge/conf/current/syedge.conf'"
+check "-V 配置路径"                   "\"$BIN\" -V 2>&1 | grep -q -- '--conf-path=conf/current/syedge.conf'"
 check "ps -C syedge"                  "ps -C syedge -o comm= | grep -q syedge"
 check "master 进程标题"               "ps -eo args | grep -q '^SyEdge: master process'"
 check "worker 进程标题"               "ps -eo args | grep -q '^SyEdge: worker process'"

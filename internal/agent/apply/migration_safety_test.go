@@ -50,7 +50,9 @@ func TestLegacyMasterMustUseCurrentConfig(t *testing.T) {
 		{" -p/home/app/node -cconf/current/syedge.conf", true},
 		{" -p /home/app/node -c /etc/other.conf", false},
 		{" -p /home/app/node -c /home/app/node/conf/releases/r000000/syedge.conf", false},
-		{" -p /home/app/node", false},
+		{" -p /home/app/node", true}, // 无 -c：编译期默认配置就是 <前缀>/conf/current/<名>
+		{" -p /home/other", false},
+		{"", false}, // 既无 -p 也无 -c：无法确定
 	} {
 		if got := legacyMasterUsesCurrent(title+tc.args, "/home/app/node", want); got != tc.ok {
 			t.Errorf("%s: got %v", tc.args, got)

@@ -62,7 +62,7 @@ func TestGroupProfileFeedsRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := string(b.Files["syedge.conf"])
-	if !strings.Contains(main, "pid   /run/syedge-blue/syedge.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
+	if !strings.Contains(main, "pid   /opt/syedge/instances/blue/run/syedge.pid;") || !strings.Contains(main, "listen       18080  default_server;") {
 		t.Fatalf("preview not rendered with the group profile:\n%s", main)
 	}
 }

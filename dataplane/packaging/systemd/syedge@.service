@@ -15,13 +15,12 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 # 配置中的 pid、日志与临时目录由控制台按节点组实例档案渲染为本实例的路径
-PIDFile=/run/syedge-%i/syedge.pid
-RuntimeDirectory=syedge-%i
-RuntimeDirectoryPreserve=yes
-ExecStartPre=/opt/syedge/sbin/syedge -p /opt/syedge -t -q -c /opt/syedge/instances/%i/conf/current/syedge.conf
-ExecStart=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf
-ExecReload=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s reload
-ExecStop=/opt/syedge/sbin/syedge -p /opt/syedge -c /opt/syedge/instances/%i/conf/current/syedge.conf -s quit
+# 实例前缀是 /opt/syedge/instances/%i：配置、pid、日志、临时目录都在其下
+PIDFile=/opt/syedge/instances/%i/run/syedge.pid
+ExecStartPre=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i -t -q
+ExecStart=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i
+ExecReload=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i -s reload
+ExecStop=/opt/syedge/sbin/syedge -p /opt/syedge/instances/%i -s quit
 # 与默认实例一致：让 master 等待现有连接结束，再由 systemd 完成停止。
 KillMode=mixed
 KillSignal=SIGQUIT

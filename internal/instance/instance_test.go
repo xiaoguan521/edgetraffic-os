@@ -110,7 +110,7 @@ func TestAddIndependentInstanceCreatesSeparateRuntime(t *testing.T) {
 	if err := f.ReopenAll(); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran(l.Bin() + " -p " + l.RuntimeRoot() + " -e " + l.ErrorLog() + " -c " + l.CurrentConf() + " -s reopen") {
+	if !f.ran(l.Bin() + " -p " + l.Prefix() + " -s reopen") {
 		t.Fatalf("independent reopen missing: %v", f.cmds)
 	}
 	if err := os.Remove(unit); err != nil {
@@ -362,12 +362,16 @@ func TestAddCreatesInstance(t *testing.T) {
 	if f.ran("--now") {
 		t.Fatal("systemctl --now needs systemd 220+")
 	}
-	// 运行时目录登记到 tmpfiles（systemd 211 以下 RuntimeDirectory= 不生效，/run 开机清空）
+	// agent 的发布锁目录登记到 tmpfiles（systemd 211 以下 RuntimeDirectory= 不生效，/run 开机清空）；
+	// 数据面的 pid 目录在实例前缀下，不需要
 	tf, err := os.ReadFile(f.path(RuntimeTmpfiles()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"d /run/syedge-blue 0755 syedge syedge -\n", "d /run/syedge-agent-blue 0755 syedge-agent-blue syedge -\n"} {
+	if strings.Contains(string(tf), "/run/syedge-blue") {
+		t.Errorf("dataplane run dir must not be in tmpfiles:\n%s", tf)
+	}
+	for _, want := range []string{"d /run/syedge-agent-blue 0755 syedge-agent-blue syedge -\n"} {
 		if !strings.Contains(string(tf), want) {
 			t.Errorf("tmpfiles missing %q:\n%s", want, tf)
 		}
@@ -468,12 +472,12 @@ func TestRemove(t *testing.T) {
 			t.Errorf("%s not removed", gone)
 		}
 	}
-	if tf, _ := os.ReadFile(f.path(RuntimeTmpfiles())); strings.Contains(string(tf), "blue") || !strings.Contains(string(tf), "/run/syedge-green ") {
+	if tf, _ := os.ReadFile(f.path(RuntimeTmpfiles())); strings.Contains(string(tf), "blue") || !strings.Contains(string(tf), "/run/syedge-agent-green ") {
 		t.Errorf("tmpfiles after remove:\n%s", tf)
 	}
-	// 不加 --purge 保留日志
-	if _, err := os.Stat(f.path(l.LogDir())); err != nil {
-		t.Error("logs removed without --purge")
+	// 不加 --purge 保留日志：移到 <根目录>/removed-instances/
+	if kept, _ := filepath.Glob(f.path(l.Root() + "/removed-instances/blue-*")); len(kept) != 1 {
+		t.Errorf("logs removed without --purge: %v", kept)
 	}
 	// 其他实例不受影响
 	g := layout.System("green")
@@ -605,7 +609,7 @@ func TestReopenAll(t *testing.T) {
 	if err := f.ReopenAll(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/syedge/sbin/syedge -p /opt/syedge -e /var/log/syedge/error.log -c /opt/syedge/conf/current/syedge.conf -s reopen", "/opt/syedge/sbin/syedge -p /opt/syedge -e /var/log/syedge-blue/error.log -c /opt/syedge/instances/blue/conf/current/syedge.conf -s reopen"}
+	want := []string{"/opt/syedge/sbin/syedge -p /opt/syedge -s reopen", "/opt/syedge/sbin/syedge -p /opt/syedge/instances/blue -s reopen"}
 	// 运行时不使用 root（D5）：以 root 执行时经 runuser 以数据面用户发送信号，`-s` 打开的日志不会变成 root 所有
 	if os.Geteuid() == 0 {
 		for i := range want {
@@ -710,7 +714,7 @@ func TestAddNonRootRuntime(t *testing.T) {
 	if err := f.Add(AddOptions{Profile: p}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"chown syedge:syedge /var/log/syedge-blue", "chown syedge:syedge /var/cache/syedge-blue", "chown syedge:syedge /run/syedge-blue",
+	for _, want := range []string{"chown syedge:syedge /opt/syedge/instances/blue/logs", "chown syedge:syedge /opt/syedge/instances/blue/cache", "chown syedge:syedge /opt/syedge/instances/blue/run",
 		"runuser -u syedge -- /usr/libexec/syedge/syedge-wrapper --instance blue test r000000"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q in %v", want, f.cmds)
@@ -761,7 +765,7 @@ func TestNonroot(t *testing.T) {
 		t.Fatalf("handover calls %q", handed)
 	}
 	for _, want := range []string{"chown -R syedge:syedge /opt/syedge/versions", "chown syedge:syedge /opt/syedge/sbin", "chown syedge:syedge /opt/syedge/modules",
-		"chown -R syedge:syedge /run/syedge", "chown -R syedge:syedge /var/log/syedge", "chown -R syedge:syedge /var/cache/syedge-blue",
+		"chown -R syedge:syedge /opt/syedge/run", "chown -R syedge:syedge /opt/syedge/logs", "chown -R syedge:syedge /opt/syedge/instances/blue/cache",
 		"systemctl try-restart syedge-agent.service syedge-agent@blue.service"} {
 		if !f.ran(want) {
 			t.Errorf("missing %q in %v", want, f.cmds)

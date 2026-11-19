@@ -10,7 +10,6 @@ nologin_shell() {
 }
 ensure_group() { getent group "$1" >/dev/null 2>&1 || groupadd -r "$1"; }
 ensure_user() { id "$1" >/dev/null 2>&1 || useradd -r -g "$2" -d /nonexistent -M -s "$(nologin_shell)" "$1"; }
-LEGACY_ROOT=/opt/"syedge"
 PACKAGE_ROOT=/opt/syedge
 is_remove() { [ "$1" = "0" ] || [ "$1" = "remove" ] || [ "$1" = "purge" ]; }
 # 安装包总会解压到编译前缀，即使实际运行目录是旧路径或自定义路径。

@@ -108,9 +108,9 @@ func (e Env) Add(o AddOptions) error {
 	if p.Root != "" && p.Root != l.Root() {
 		return fmt.Errorf("实例档案安装根目录 %q 与本机 system 根目录 %q 不一致", p.Root, l.Root())
 	}
-	// system 模式的实例档案需要把自定义根目录写入节点，供 agent 与控制台核对；
-	// 默认根目录继续使用零值，保持旧版 instance.json 兼容。
-	if l.Root() != layout.LegacySystemRoot() {
+	// system 模式的实例档案需要把非默认根目录写入节点，供 agent 与控制台核对；
+	// 默认根目录使用零值。
+	if l.Root() != layout.DefaultSystemRoot() {
 		p.Mode, p.Root = string(layout.ModeSystem), l.Root()
 		if err := p.Validate(); err != nil {
 			return err
@@ -167,7 +167,7 @@ func (e Env) add(o AddOptions, l layout.Layout) error {
 		{l.LogDir(), 0o755, dp},
 		{l.CacheDir(), 0o755, dp},
 		{l.AgentState(), 0o750, user},
-		// syedge -t 会检查 pid 文件所在目录；平时由服务单元的 RuntimeDirectory= 与 tmpfiles 创建，启动前先建好
+		// syedge -t 会检查 pid 文件所在目录（实例前缀下的 run/），安装时建好
 		{l.RunDir(), 0o755, dp},
 	} {
 		if err := os.MkdirAll(e.path(d.dir), d.mode); err != nil {
@@ -276,25 +276,14 @@ func (e Env) Remove(name string, purge, yes bool) error {
 	if err := e.prepareInstancesDir(l); err != nil {
 		return err
 	}
-	custom := l.Root() != layout.LegacySystemRoot()
 	dirs := []string{l.Prefix()}
-	if !custom {
-		dirs = append(dirs, l.AgentState())
-		if purge {
-			dirs = append(dirs, l.LogDir(), l.CacheDir())
-		}
-	}
 	if !yes {
 		e.say("将删除实例 %s（加 --yes 执行）：", name)
 		e.say("  停止并停用 %s、%s（数据面优雅退出，现有连接处理完再结束）", l.AgentUnit(), l.DataplaneUnit())
 		e.say("  删除 %s、用户 %s", l.SudoersFile(), l.AgentUser())
 		e.say("  删除目录 %s", strings.Join(dirs, "、"))
 		if !purge {
-			if custom {
-				e.say("  日志和缓存将保留到 %s/removed-instances/%s-*（加 --purge 一并删除）", l.Root(), name)
-			} else {
-				e.say("  保留日志 %s 与缓存 %s（加 --purge 一并删除）", l.LogDir(), l.CacheDir())
-			}
+			e.say("  日志和缓存将保留到 %s/removed-instances/%s-*（加 --purge 一并删除）", l.Root(), name)
 		}
 		return nil
 	}
@@ -303,7 +292,7 @@ func (e Env) Remove(name string, purge, yes bool) error {
 		_ = e.Run("systemctl", "stop", u)
 		_ = e.Run("systemctl", "disable", u)
 	}
-	if custom && !purge {
+	if !purge {
 		kept, err := e.preserveInstanceData(l)
 		if err != nil {
 			return err
@@ -354,14 +343,10 @@ func (e Env) writeRuntimeTmpfiles() error {
 	if err != nil {
 		return err
 	}
-	dp := layout.WorkerUser()
 	var b strings.Builder
-	b.WriteString("# 由 " + brand.ID() + "-instance 生成：各实例的运行时目录（开机时重建）。请勿手改\n")
+	b.WriteString("# 由 " + brand.ID() + "-instance 生成：各实例 agent 的运行时目录（开机时重建）。请勿手改\n")
 	for _, in := range insts {
 		l := e.lay(in.Name)
-		if in.Name != "" {
-			fmt.Fprintf(&b, "d %s 0755 %s %s -\n", l.RunDir(), dp, dp)
-		}
 		fmt.Fprintf(&b, "d %s 0755 %s %s -\n", filepath.Dir(l.AgentLock()), l.AgentUser(), layout.Group())
 	}
 	p := RuntimeTmpfiles()
@@ -671,7 +656,7 @@ func (e Env) ReopenAll() error {
 	var first error
 	for _, in := range list {
 		l := e.infoLayout(in)
-		args := []string{"-p", l.RuntimeRoot(), "-e", l.ErrorLog(), "-c", l.CurrentConf(), "-s", "reopen"}
+		args := []string{"-p", l.Prefix(), "-s", "reopen"}
 		bin := l.Bin()
 		// 运行时不使用 root（D5）：`-s reopen` 会先以执行者身份打开错误日志，root 执行会留下 root 所有的日志文件，
 		// 之后以数据面用户运行的 master 与 `-t` 无法写入；以 root 执行时（logrotate）经 runuser 以数据面用户发送。

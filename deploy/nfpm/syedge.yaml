@@ -29,15 +29,9 @@ contents:
     dst: /usr/lib/systemd/system/syedge.service
   - src: ${STAGE}/syedge/syedge@.service
     dst: /usr/lib/systemd/system/syedge@.service
-  - src: ${STAGE}/syedge/tmpfiles.conf
-    dst: /usr/lib/tmpfiles.d/syedge.conf
   - src: ${STAGE}/syedge/logrotate
     dst: /etc/logrotate.d/syedge
     type: config|noreplace
-  - dst: /var/log/syedge
-    type: dir
-  - dst: /var/cache/syedge
-    type: dir
 scripts:
   preinstall: ${STAGE}/scripts/syedge-preinstall.sh
   postinstall: ${STAGE}/scripts/syedge-postinstall.sh

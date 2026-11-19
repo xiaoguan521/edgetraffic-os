@@ -30,14 +30,11 @@ if [ "$R" != "$PACKAGE_ROOT" ]; then
   cp -an /opt/syedge/html/. "$R/html/"
   if [ -d /opt/syedge/modules ]; then cp -a /opt/syedge/modules/. "$R/modules/"; fi
 fi
-if [ "$R" = "$LEGACY_ROOT" ]; then
-  LOG_DIR=/var/log/syedge
-  CACHE_DIR=/var/cache/syedge
-else
-  LOG_DIR="$R/logs"
-  CACHE_DIR="$R/cache"
-fi
-mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" /run/syedge /run/syedge-agent "$R/versions" "$R/modules"
+# 运行文件都在安装根目录下（与数据面编译期的相对路径 run/、logs/、cache/ 一致）
+LOG_DIR="$R/logs"
+CACHE_DIR="$R/cache"
+RUN_DIR="$R/run"
+mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR" /run/syedge-agent "$R/versions" "$R/modules"
 ln -sfn "$R/sbin/syedge" /usr/sbin/syedge
 chown -R root:root "$R/sbin" "$R/share"
 chown root:root "$R/html"
@@ -47,10 +44,7 @@ chown root:root "$R/html"
 # current，因此只在真正写入 r000000 前处理这份随包的模板。
 if [ "$R" != "$PACKAGE_ROOT" ] && [ -f "$R/share/defaults/baseline/syedge.conf" ]; then
   baseline="$R/share/defaults/baseline/syedge.conf"
-  sed -i "s|$PACKAGE_ROOT/logs|$LOG_DIR|g; s|$PACKAGE_ROOT/cache|$CACHE_DIR|g; s|$PACKAGE_ROOT|$R|g; s|/var/log/syedge|$LOG_DIR|g" "$baseline"
-  if [ "$R" != "$LEGACY_ROOT" ] && ! grep -q 'client_body_temp_path' "$baseline"; then
-    sed -i "/^[[:space:]]*client_header_timeout/i\\    client_body_temp_path  $CACHE_DIR/client_temp;\n    proxy_temp_path        $CACHE_DIR/proxy_temp;\n    fastcgi_temp_path      $CACHE_DIR/fastcgi_temp;\n    uwsgi_temp_path        $CACHE_DIR/uwsgi_temp;\n    scgi_temp_path         $CACHE_DIR/scgi_temp;" "$baseline"
-  fi
+  sed -i "s|$PACKAGE_ROOT|$R|g" "$baseline"
 fi
 if [ "$R" != "$PACKAGE_ROOT" ]; then
   for guide in "$R/share/defaults/standalone-example.conf" "$R/share/doc/STANDALONE.txt"; do
@@ -59,24 +53,18 @@ if [ "$R" != "$PACKAGE_ROOT" ]; then
 fi
 # 运行时不使用 root（设计 0001 D5）：master 与 worker 以 syedge 运行，运行时目录、日志与缓存归 syedge；
 # 二进制所在目录、版本库与模块目录由 wrapper（同样以 syedge 运行）在热升级时写入
-chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge "$R/versions"
+chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR" "$R/versions"
 chown syedge:syedge "$R/sbin" "$R/modules"
-instance_tool=""
-if [ "$R" != "$LEGACY_ROOT" ] || [ -x /usr/sbin/syedge-instance ]; then
-  instance_tool=/usr/libexec/syedge/syedge-instance
-  [ -x "$instance_tool" ] || instance_tool=/usr/sbin/syedge-instance
-fi
-if [ -n "$instance_tool" ] && [ -x "$instance_tool" ]; then
-  # 与 syedge-agent 同时升级：升级前以 root 启动的 master 无中断切换为 syedge 运行（旧版 agent 包没有该命令时忽略）
+instance_tool=/usr/libexec/syedge/syedge-instance
+[ -x "$instance_tool" ] || instance_tool=/usr/sbin/syedge-instance
+if [ -x "$instance_tool" ]; then
+  # 生成按安装根目录改写的服务单元；升级前以 root 启动的 master 无中断切换为 syedge 运行
   if ! "$instance_tool" nonroot >/dev/null 2>&1; then
-    if [ "$R" != "$LEGACY_ROOT" ] && has_systemd; then
-      echo "syedge: 无法生成自定义根目录的服务单元" >&2
+    if has_systemd; then
+      echo "syedge: 无法生成服务单元" >&2
       exit 1
     fi
   fi
-elif [ -f /run/syedge/syedge.pid ] && [ "$(awk '/^Uid:/{print $2}' /proc/"$(cat /run/syedge/syedge.pid)"/status 2>/dev/null)" = "0" ]; then
-  echo "提示：运行中的 syedge master 仍以 root 运行（升级前启动）。安装 syedge-agent 后会自动无中断切换；" >&2
-  echo "      独立使用时请在维护窗口执行 systemctl restart syedge，之后以 syedge 用户运行。" >&2
 fi
 if has_systemd; then
   systemctl daemon-reload || true

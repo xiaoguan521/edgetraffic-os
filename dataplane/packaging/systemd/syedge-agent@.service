@@ -17,9 +17,8 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 # 经 sudo 调用的 wrapper 与本服务共享挂载命名空间：需要本实例的配置、日志、缓存目录，以及热升级用的共用版本库
-ReadWritePaths=/opt/syedge/instances/%i/conf /var/lib/syedge-agent-%i /run/syedge-agent-%i -/run/syedge-%i /var/log/syedge-%i /var/cache/syedge-%i -/run/sudo -/opt/syedge/versions /opt/syedge/sbin
+ReadWritePaths=/opt/syedge/instances/%i/conf /opt/syedge/instances/%i/agent /run/syedge-agent-%i /opt/syedge/instances/%i/run /opt/syedge/instances/%i/logs /opt/syedge/instances/%i/cache -/run/sudo -/opt/syedge/versions /opt/syedge/sbin
 RuntimeDirectory=syedge-agent-%i
-StateDirectory=syedge-agent-%i
 
 [Install]
 WantedBy=multi-user.target

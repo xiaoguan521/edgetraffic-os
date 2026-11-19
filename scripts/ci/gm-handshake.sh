@@ -18,7 +18,7 @@ grep -q "(gmssl)" "$W/version"
 grep -q "enable-ntls" "$W/version"
 if strings "$SY" | grep -qi 'ngi''nx'; then echo "::error::upstream name in GM binary"; exit 1; fi
 sudo useradd -r -s /usr/sbin/nologin syedge 2>/dev/null || true
-sudo mkdir -p /run/syedge /var/log/syedge /var/cache/syedge
+sudo mkdir -p /opt/syedge/run /opt/syedge/logs /opt/syedge/cache
 
 echo "== 签发真实的 SM2 签名 / 加密证书（SM2-with-SM3）"
 for u in sign:digitalSignature enc:keyEncipherment,dataEncipherment; do
@@ -40,7 +40,7 @@ sudo mkdir -p /srv/syedge
 sudo ln -sfn releases/r900001 /opt/syedge/conf/current
 # 运行时不使用 root（设计 0001 D5）：单元以 syedge 运行；运行时目录归 syedge，版本目录与私钥按 agent 的方式组可读（0640，组 syedge）
 id syedge >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin syedge
-sudo chown -R syedge:syedge /run/syedge /var/log/syedge /var/cache/syedge
+sudo chown -R syedge:syedge /opt/syedge/run /opt/syedge/logs /opt/syedge/cache
 sudo chgrp -R syedge /opt/syedge/conf && sudo chmod -R g+rX /opt/syedge/conf
 sudo find /opt/syedge/conf -name '*.key' -exec chmod 0640 {} +
 sudo cp dataplane/packaging/systemd/syedge.service /etc/systemd/system/

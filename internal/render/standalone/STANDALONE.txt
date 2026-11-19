@@ -13,10 +13,11 @@
 添加站点：
   cp @PREFIX@/share/defaults/standalone-example.conf @PREFIX@/conf/current/conf.d/www.conf
   vi @PREFIX@/conf/current/conf.d/www.conf
-  sudo @PREFIX@/sbin/@ID@ -p @PREFIX@ -c @PREFIX@/conf/current/@ID@.conf -e stderr -t
+  sudo @PREFIX@/sbin/@ID@ -p @PREFIX@ -t
   sudo systemctl reload @ID@
 
 命令与参数与上游一致：@ID@ -t / -T / -s reload / -s reopen / -s quit / -v / -V。
+配置、日志（logs/）、pid（run/）、临时目录（cache/）都在安装目录 @PREFIX@ 下，指定 -p @PREFIX@ 即可，不需要 -c、-e。
 建议始终使用 systemctl reload @ID@ 生效配置（不会中断现有连接），不要 restart。
 
 默认值与常见调整

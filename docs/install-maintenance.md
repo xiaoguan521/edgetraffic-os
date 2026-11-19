@@ -43,14 +43,17 @@ sudo syedge-instance prefix
 
 首次安装时可用 `sudo ./install.sh --prefix <目录>` 指定其他根目录，安装脚本会把它写入 `/etc/syedge/prefix`。
 
-日志、缓存、agent 状态和 PID 目录与 `R` 的关系如下（代码依据：`internal/layout/layout.go`、`deploy/node/install.sh`）：
+所有运行文件都在实例目录 `P` 下（默认实例 `P=R`，具名实例 `P=R/instances/<实例>`），与 OpenResty 的 `conf/`、`logs/` 一样；数据面的配置、pid、日志、临时目录在编译时就是相对前缀的路径，以 `-p P` 启动即可，**不需要 `-c`、`-e`**（代码依据：`internal/layout/layout.go`、`dataplane/build-syedge.sh`、`deploy/node/install.sh`）：
 
-| 用途 | `R=/opt/syedge`（历史布局） | 其他根目录 `R` |
-| --- | --- | --- |
-| 日志 | `/var/log/syedge` | `R/logs` |
-| 缓存 | `/var/cache/syedge` | `R/cache` |
-| agent 状态 | `/var/lib/syedge-agent` | `R/agent` |
-| PID 与运行目录 | `/run/syedge` | `/run/syedge`（不随 `R` 变化） |
+| 用途 | 位置 |
+| --- | --- |
+| 配置 | `P/conf/current/syedge.conf` |
+| 日志 | `P/logs/` |
+| 缓存（临时目录） | `P/cache/` |
+| PID、锁 | `P/run/` |
+| agent 状态 | `P/agent/` |
+
+agent 的发布锁仍在 `/run/syedge-agent[-<实例>]/`。
 
 ## 2. 系统要求与端口
 
@@ -95,7 +98,7 @@ sudo ./install.sh
 sudo ./install.sh --prefix /data/syedge
 ```
 
-安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；`/run/syedge*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
+安装脚本会把根目录写入 `/etc/syedge/prefix`，并将程序、版本库、配置、日志、缓存和 agent 状态放到该目录；agent 发布锁 `/run/syedge-agent*`、`/usr/bin`、`/usr/libexec`、`/usr/sbin` 和 systemd 单元位置不变。重复执行时不带 `--prefix` 会沿用原路径，传入不同路径会拒绝且不迁移已有数据。
 
 建议选择 `/data/syedge`、`/srv/syedge` 或 `/home/<子目录>` 这样的专用目录；不能把 `/usr`、`/opt`、`/var`、`/home` 等系统共享目录本身作为安装根目录，也不能放在 `/root` 下。安装根目录及已存在的父目录必须由 root 所有、不能被组或其他用户写入，也不能是符号链接；唯一例外是 root 所有且带粘滞位的 `/home`（例如 `1777`），此时其下一级目录必须已经存在并属于 root。同时要允许 `syedge` 与 `syedge-agent` 用户逐级穿过目录、读取 `/etc/syedge/prefix`。安装脚本不会修改已有父目录或安装根目录的属主与权限；不满足条件时，请管理员选择受控目录或调整权限后重试。
 
@@ -109,17 +112,22 @@ sudo ./install.sh --prefix /home/atwasoft/node
 
 位于 `/home` 时，新版 systemd 会仅将安装目录映射进服务沙箱，其他家目录仍被隐藏。较旧 systemd 不支持该映射功能，会开放 `/home` 并继续隐藏 `/root` 和 `/run/user`；此时其他家目录仍依赖其文件权限保护。
 
-自定义目录下，手工校验要显式指定前缀、配置文件，并用 `-e stderr` 把错误输出到终端（与独立模式说明中的写法一致，不依赖日志目录位置）；常规重载通过 systemd 保持服务单元中的路径设置：
+手工校验、重载只需指定前缀，不需要 `-c`、`-e`（安装在编译前缀下时连 `-p` 也可省略）：
 
 ```bash
 R=$(sudo syedge-instance prefix)
-sudo "$R/sbin/syedge" -p "$R" -t -c "$R/conf/current/syedge.conf" -e stderr
-sudo systemctl reload syedge
+sudo "$R/sbin/syedge" -p "$R" -t
+sudo "$R/sbin/syedge" -p "$R" -s reload     # 或 sudo systemctl reload syedge
+sudo "$R/sbin/syedge" -p "$R" -s reopen
 ```
+
+具名实例的前缀是 `$R/instances/<实例>`，例如 `sudo "$R/sbin/syedge" -p "$R/instances/blue" -s reload`。启动和停止仍用 `systemctl`：直接以 root 启动会让 master 以 root 运行，`-s stop` 则会让 systemd 误判服务异常退出。
 
 数据面服务、wrapper 和实例管理工具会显式传入实际运行前缀。Nginx 语义下使用前缀解析的相对路径，例如 `root html;`、`include conf/example.conf;`，按该前缀查找；手工运行时也应像上例一样带 `-p`。共享实例使用共同运行目录，独立实例使用自己的运行目录。重复安装会保留自定义目录 `html/` 中已有的静态文件。
 
-历史默认安装没有标记文件时会继续使用 `/opt/syedge` 与原来的 `/var` 目录；已有节点组的空根目录同样仍表示 `/opt/syedge`。新建节点组记录发行包默认目录。新旧默认目录均存在配置但没有标记时，程序会拒绝自动猜测，须由管理员确认实际安装。
+没有标记文件时使用发行包的编译期默认目录；节点组的空根目录同样表示该目录。
+
+**从旧布局升级：** 0.4.8 及更早的版本把日志、缓存、pid 放在 `/var/log/syedge`、`/var/cache/syedge`、`/run/syedge`（或 `/run/syedge-<实例>`）。新布局不兼容这些路径，已安装的节点需要先 `uninstall.sh`、再用新包 `install.sh` 重装，并在控制台删除旧节点后重新注册；重装完成前不要升级控制台。新布局的节点不能回滚到 0.4.8 及更早的数据面二进制。外部的监控、日志采集与运维脚本需要改用新路径。
 
 安装脚本会：
 
@@ -172,7 +180,7 @@ sudo syedge-agent enroll \
   -replace-local-config
 ```
 
-原配置会备份到 `/var/lib/syedge-agent/backups/`，并在控制台首次发布前继续运行。
+原配置会备份到 `/opt/syedge/agent/backups/`，并在控制台首次发布前继续运行。
 
 ### 4.3 RPM/DEB 安装
 
@@ -230,9 +238,9 @@ sudo install -D -m 0440 dataplane/packaging/sudoers/syedge-agent \
 sudo groupadd -r syedge 2>/dev/null || true
 sudo useradd -r -g syedge -d /nonexistent -s /usr/sbin/nologin syedge 2>/dev/null || true
 sudo useradd -r -g syedge -d /nonexistent -s /usr/sbin/nologin syedge-agent 2>/dev/null || true
-sudo mkdir -p /opt/syedge/conf/releases /var/log/syedge /var/cache/syedge /run/syedge /var/lib/syedge-agent /run/syedge-agent
+sudo mkdir -p /opt/syedge/conf/releases /opt/syedge/logs /opt/syedge/cache /opt/syedge/run /opt/syedge/agent /run/syedge-agent
 sudo syedge-agent bootstrap
-sudo chown -R syedge-agent:syedge /opt/syedge/conf /var/lib/syedge-agent /run/syedge-agent
+sudo chown -R syedge-agent:syedge /opt/syedge/conf /opt/syedge/agent /run/syedge-agent
 sudo syedge -t -q
 sudo systemctl daemon-reload
 sudo systemctl enable syedge && sudo systemctl start syedge
@@ -454,11 +462,11 @@ Lua 模块与 `syedge` 二进制版本强绑定。升级带 Lua 的节点时，�
 | `/opt/syedge/conf/releases/` | 配置版本目录 | `R/conf/releases/` |
 | `/opt/syedge/share/defaults/` | 默认文件、独立模式示例和基线模板 | `R/share/defaults/` |
 | `/opt/syedge/modules/lua` | 当前 Lua 模块版本软链接 | `R/modules/lua` |
-| `/var/log/syedge/error.log` | 错误日志 | `R/logs/error.log` |
-| `/var/log/syedge/access.json` | 访问日志（JSON）。基线与控制台发布的配置都只写这个文件；`access.log` 是编译期默认路径，只有自带主配置且没有写 `access_log` 的原生兼容配置才会用到 | `R/logs/access.json` |
-| `/var/cache/syedge/` | 临时文件目录 | `R/cache/` |
-| `/run/syedge/syedge.pid` | master PID 文件 | 同左 |
-| `/var/lib/syedge-agent/` | Agent 身份、状态、升级文件和本机配置备份 | `R/agent/` |
+| `/opt/syedge/logs/error.log` | 错误日志 | `R/logs/error.log` |
+| `/opt/syedge/logs/access.json` | 访问日志（JSON）。基线与控制台发布的配置都只写这个文件；`access.log` 是编译期默认路径，只有自带主配置且没有写 `access_log` 的原生兼容配置才会用到 | `R/logs/access.json` |
+| `/opt/syedge/cache/` | 临时文件目录 | `R/cache/` |
+| `/opt/syedge/run/syedge.pid` | master PID 文件 | `R/run/syedge.pid` |
+| `/opt/syedge/agent/` | Agent 身份、状态、升级文件和本机配置备份 | `R/agent/` |
 | `/var/lib/syedge-console/` | 控制台数据库、CA、安装 ID 和加密密钥 | 同左（与节点前缀无关，由 `ETOS_DATA` 决定） |
 
 控制台托管模式下，不要直接编辑 `/opt/syedge/conf/current`。应在控制台修改、预览、发布；Agent 会执行配置校验、reload、探活和失败回滚。
@@ -596,9 +604,9 @@ sudo syedge-instance add blue --http 18080 --https 18443 --status 8082 \
 | 项目 | 默认实例 | 具名实例 `blue` |
 | --- | --- | --- |
 | 配置 | `/opt/syedge/conf/current/syedge.conf` | `/opt/syedge/instances/blue/conf/current/syedge.conf` |
-| PID | `/run/syedge/syedge.pid` | `/run/syedge-blue/syedge.pid` |
-| 日志 / 缓存 | `/var/log/syedge/`、`/var/cache/syedge/` | `/var/log/syedge-blue/`、`/var/cache/syedge-blue/` |
-| agent 状态 | `/var/lib/syedge-agent` | `/var/lib/syedge-agent-blue` |
+| PID | `/opt/syedge/run/syedge.pid` | `/opt/syedge/instances/blue/run/syedge.pid` |
+| 日志 / 缓存 | `/opt/syedge/logs/`、`/opt/syedge/cache/` | `/opt/syedge/instances/blue/logs/`、`/opt/syedge/instances/blue/cache/` |
+| agent 状态 | `/opt/syedge/agent` | `/opt/syedge/instances/blue/agent` |
 | 服务 | `syedge.service`、`syedge-agent.service` | `syedge@blue.service`、`syedge-agent@blue.service` |
 
 省略 `--resource-mode` 或指定 `shared` 时使用共享二进制和模块；指定 `independent` 时，程序、版本库和模块分别位于 `R/instances/blue/sbin/`、`versions/`、`modules/`，可独立选择 Lua 和国密变体。
@@ -636,7 +644,7 @@ sudo syedge-instance remove blue --yes     # 优雅停止并删除实例（保�
 | 常见配置入口 | `/etc/nginx/nginx.conf` | `/opt/syedge/conf/current/syedge.conf`；手工实例可用 `-c` 指定 |
 | 配置检查 | `nginx -t` | `syedge -t` 或 `systemctl reload syedge` 前的 `ExecStartPre` |
 | 平滑操作 | `nginx -s reload` | `syedge -s reload` 或 `systemctl reload syedge` |
-| 默认运行目录 | 由发行版打包方式决定 | `/opt/syedge`、`/run/syedge`、`/var/log/syedge`、`/var/cache/syedge` |
+| 默认运行目录 | 由发行版打包方式决定 | `/opt/syedge`（其下 `run/`、`logs/`、`cache/`） |
 | 配置管理 | 通常由管理员直接编辑 | 控制台托管时由 Agent 按版本目录发布，手改会被标记漂移或被下一次发布替换 |
 | 配置版本 | 常见为原地覆盖 | `/opt/syedge/conf/releases/<revision>` + `conf/current` 软链接 |
 | Lua | 取决于 Nginx 构建和第三方模块 | 使用版本绑定的 `syedge-lua` 附加包，不能随意复制其他 Nginx 的 `.so` |
@@ -703,8 +711,8 @@ sudo journalctl -u syedge -n 100 --no-pager
 sudo journalctl -u syedge-agent -n 100 --no-pager
 sudo journalctl -u syedge-agent -f
 
-sudo tail -f /var/log/syedge/error.log
-sudo tail -f /var/log/syedge/access.json
+sudo tail -f /opt/syedge/logs/error.log
+sudo tail -f /opt/syedge/logs/access.json
 ```
 
 日志由 `/etc/logrotate.d/syedge` 每日轮转，默认保留 14 份并压缩。手工轮转或更换日志文件后执行：
@@ -769,7 +777,7 @@ sudo syedge-firewall disable
 
 ```bash
 ps -C syedge -o user=,args=                         # 全部为 syedge
-grep CapEff /proc/$(cat /run/syedge/syedge.pid)/status   # 0000000000000400（只有 CAP_NET_BIND_SERVICE）
+grep CapEff /proc/$(cat /opt/syedge/run/syedge.pid)/status   # 0000000000000400（只有 CAP_NET_BIND_SERVICE）
 getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 ```
 
@@ -777,7 +785,7 @@ getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 
 其他变化：
 
-- 日志、缓存、`/run/syedge*`、`/opt/syedge/versions` 归 `syedge`；logrotate 以 `syedge` 身份轮转并重新打开日志。
+- `run/`、`logs/`、`cache/`、`/opt/syedge/versions` 归 `syedge`；logrotate 以 `syedge` 身份轮转并重新打开日志。
 - 节点防火墙的规则与参数从 `/etc/syedge/firewall.nft` 移到 `/var/lib/syedge-firewall/`（升级时自动迁移）。
 - 手工校验配置请以 `syedge` 身份经 wrapper 执行：`sudo -u syedge /usr/libexec/syedge/syedge-wrapper test <版本号>`；以 root 直接执行 `syedge -t` 可能创建属于 root 的日志文件，导致 master 无法写入。
 - 配置中不再有 `user` 指令（worker 与 master 同为 `syedge`）。
@@ -805,7 +813,7 @@ getcap /usr/libexec/syedge/syedge-wrapper            # cap_net_bind_service=ip
 
 **systemd 208（CentOS 7.0/7.1 未更新）**：建议先 `yum update` 到 CentOS 7.9（systemd 219）。不能更新时也可以使用：
 `systemctl enable --now` 一律拆成 `enable` 与 `start`；208 不支持的 `RuntimeDirectory=` 由 `syedge-instance` 写入的
-`/etc/tmpfiles.d/syedge-instances.conf`（各实例的 `/run/syedge-<实例>` 与 `/run/syedge-agent[-<实例>]`）在开机时重建；
+`/etc/tmpfiles.d/syedge-instances.conf`（各实例的 `/run/syedge-agent[-<实例>]`）在开机时重建；
 `ProtectHome=`、`StateDirectory=` 等不认识的指令只在日志中警告，不影响启动。在 v0.4.1 上手工写的
 `/etc/systemd/system/syedge@<实例>.service`、`/etc/sudoers.d/syedge-notty` 与手工创建的 `/run` 目录，升级后请删除前两项
 （实例单元会覆盖模板生成的兼容单元），再执行一次 `syedge-instance nonroot`。
@@ -872,12 +880,12 @@ sudo syedge-console restore \
 
 ### 9.4 节点配置备份
 
-接管独立模式配置时，Agent 会自动把当前配置备份到 `/var/lib/syedge-agent/backups/`。在手工维护独立模式前，也建议保存一份：
+接管独立模式配置时，Agent 会自动把当前配置备份到 `/opt/syedge/agent/backups/`。在手工维护独立模式前，也建议保存一份：
 
 ```bash
 sudo tar -C /opt/syedge/conf/current \
-  -czf /var/lib/syedge-agent/backups/standalone-manual-$(date +%F-%H%M%S).tar.gz .
-sudo chmod 0600 /var/lib/syedge-agent/backups/standalone-manual-*.tar.gz
+  -czf /opt/syedge/agent/backups/standalone-manual-$(date +%F-%H%M%S).tar.gz .
+sudo chmod 0600 /opt/syedge/agent/backups/standalone-manual-*.tar.gz
 ```
 
 其中可能包含证书私钥，备份文件必须按敏感数据管理。
@@ -901,7 +909,7 @@ ldd /opt/syedge/sbin/syedge | grep 'not found' || true
 - 站点配置语法错误、证书路径错误或权限不足；
 - Lua 配置存在但没有安装匹配版本的 `syedge-lua`；
 - 国密配置加载到了标准版 `syedge`；
-- `/run/syedge`、日志或缓存目录不存在；
+- 实例目录下的 `run/`、`logs/` 或 `cache/` 不存在，或不属于 `syedge`；
 - 二进制架构不匹配或 glibc 版本低于构建要求。
 
 ### 10.2 节点在控制台离线

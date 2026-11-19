@@ -38,11 +38,11 @@ func TestRenderInstanceProfile(t *testing.T) {
 	}
 	main := string(b.Files["syedge.conf"])
 	for _, want := range []string{
-		"pid   /run/syedge-blue/syedge.pid;",
-		"error_log  /var/log/syedge-blue/error.log  warn;",
-		"access_log  /var/log/syedge-blue/access.json  edge_json;",
-		"client_body_temp_path  /var/cache/syedge-blue/client_temp;",
-		"proxy_temp_path        /var/cache/syedge-blue/proxy_temp;",
+		"pid   /opt/syedge/instances/blue/run/syedge.pid;",
+		"error_log  /opt/syedge/instances/blue/logs/error.log  warn;",
+		"access_log  /opt/syedge/instances/blue/logs/access.json  edge_json;",
+		"client_body_temp_path  /opt/syedge/instances/blue/cache/client_temp;",
+		"proxy_temp_path        /opt/syedge/instances/blue/cache/proxy_temp;",
 		"listen       18080  default_server;",
 		"listen       18443  ssl  default_server;",
 		"listen       127.0.0.1:8082;",
@@ -58,7 +58,7 @@ func TestRenderInstanceProfile(t *testing.T) {
 			all += string(c)
 		}
 	}
-	for _, bad := range []string{"/run/syedge/", "/var/log/syedge/", "/opt/syedge/conf/", " 80;", " 80 ", " 443 ", " 443;", ":8081"} {
+	for _, bad := range []string{"pid   /run/", " /var/log/syedge", " /var/cache/syedge", "/opt/syedge/conf/", " 80;", " 80 ", " 443 ", " 443;", ":8081"} {
 		if strings.Contains(all, bad) {
 			t.Errorf("instance render still contains default %q", bad)
 		}
@@ -108,7 +108,7 @@ func TestRenderCustomSystemProfile(t *testing.T) {
 	}
 	main := string(b.Files["syedge.conf"])
 	for _, want := range []string{
-		"pid   /run/syedge/syedge.pid;",
+		"pid   /data/syedge/run/syedge.pid;",
 		"error_log  /data/syedge/logs/error.log  warn;",
 		"client_body_temp_path  /data/syedge/cache/client_temp;",
 		"load_module  /data/syedge/modules/lua/ndk_http_module.so;",
@@ -233,7 +233,7 @@ func TestRenderProfileSyedgeSyntax(t *testing.T) {
 				t.Fatal(err)
 			}
 			l, _ := p.Layout()
-			// 安装程序负责创建的实例目录（system 模式在 /var/log、/var/cache 下，user 模式在根目录下）
+			// 安装程序负责创建的实例目录（都在实例前缀下）
 			for _, d := range []string{l.LogDir(), l.CacheDir(), l.RunDir()} {
 				if err := os.MkdirAll(d, 0o755); err != nil {
 					t.Fatal(err)

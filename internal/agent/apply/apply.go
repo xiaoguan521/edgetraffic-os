@@ -66,8 +66,8 @@ type PostCheck struct {
 type Config struct {
 	ConfRoot     string          // /opt/syedge/conf
 	Prefix       string          // 数据面 -p 前缀（相对 -c 的解析基准）
-	PidFile      string          // /run/syedge/syedge.pid
-	ErrorLog     string          // /var/log/syedge/error.log
+	PidFile      string          // <前缀>/run/syedge.pid
+	ErrorLog     string          // <前缀>/logs/error.log
 	LockFile     string          // /run/syedge-agent/apply.lock
 	Wrapper      []string        // 例如 ["sudo","-n","/usr/libexec/syedge/syedge-wrapper"]；root 运行时可直接写 wrapper 路径
 	KeepRelease  int             // 保留的版本数，默认 20
@@ -360,7 +360,8 @@ func legacyRootMasterAllowed(marker string, master int) (Result, bool) {
 	return Result{}, true
 }
 
-// A live process started with a different -c keeps using that path on reload,
+// A live process started with a different -c keeps using that path on reload;
+// without -c it uses the compiled default (conf/current/<name> under -p),
 // even when the controller switches current. Compare the path itself, not its
 // symlink target, because the target intentionally changes during deployment.
 func legacyMasterUsesCurrent(title, defaultPrefix, want string) bool {
@@ -389,7 +390,11 @@ func legacyMasterUsesCurrent(title, defaultPrefix, want string) bool {
 		}
 	}
 	if conf == "" {
-		return false
+		// 数据面的默认配置编译为相对 -p 的 conf/current/<配置文件名>；只有显式给出 -p 才能确定它是哪个文件。
+		if prefix == "" {
+			return false
+		}
+		conf = filepath.Join("conf", "current", brand.ConfName())
 	}
 	if !filepath.IsAbs(conf) {
 		if prefix == "" {

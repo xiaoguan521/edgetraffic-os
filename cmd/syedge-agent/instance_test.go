@@ -39,7 +39,7 @@ func TestBaselineForInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := string(b.Files["syedge.conf"])
-	if !strings.Contains(main, "/run/syedge-blue/syedge.pid") || strings.Contains(main, "/run/syedge/syedge.pid") {
+	if !strings.Contains(main, "/opt/syedge/instances/blue/run/syedge.pid") || strings.Contains(main, "/opt/syedge/run/syedge.pid") {
 		t.Fatalf("baseline not using the instance profile:\n%s", main)
 	}
 }

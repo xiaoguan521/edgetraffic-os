@@ -22,7 +22,6 @@ set -euo pipefail
 # 配置需要供 syedge 组读取；密钥等敏感文件仍按各自显式权限创建。
 umask 022
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LEGACY_ROOT=/opt/"syedge" # 不随编译前缀模板替换；旧版本使用 /var 下的运行目录
 SERVER=""; TOKEN=""; CAFP=""; FW_FROM=""; PREFIX_ARG=""; REPLACE_LOCAL=(); ROOT_MASTER=()
 USE_GM=0; NO_LUA=0; LUA_STANDALONE=0; SW_OAP=""; SW_SVC=""; SW_INST=""
 while [[ $# -gt 0 ]]; do
@@ -118,15 +117,11 @@ put "$HERE/rootfs/usr/libexec/syedge/syedge-wrapper" /usr/libexec/syedge/syedge-
 put "$HERE/rootfs/usr/sbin/syedge-firewall" /usr/sbin/syedge-firewall
 put "$HERE/rootfs/usr/sbin/syedge-instance" /usr/sbin/syedge-instance
 
-if [[ "$R" == "$LEGACY_ROOT" ]]; then
-  LOG_DIR=/var/log/syedge
-  CACHE_DIR=/var/cache/syedge
-  STATE_DIR=/var/lib/syedge-agent
-else
-  LOG_DIR="$R/logs"
-  CACHE_DIR="$R/cache"
-  STATE_DIR="$R/agent"
-fi
+# 运行文件都在安装根目录下（与数据面编译期的相对路径 run/、logs/、cache/ 一致）
+LOG_DIR="$R/logs"
+CACHE_DIR="$R/cache"
+RUN_DIR="$R/run"
+STATE_DIR="$R/agent"
 
 # 默认文件与静态页；不覆盖 conf/ 下已有的配置版本
 (cd "$HERE/rootfs/opt/syedge" && find . -path ./sbin -prune -o -type f -print) | while read -r f; do
@@ -153,7 +148,6 @@ install -o root -g root -m 0644 "$HERE"/rootfs/etc/systemd/system/*.service "$HE
 if [[ ! -e /etc/logrotate.d/syedge ]]; then
   install -o root -g root -m 0644 "$HERE/rootfs/etc/logrotate.d/syedge" /etc/logrotate.d/syedge
 fi
-install -o root -g root -m 0644 -D "$HERE/rootfs/etc/tmpfiles.d/syedge.conf" /etc/tmpfiles.d/syedge.conf
 sudoers_new=/etc/sudoers.d/syedge-agent.new
 install -o root -g root -m 0440 "$HERE/rootfs/etc/sudoers.d/syedge-agent" "$sudoers_new"
 if ! visudo -cf "$sudoers_new" >/dev/null 2>&1; then
@@ -167,8 +161,8 @@ ln -sfn "$R/sbin/syedge" /usr/sbin/syedge
 chown -R root:root "$R/sbin" "$R/share"
 chown root:root "$R/html"
 
-# syedge -t 会检查 pid 文件可写，/run/syedge 平时由 syedge.service 的 RuntimeDirectory 创建
-mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR" /run/syedge-agent /run/syedge
+# syedge -t 会检查 pid 文件所在目录可写：run/ 在安装根目录下，安装时建好（属主在 syedge-instance nonroot 中交给 syedge）
+mkdir -p "$R/conf/releases" "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR" "$STATE_DIR" /run/syedge-agent
 chmod 0750 "$STATE_DIR"
 
 echo "== 初始化配置"

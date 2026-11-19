@@ -315,7 +315,7 @@ func (c *checker) sitesBase() string {
 	if c.ctx.SitesBase != "" {
 		return c.ctx.SitesBase
 	}
-	return layout.LegacySystemRoot() + "/conf/current/sites/"
+	return layout.DefaultSystemRoot() + "/conf/current/sites/"
 }
 
 // ensureBaseline：location 内出现 proxy_pass / proxy_set_header 时，在块开头补齐缺失的基线代理头（规格书 6.3）。

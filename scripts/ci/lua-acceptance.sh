@@ -12,11 +12,7 @@ set -uo pipefail
 DIST=$(realpath "$1"); BASE=$2
 : "${PKG_KEY:?}" "${PKG_KID:?}" "${WRAPPER:?}" "${LIC:?}"
 ROOT=${SYEDGE_PREFIX:-/opt/syedge}
-if [[ "$ROOT" == /opt/syedge ]]; then
-  LOG_DIR=/var/log/syedge; CACHE_DIR=/var/cache/syedge; STATE_DIR=/var/lib/syedge-agent
-else
-  LOG_DIR="$ROOT/logs"; CACHE_DIR="$ROOT/cache"; STATE_DIR="$ROOT/agent"
-fi
+LOG_DIR="$ROOT/logs"; CACHE_DIR="$ROOT/cache"; STATE_DIR="$ROOT/agent"; RUN_DIR="$ROOT/run"
 LAYOUT_LD="-X github.com/xiaoguan521/edgetraffic-os/internal/layout.defaultSystemRoot=$ROOT"
 # wrapper 按自身的安装位置确定运行方式（system 模式只接受固定路径）：装到正式位置后调用
 sudo install -D -m 0755 "$WRAPPER" /usr/libexec/syedge/syedge-wrapper
@@ -54,9 +50,9 @@ echo "== 安装基础包"
 sudo tar -C / -xzf "$basepkg"
 [[ $(stat -c '%u:%g' "$ROOT") == 0:0 ]] || die "基础包安装根目录必须由 root:root 拥有"
 sudo useradd -r -s /usr/sbin/nologin syedge 2>/dev/null || true
-sudo mkdir -p /run/syedge "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR/upgrade" "$ROOT/conf/releases" "$ROOT/versions" "$ROOT/modules"
+sudo mkdir -p "$RUN_DIR" "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR/upgrade" "$ROOT/conf/releases" "$ROOT/versions" "$ROOT/modules"
 # 运行时不使用 root（设计 0001 D5）：master、worker 与 wrapper 都以 syedge 运行
-sudo chown -R syedge:syedge /run/syedge "$LOG_DIR" "$CACHE_DIR" "$ROOT/versions"
+sudo chown -R syedge:syedge "$RUN_DIR" "$LOG_DIR" "$CACHE_DIR" "$ROOT/versions"
 sudo chown syedge:syedge "$ROOT/sbin" "$ROOT/modules"
 sudo ip addr add 10.99.0.1/32 dev lo 2>/dev/null || true
 VER=$($SY -v 2>&1 | sed -n 's|.* version: [^/]*/\([0-9][0-9.]*\).*|\1|p')   # 与显示名无关
@@ -138,11 +134,11 @@ render r900100 1 || die "render/syedge -t with Lua rules failed: $(grep -v -E '^
 ok "含 Lua 规则的版本通过真实 syedge -t（加载 ndk / lua 模块）"
 sudo ln -sfn releases/r900100 "$ROOT/conf/current"
 # 前面以 root 执行的 syedge -t（渲染器黄金用例）可能创建了属于 root 的日志：交还给 syedge
-sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" /run/syedge
+sudo chown -R syedge:syedge "$LOG_DIR" "$CACHE_DIR" "$RUN_DIR"
 # 与 syedge.service 相同的身份：syedge 用户，只带 CAP_NET_BIND_SERVICE（ambient，热升级后仍保留）
 sudo setpriv --reuid=syedge --regid=syedge --init-groups --inh-caps=+net_bind_service --ambient-caps=+net_bind_service -- "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" \
   || die "syedge did not start: $(sudo tail -5 "$LOG_DIR/error.log")"
-m=$(cat /run/syedge/syedge.pid); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syedge)" ]] && ok "master 以 syedge 运行（不是 root）" || bad "master 以 root 运行"
+m=$(cat "$RUN_DIR/syedge.pid"); [[ "$(awk '/^Uid:/{print $2}' /proc/$m/status)" == "$(id -u syedge)" ]] && ok "master 以 syedge 运行（不是 root）" || bad "master 以 root 运行"
 sleep 1
 
 TOK() { python3 scripts/ci/jwtgen.py "$@"; }
@@ -202,12 +198,12 @@ sudo env "PATH=$PATH" SYEDGE_BIN="$SY" GOFLAGS=-mod=vendor GOCACHE="$W/gocache" 
   || bad "渲染语法错误的版本：$(grep -v -E '^(=== RUN|FAIL$|ok )' "$W/render-bad.log" | head -4 | tr '\n' ' ')"
 sudo chgrp -R syedge "$ROOT/conf" && sudo chmod -R g+rX "$ROOT/conf"
 off=$(sudo stat -c %s "$LOG_DIR/error.log")
-w0=$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')
+w0=$(pgrep -P "$(cat "$RUN_DIR/syedge.pid")" | sort | tr '\n' ' ')
 sudo ln -sfn releases/r900199 "$ROOT/conf/current"
 sudo -u syedge "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" -s reload; sleep 1.5
 errlog=$(sudo tail -c +"$((off + 1))" "$LOG_DIR/error.log")
 check "语法错误的脚本在 reload 时被拒绝，error.log 指出脚本与行号" "$errlog" "lua script syntax error: api:"
-[[ "$(pgrep -P "$(cat /run/syedge/syedge.pid)" | sort | tr '\n' ' ')" == "$w0" ]] && ok "reload 失败时 worker 未更换（继续以当前配置服务）" || bad "语法错误的版本替换了 worker"
+[[ "$(pgrep -P "$(cat "$RUN_DIR/syedge.pid")" | sort | tr '\n' ' ')" == "$w0" ]] && ok "reload 失败时 worker 未更换（继续以当前配置服务）" || bad "语法错误的版本替换了 worker"
 check "语法错误的版本没有生效，原脚本继续响应" "$(req -H "$H" http://127.0.0.1/lua)$(body)" "200<h1>Hello from Lua</h1>"
 sudo ln -sfn releases/r900100 "$ROOT/conf/current"
 sudo -u syedge "$SY" -p "$ROOT" -e "$LOG_DIR/error.log" -c "$ROOT/conf/current/syedge.conf" -s reload; sleep 1

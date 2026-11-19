@@ -40,7 +40,7 @@ sudo vi "$R/conf/current/conf.d/www.conf"
 ③ 校验配置（显式给出 `-p`、`-c`，任何安装根目录下都适用）：
 
 ```bash
-sudo "$R/sbin/syedge" -p "$R" -c "$R/conf/current/syedge.conf" -e stderr -t
+sudo "$R/sbin/syedge" -p "$R" -t
 ```
 
 ④ 平滑重载，不要用 restart 代替：
@@ -84,7 +84,7 @@ sudo systemctl enable syedge-agent && sudo systemctl start syedge-agent
 sudo systemctl status syedge-agent --no-pager
 ```
 
-节点原为独立模式且有人工维护的配置时，注册默认会被拒绝。确认由控制台接管后，再加上 `-replace-local-config`；原配置会备份到 `/var/lib/syedge-agent/backups/`。
+节点原为独立模式且有人工维护的配置时，注册默认会被拒绝。确认由控制台接管后，再加上 `-replace-local-config`；原配置会备份到 `/opt/syedge/agent/backups/`。
 
 ## 4. 常用命令对照
 
@@ -94,7 +94,7 @@ sudo systemctl status syedge-agent --no-pager
 | 平滑重载 | `openresty -s reload` | `sudo systemctl reload syedge`，或 `sudo syedge -s reload` |
 | 查看版本与编译参数 | `openresty -v` / `openresty -V` | `syedge -v` / `syedge -V` |
 | 重开日志 | `openresty -s reopen` | `sudo syedge -s reopen` |
-| 查看错误日志 | `tail -f /usr/local/openresty/nginx/logs/error.log` | `sudo tail -f /var/log/syedge/error.log`；安装根目录不是 `/opt/syedge` 时为 `$R/logs/error.log` |
+| 查看错误日志 | `tail -f /usr/local/openresty/nginx/logs/error.log` | `sudo tail -f $R/logs/error.log`（`R` 为安装根目录） |
 
 安装根目录不是编译期默认值时，`syedge -t` 等命令要像第 2 节那样带上 `-p` 与 `-c`。
 

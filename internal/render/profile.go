@@ -130,7 +130,7 @@ func (p Profile) Layout() (layout.Layout, error) {
 		}
 		root := p.Root
 		if root == "" {
-			root = layout.LegacySystemRoot()
+			root = layout.DefaultSystemRoot()
 		}
 		l = layout.SystemAt(root, p.Instance)
 	}
@@ -164,7 +164,6 @@ type profileView struct {
 	ErrorLog    string
 	AccessLog   string
 	StreamLog   string // 四层代理访问日志
-	CustomTemp  bool   // 临时目录与编译期默认值不同，需要显式写出 *_temp_path
 	TempDir     string // 临时目录
 	HTTP        int
 	HTTPS       int
@@ -174,21 +173,21 @@ type profileView struct {
 	VersionVar  string
 	SitesDir    string // 当前版本静态站点目录（带结尾斜杠）
 	ReleasesDir string // 版本目录的父目录（带结尾斜杠）
-	ModulesDir  string // load_module 的路径前缀：system 模式相对编译期前缀（modules/），user 模式为绝对路径
+	ModulesDir  string // load_module 的路径前缀：默认实例相对 -p 前缀（modules/），具名实例与 user 模式为绝对路径
 	LuaDir      string // Lua 附加包目录（绝对路径）
 }
 
 func (p Profile) view() profileView {
 	l := p.lay()
 	mods := "modules/"
-	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() || l.IndependentRuntime() {
+	if l.Mode() == layout.ModeUser || l.Root() != layout.DefaultSystemRoot() || l.IndependentRuntime() || l.Instance() != "" {
 		mods = l.Modules() + "/"
 	}
 	return profileView{
 		NoFile:  p.Files(),
 		PidFile: l.PidFile(), ErrorLog: l.ErrorLog(), AccessLog: l.AccessLog(), StreamLog: l.LogDir() + "/stream.log",
-		CustomTemp: l.CacheDir() != layout.SystemAt(layout.LegacySystemRoot(), "").CacheDir(), TempDir: l.CacheDir(),
-		HTTP: p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
+		TempDir: l.CacheDir(),
+		HTTP:    p.HTTP(), HTTPS: p.HTTPS(), Status: p.Status(), StatusPath: layout.StatusPath(),
 		VersionPath: layout.VersionPath(), VersionVar: "$" + brand.ID() + "_version",
 		SitesDir: l.ConfRoot() + "/current/sites/", ReleasesDir: p.ReleasesDir(),
 		ModulesDir: mods, LuaDir: l.Modules() + "/lua",
@@ -223,7 +222,7 @@ func (p Profile) Effective() Profile {
 	if p.ResourceMode == "" {
 		p.ResourceMode = "shared"
 	}
-	if p.Mode == string(layout.ModeSystem) && p.Root == layout.LegacySystemRoot() {
+	if p.Mode == string(layout.ModeSystem) && p.Root == layout.DefaultSystemRoot() {
 		p.Root = ""
 	}
 	p.HTTPPort, p.HTTPSPort, p.StatusPort, p.NoFile = p.HTTP(), p.HTTPS(), p.Status(), p.Files()

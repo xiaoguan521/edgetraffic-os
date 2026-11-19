@@ -132,7 +132,7 @@ probe() { # <名>
 probe_result() { # <名> -> “成功 失败”
   touch "$W/stop-$1"; sleep 4; cat "$W/probe-$1" 2>/dev/null || echo "0 0"
 }
-masters() { for i in $(seq 1 "$N"); do docker exec "etos-n$i" cat /run/syedge/syedge.pid 2>/dev/null || echo "-"; done | tr '\n' ' '; }
+masters() { for i in $(seq 1 "$N"); do docker exec "etos-n$i" cat /opt/syedge/run/syedge.pid 2>/dev/null || echo "-"; done | tr '\n' ' '; }
 
 echo "== 2. 控制台宕机 $DOWN_MIN 分钟期间业务无影响"
 m_before=$(masters)
@@ -248,7 +248,7 @@ rollout() { # <说明> <目标版本> <期望软链目录>
   # 旧 master 在长连接结束后退出；等它们都退出再进行下一次升级
   for _ in $(seq 1 60); do
     local left=0
-    for i in $(seq 1 "$N"); do docker exec "etos-n$i" test -e /run/syedge/syedge.pid.oldbin && left=$((left + 1)); done
+    for i in $(seq 1 "$N"); do docker exec "etos-n$i" test -e /opt/syedge/run/syedge.pid.oldbin && left=$((left + 1)); done
     (( left == 0 )) && break; sleep 2
   done
 }

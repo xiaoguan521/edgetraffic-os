@@ -43,7 +43,7 @@
 
 ## 配置
 - 禁止用字符串拼接用户输入生成配置；一律经 internal/render 的校验器 + 模板 + 转义函数。
-- 版本目录自包含，include 一律相对路径；默认实例的 --conf-path=/opt/syedge/conf/current/syedge.conf；自定义 system 根目录见 /etc/syedge/prefix。
+- 版本目录自包含，include 一律相对路径；数据面的配置、pid、日志、临时目录编译为相对 -p 前缀的路径（--conf-path=conf/current/syedge.conf、run/、logs/、cache/），所有运行文件都在实例前缀下，手工运维只需 -p、不需要 -c/-e；自定义 system 根目录见 /etc/syedge/prefix。
 - location 内禁止 add_header；location 内出现 proxy_set_header 时必须重发基线 5 条。
 - 每次修改模板都要让 render 黄金用例通过真实 `syedge -t`。
 
