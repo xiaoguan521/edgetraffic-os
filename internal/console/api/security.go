@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gen/field"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/secpolicy"
 	"github.com/xiaoguan521/edgetraffic-os/internal/console/store"
@@ -111,6 +112,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		failErr(c, store.ErrNotFound)
 		return
 	}
+	var cols []field.Expr // 本次请求实际改动的列
 	bump := false
 	self := u.ID == c.GetUint("uid")
 	if self && ((req.Role != nil && *req.Role != u.Role) || (req.Disabled != nil && *req.Disabled)) {
@@ -127,6 +129,7 @@ func (s *Server) updateUser(c *gin.Context) {
 			return
 		}
 		u.Role = *req.Role
+		cols = append(cols, uq.Role)
 	}
 	if req.Disabled != nil {
 		if *req.Disabled && u.Role == store.RoleAdmin && s.adminCount() <= 1 {
@@ -134,9 +137,11 @@ func (s *Server) updateUser(c *gin.Context) {
 			return
 		}
 		u.Disabled = *req.Disabled
+		cols = append(cols, uq.Disabled)
 	}
 	if req.Unlock {
 		u.LockedUntil, u.FailedLogins = nil, 0
+		cols = append(cols, uq.LockedUntil, uq.FailedLogins)
 	}
 	if req.ResetPassword != "" {
 		if !isLocal(u) {
@@ -154,15 +159,18 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 		u.PasswordHistory = secpolicy.PushHistory(u.PasswordHistory, u.PasswordHash, s.policy().History)
 		u.PasswordHash, u.MustChangePassword = h, true
+		cols = append(cols, uq.PasswordHash, uq.PasswordHistory, uq.MustChangePassword)
 		bump = true
 	}
-	// 只写本接口改动的列，不整行写回：整行写回会把并发的退出、改口令刚递增的 token_version 覆盖回旧值，已撤销的会话重新有效。
+	// 只写本接口实际改动的列，不整行写回：并发的退出、改口令、其他管理员的操作可能已经改了别的列，
+	// 用读到的旧值写回会把它们覆盖（例如新口令失效、已撤销的会话重新有效）。
 	// 重置口令时 token_version 在同一事务里原子加一（重置前签发的会话全部失效）。
 	err = s.q().Transaction(func(tx *query.Query) error {
 		t := tx.User
-		if _, err := t.WithContext(ctx).Select(t.Role, t.Disabled, t.LockedUntil, t.FailedLogins, t.PasswordHash,
-			t.PasswordHistory, t.MustChangePassword).Where(t.ID.Eq(u.ID)).Updates(u); err != nil {
-			return err
+		if len(cols) > 0 {
+			if _, err := t.WithContext(ctx).Select(cols...).Where(t.ID.Eq(u.ID)).Updates(u); err != nil {
+				return err
+			}
 		}
 		if bump {
 			_, err := t.WithContext(ctx).Where(t.ID.Eq(u.ID)).UpdateSimple(t.TokenVersion.Add(1))

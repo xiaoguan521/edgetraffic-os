@@ -234,3 +234,39 @@ func TestRestoreFailureSwapsTheOriginalDirectoryBack(t *testing.T) {
 		t.Fatalf("staging directory left behind: %v", left)
 	}
 }
+
+// 授权只读时的漂移恢复：approved.json 损坏不能被当成“没有记录”而退回信任当前目录清单。
+func TestReadOnlyRestoreRefusesWhenApprovedRecordIsCorrupt(t *testing.T) {
+	e := newApprovedEnv(t)
+	rev := "r000002"
+	e.forgeSelfConsistent(rev)
+	files := map[string][]byte{}
+	for name, data := range e.files1 {
+		files[name] = data
+	}
+	files["conf.d/site-shop.conf"] = []byte("# injected by local writer\n")
+	forged := render.Repack(rev, render.RebaseRevision(files, "r000001", rev))
+	bundle, err := forged.TarGz()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forged.Manifest.Digest == e.d2 {
+		t.Fatal("precondition: forged and approved digests are equal")
+	}
+	if err := os.WriteFile(e.a.path("approved.json"), []byte("{malformed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.a.mu.Lock()
+	e.a.licRaw = "invalid-test-license"
+	e.a.mu.Unlock()
+	if ok, _ := e.a.licenseWritable(); ok {
+		t.Fatal("precondition: license must be read-only")
+	}
+	e.bundles[rev] = bundle
+	r := e.exec(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Apply{Apply: &agentv1.ApplyRevision{
+		RevisionId: rev, ParentRevisionId: rev, BundleSha256: forged.Manifest.Digest,
+	}}})
+	if r.Status == agentv1.CommandResult_APPLIED {
+		t.Fatalf("read-only restore accepted a forged revision with a corrupt approval record: %+v", r)
+	}
+}
