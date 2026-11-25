@@ -1,13 +1,13 @@
 # 改名 patch
 
-只允许存在一个 patch：`0001-syedge-rename.patch`，基于 `dataplane/UPSTREAM` 锁定的上游版本（当前 1.30.7）。
+只允许存在一个 patch：`0001-syedge-rename.patch`，基于 `dataplane/UPSTREAM` 锁定的上游版本（当前 1.30.8）。
 
 **规则**：只替换字符串字面量与宏的值；禁止改动判断、结构体、函数签名、模块 ABI。
 字符串长度变化时，与之配套的长度常量（例如 `ngx_cpymem(errstr, "SyEdge: ", 8)` 中的 8、HPACK 数组的长度）随之改变，这是字面量改名的直接后果，不算改动判断；
 补丁由 `dataplane/gen-rename-patch` 生成并与已提交的补丁逐字节对比（`TestDefaultBrandMatchesCommittedPatch`），不手工编辑。
 升级上游 = 在新版本上重新应用 patch，`build-syedge.sh` 会自动运行 `scripts/rename-scan.sh`；出现冲突或扫描失败即停，人工评审。
 
-## 覆盖位置（1.30.7，共 20 个文件）
+## 覆盖位置（1.30.8，共 20 个文件）
 
 | 文件 | 改动 | 用户可见影响 |
 | --- | --- | --- |

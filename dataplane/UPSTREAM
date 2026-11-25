@@ -1,9 +1,9 @@
 # 上游源码锁定。产品只跟 stable 分支。
 # 源码取自官方 GitHub 镜像的发布标签；tag 指向的提交哈希在构建时校验。
-UPSTREAM_VERSION=1.30.7
+UPSTREAM_VERSION=1.30.8
 UPSTREAM_GIT=https://github.com/nginx/nginx.git
-UPSTREAM_TAG=release-1.30.7
-UPSTREAM_COMMIT=2df4366ef5e380dd7d30f2ff5261ef6bc47252c8
+UPSTREAM_TAG=release-1.30.8
+UPSTREAM_COMMIT=07c14df1341e261a400b37970eca8cfa275854c0
 # 国密变体（P8，-t tongsuo）：铜锁（Apache-2.0）开启 NTLS 静态链接；syedge 源码与改名 patch 不变，
 # 国密双证书通过已有的 ssl_conf_command 指令交给铜锁的 SSL_CONF 命令（Enable_ntls / SignCertificate / EncCertificate …）。
 TONGSUO_VERSION=8.5.0
