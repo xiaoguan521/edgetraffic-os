@@ -204,3 +204,4 @@ git commit -m "upgrade: nginx $OLD_VERSION -> $NEW_VERSION
 | 日期 | nginx 版本 | 主要原因 | PR |
 |---|---|---|---|
 | 2026-10-14 | 1.30.6 | 初始锁定版本（修复的 CVE 以上游安全公告为准：https://nginx.org/en/security_advisories.html） | 初始版本 |
+| 2026-11-25 | 1.30.8 | 修复 CVE-2026-132779 | — |
