@@ -108,6 +108,12 @@ func (s *Server) createImport(c *gin.Context) {
 		}
 	}
 	opts := importer.Options{AllowedNet: allowed}
+	if s.Deploy != nil {
+		if prof, perr := s.Deploy.Profile(gid); perr == nil {
+			opts.HTTPPort = prof.HTTP()
+			opts.HTTPSPort = prof.HTTPS()
+		}
+	}
 	var rep *importer.Report
 	source := "dump"
 	data := files[0].Body
@@ -316,7 +322,7 @@ func (s *Server) applyImportByID(ctx context.Context, importID uint, user, ip st
 			if err != nil {
 				break
 			}
-			want, _ := json.Marshal(render.UpstreamGroup{Name: name, Algorithm: u.Spec.Algorithm, Servers: u.Spec.Servers})
+			want, _ := json.Marshal(render.UpstreamGroup{Name: name, Algorithm: u.Spec.Algorithm, Keepalive: u.Spec.Keepalive, Servers: u.Spec.Servers})
 			if ex.Spec == string(want) {
 				break
 			}

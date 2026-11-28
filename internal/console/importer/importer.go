@@ -35,6 +35,22 @@ const (
 // Options 是转换选项。
 type Options struct {
 	AllowedNet []netip.Prefix // 节点组允许回源网段（直连地址必须在其中）
+	HTTPPort   int            // 节点组 HTTP 端口（<=0 默认 80）
+	HTTPSPort  int            // 节点组 HTTPS 端口（<=0 默认 443）
+}
+
+func (c *conv) httpPort() int {
+	if c.o.HTTPPort > 0 {
+		return c.o.HTTPPort
+	}
+	return 80
+}
+
+func (c *conv) httpsPort() int {
+	if c.o.HTTPSPort > 0 {
+		return c.o.HTTPSPort
+	}
+	return 443
 }
 
 // Issue 是报告中的一条：未转换的指令及原因。Blocking 表示该站点在处理前不能发布。
@@ -480,6 +496,9 @@ func (c *conv) walkHTTP(ds []*conf.Directive, upstreamsOnly bool) {
 				"default_type", "ssl_protocols", "ssl_ciphers", "ssl_prefer_server_ciphers", "ssl_session_cache", "ssl_session_timeout", "resolver":
 				c.global(d, "由平台基线配置统一管理，未导入")
 			default:
+				if isPlatformBaselineHTTP(d) {
+					continue // 与平台基线 main.conf.tmpl 完全一致的默认指令，不重复生成 http 片段避免发布冲突
+				}
 				if _, issues, err := render.ValidateDirectives(render.ScopeHTTP, []*conf.Directive{cloneDirective(d)}, render.SnippetContext{}); err == nil && len(issues) == 0 {
 					c.httpSnip = append(c.httpSnip, d)
 				} else {
@@ -507,6 +526,183 @@ func normName(s string) string {
 	return n
 }
 
+// isPlatformBaselineHTTP 识别平台 main.conf.tmpl 自带的基线 http 指令（仅精确匹配默认值，避免生成冲突的 http 片段）。
+func isPlatformBaselineHTTP(d *conf.Directive) bool {
+	joined := strings.Join(d.Args, " ")
+	switch d.Name {
+	case "client_body_temp_path", "proxy_temp_path", "fastcgi_temp_path", "uwsgi_temp_path", "scgi_temp_path":
+		return true
+	case "charset":
+		return joined == "utf-8"
+	case "ssl_session_tickets":
+		return joined == "off"
+	case "client_header_timeout", "client_body_timeout", "send_timeout":
+		return joined == "10s"
+	case "keepalive_timeout":
+		return joined == "15s"
+	case "client_max_body_size":
+		return joined == "1m"
+	case "large_client_header_buffers":
+		return joined == "4 8k"
+	case "proxy_http_version":
+		return joined == "1.1"
+	case "proxy_connect_timeout":
+		return joined == "3s"
+	case "proxy_read_timeout", "proxy_send_timeout":
+		return joined == "30s"
+	case "proxy_hide_header":
+		return joined == "X-Powered-By"
+	case "proxy_set_header":
+		if len(d.Args) == 2 {
+			if want, ok := baselineHeaders[strings.ToLower(d.Args[0])]; ok && want == d.Args[1] {
+				return true
+			}
+		}
+	case "limit_req_zone":
+		return strings.Contains(joined, "zone=edge_per_ip:")
+	case "limit_conn_zone":
+		return strings.Contains(joined, "zone=edge_conn:")
+	case "limit_req_status", "limit_conn_status":
+		return joined == "429"
+	case "map":
+		return strings.Contains(joined, "$etos_not_acme")
+	}
+	return false
+}
+
+// isPlatformBaselineServer 识别平台 main.conf.tmpl 自带的默认断开块（server_name _）与本机状态页块，不作为业务站点导入。
+func isPlatformBaselineServer(d *conf.Directive) bool {
+	if len(d.Block) == 0 {
+		return false
+	}
+	isDefaultDrop := true
+	hasDefaultListen := false
+	hasUnderscore := false
+	hasDropAction := false
+
+	isStatusOnly := true
+	hasLoopbackListen := false
+	hasStubStatus := false
+
+	for _, x := range d.Block {
+		switch x.Name {
+		case "listen":
+			lineHasLoopback := false
+			for _, a := range x.Args {
+				if a == "default_server" {
+					hasDefaultListen = true
+				}
+				if strings.HasPrefix(a, "127.0.0.1:") {
+					hasLoopbackListen = true
+					lineHasLoopback = true
+				}
+			}
+			if !lineHasLoopback {
+				isStatusOnly = false
+			}
+		case "server_name":
+			if len(x.Args) == 1 && x.Args[0] == "_" {
+				hasUnderscore = true
+				isStatusOnly = false
+			} else if len(x.Args) == 1 && x.Args[0] == "localhost" {
+				isDefaultDrop = false
+			} else {
+				isDefaultDrop = false
+				isStatusOnly = false
+			}
+		case "access_log":
+			isDefaultDrop = false
+			if len(x.Args) != 1 || x.Args[0] != "off" {
+				isStatusOnly = false
+			}
+		case "return":
+			isStatusOnly = false
+			if len(x.Args) == 1 && x.Args[0] == "444" {
+				hasDropAction = true
+			} else {
+				isDefaultDrop = false
+			}
+		case "ssl_reject_handshake":
+			isStatusOnly = false
+			if len(x.Args) == 1 && x.Args[0] == "on" {
+				hasDropAction = true
+			} else {
+				isDefaultDrop = false
+			}
+		case "ssl_conf_command":
+			isStatusOnly = false
+			// 仅放行国密默认断开块的 Enable_ntls on
+			if len(x.Args) != 2 || x.Args[0] != "Enable_ntls" || x.Args[1] != "on" {
+				isDefaultDrop = false
+			}
+		case "location":
+			isDefaultDrop = false
+			okStatusLoc, stub := isPlatformStatusLocation(x.Block)
+			if !okStatusLoc {
+				isStatusOnly = false
+			}
+			if stub {
+				hasStubStatus = true
+			}
+		default:
+			isDefaultDrop = false
+			isStatusOnly = false
+		}
+	}
+	if isDefaultDrop && hasDefaultListen && hasUnderscore && hasDropAction {
+		return true
+	}
+	if isStatusOnly && hasLoopbackListen && hasStubStatus {
+		return true
+	}
+	return false
+}
+
+// isPlatformStatusLocation 检查 location 块是否只包含本机状态页/版本页/404 兜底指令。
+func isPlatformStatusLocation(ds []*conf.Directive) (bool, bool) {
+	if len(ds) == 0 {
+		return false, false
+	}
+	hasStub := false
+	for _, x := range ds {
+		switch x.Name {
+		case "stub_status":
+			hasStub = true
+		case "default_type":
+		case "return":
+			if len(x.Args) == 0 || (x.Args[0] != "200" && x.Args[0] != "404") {
+				return false, hasStub
+			}
+		default:
+			return false, hasStub
+		}
+	}
+	return true, hasStub
+}
+
+func parseDurationSeconds(raw string) (int, bool) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return 0, false
+	}
+	mult := 1
+	switch {
+	case strings.HasSuffix(raw, "s"):
+		raw = strings.TrimSuffix(raw, "s")
+	case strings.HasSuffix(raw, "m"):
+		raw = strings.TrimSuffix(raw, "m")
+		mult = 60
+	case strings.HasSuffix(raw, "h"):
+		raw = strings.TrimSuffix(raw, "h")
+		mult = 3600
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n * mult, true
+}
+
 func (c *conv) upstream(d *conf.Directive) {
 	if len(d.Args) != 1 || d.Block == nil {
 		c.global(d, "upstream 格式无法识别")
@@ -519,6 +715,14 @@ func (c *conv) upstream(d *conf.Directive) {
 		switch x.Name {
 		case "least_conn", "ip_hash":
 			u.Algorithm = x.Name
+		case "keepalive":
+			if len(x.Args) == 1 {
+				if n, err := strconv.Atoi(x.Args[0]); err == nil && n > 0 && n <= 1024 {
+					u.Keepalive = n
+					continue
+				}
+			}
+			c.global(x, fmt.Sprintf("上游 %s 的 keepalive 参数无法识别，未导入", d.Args[0]))
 		case "server":
 			if len(x.Args) == 0 {
 				ok = false
@@ -526,9 +730,30 @@ func (c *conv) upstream(d *conf.Directive) {
 			}
 			s := render.UpstreamServer{Addr: x.Args[0]}
 			for _, p := range x.Args[1:] {
-				if strings.HasPrefix(p, "weight=") {
-					s.Weight, _ = strconv.Atoi(strings.TrimPrefix(p, "weight="))
-				} else {
+				switch {
+				case strings.HasPrefix(p, "weight="):
+					if n, err := strconv.Atoi(strings.TrimPrefix(p, "weight=")); err == nil && n > 0 && n <= 100 {
+						s.Weight = n
+					} else {
+						c.global(x, fmt.Sprintf("上游 %s 的服务器参数 %s 未导入", d.Args[0], p))
+					}
+				case strings.HasPrefix(p, "max_fails="):
+					if n, err := strconv.Atoi(strings.TrimPrefix(p, "max_fails=")); err == nil && n > 0 && n <= 100 {
+						s.MaxFails = n
+					} else {
+						c.global(x, fmt.Sprintf("上游 %s 的服务器参数 %s 未导入", d.Args[0], p))
+					}
+				case strings.HasPrefix(p, "fail_timeout="):
+					if secs, valid := parseDurationSeconds(strings.TrimPrefix(p, "fail_timeout=")); valid && secs > 0 && secs <= 600 {
+						s.FailTimeout = secs
+					} else {
+						c.global(x, fmt.Sprintf("上游 %s 的服务器参数 %s 未导入", d.Args[0], p))
+					}
+				case p == "backup":
+					s.Backup = true
+				case p == "down":
+					s.Down = true
+				default:
 					c.global(x, fmt.Sprintf("上游 %s 的服务器参数 %s 未导入", d.Args[0], p))
 				}
 			}
@@ -551,6 +776,9 @@ func (c *conv) upstream(d *conf.Directive) {
 }
 
 func (c *conv) addServer(d *conf.Directive) {
+	if isPlatformBaselineServer(d) {
+		return
+	}
 	s := &server{d: d, file: d.File}
 	for _, x := range d.Block {
 		switch x.Name {
@@ -575,8 +803,9 @@ func (c *conv) addServer(d *conf.Directive) {
 			}
 		}
 	}
+	httpsPort := c.httpsPort()
 	for _, p := range s.ports {
-		if p == 443 {
+		if p == httpsPort {
 			s.ssl = s.ssl || hasDirective(d.Block, "ssl_certificate")
 		}
 	}
@@ -706,9 +935,10 @@ func (c *conv) site(s *server, forceHTTPS bool, used map[string]bool) {
 	for _, x := range s.d.Block {
 		switch x.Name {
 		case "listen":
+			httpPort, httpsPort := c.httpPort(), c.httpsPort()
 			for _, p := range listenPorts(x) {
-				if p != 80 && p != 443 {
-					c.issue(&sr, x, fmt.Sprintf("端口 %d 不支持（站点只监听 80 / 443）", p), true)
+				if p != httpPort && p != httpsPort {
+					c.issue(&sr, x, fmt.Sprintf("端口 %d 不支持（当前节点组监听 %d / %d）", p, httpPort, httpsPort), true)
 				}
 			}
 		case "server_name", "http2":

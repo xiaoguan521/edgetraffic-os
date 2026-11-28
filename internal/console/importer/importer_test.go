@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiaoguan521/edgetraffic-os/internal/render"
 	"github.com/xiaoguan521/edgetraffic-os/internal/render/conf"
 )
 
@@ -282,5 +283,163 @@ func TestArchiveLimits(t *testing.T) {
 	_ = gz.Close()
 	if _, err := FromArchive(buf.Bytes(), opts); err == nil {
 		t.Fatal("path traversal accepted")
+	}
+}
+
+func TestImportSyEdgeBaselineSkipsInternalBlocksAndPreservesUpstreamOptions(t *testing.T) {
+	base, err := render.BaselineFor(render.Profile{Mode: "system"})
+	if err != nil {
+		t.Fatalf("BaselineFor: %v", err)
+	}
+	appConf := `upstream api_pool {
+    least_conn;
+    keepalive 64;
+    server 10.0.1.10:8080 weight=3 max_fails=5 fail_timeout=30s;
+    server 10.0.1.11:8080 backup;
+    server 10.0.1.12:8080 down;
+}
+
+server {
+    listen 80;
+    server_name api.example.com;
+    location / {
+        proxy_pass http://api_pool;
+    }
+}
+`
+	arch := tgz(t, map[string]string{
+		"syedge.conf":     string(base.Files["syedge.conf"]),
+		"mime.types":      string(base.Files["mime.types"]),
+		"conf.d/app.conf": appConf,
+	})
+	r, err := FromArchive(arch, opts)
+	if err != nil {
+		t.Fatalf("FromArchive: %v", err)
+	}
+	// 平台默认断开 server（80/443 server_name _）与 127.0.0.1 状态页应被静默过滤，只剩 1 个业务站点。
+	if r.Summary.Servers != 1 || r.Summary.Full != 1 || r.Summary.Partial != 0 || r.Summary.Failed != 0 {
+		t.Fatalf("expected 1 full site and 0 baseline noise, got summary=%+v sites=%+v", r.Summary, r.Sites)
+	}
+	// 平台基线 http 指令（limit_req_zone edge_per_ip、默认超时与头）不得落入 httpSnip，避免发布冲突。
+	if strings.TrimSpace(r.HTTPSnippet) != "" {
+		t.Fatalf("expected empty http snippet for unmodified baseline, got:\n%s", r.HTTPSnippet)
+	}
+	if len(r.Upstreams) != 1 {
+		t.Fatalf("expected 1 upstream, got %+v", r.Upstreams)
+	}
+	u := r.Upstreams[0].Spec
+	if u.Name != "api-pool" || u.Algorithm != "least_conn" || u.Keepalive != 64 {
+		t.Fatalf("unexpected upstream header: %+v", u)
+	}
+	if len(u.Servers) != 3 {
+		t.Fatalf("expected 3 servers, got %+v", u.Servers)
+	}
+	if u.Servers[0].Weight != 3 || u.Servers[0].MaxFails != 5 || u.Servers[0].FailTimeout != 30 {
+		t.Fatalf("server[0] options not preserved: %+v", u.Servers[0])
+	}
+	if !u.Servers[1].Backup || u.Servers[1].Down {
+		t.Fatalf("server[1] backup flag not preserved: %+v", u.Servers[1])
+	}
+	if !u.Servers[2].Down || u.Servers[2].Backup {
+		t.Fatalf("server[2] down flag not preserved: %+v", u.Servers[2])
+	}
+}
+
+func TestImportCustomNodeGroupPortsAndUserModifiedHTTPDirective(t *testing.T) {
+	base, err := render.BaselineFor(render.Profile{Mode: "user", Root: "/home/ops/syedge", HTTPPort: 8080, HTTPSPort: 8443, StatusPort: 18081})
+	if err != nil {
+		t.Fatalf("BaselineFor user mode: %v", err)
+	}
+	// 模拟运维在主配置里调大了 client_max_body_size 为 50m（非基线默认 1m），应保留进 http 片段。
+	mainConf := strings.Replace(string(base.Files["syedge.conf"]), "client_max_body_size   1m;", "client_max_body_size   50m;", 1)
+	crt, key := selfSigned(t, "portal.example.com")
+	siteConf := `server {
+    listen 8080;
+    server_name portal.example.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 8443 ssl;
+    server_name portal.example.com;
+    ssl_certificate certs/portal.crt;
+    ssl_certificate_key certs/portal.key;
+    location / {
+        proxy_pass http://10.0.2.5:9000;
+    }
+}
+`
+	arch := tgz(t, map[string]string{
+		"syedge.conf":        mainConf,
+		"mime.types":         string(base.Files["mime.types"]),
+		"conf.d/portal.conf": siteConf,
+		"certs/portal.crt":   crt,
+		"certs/portal.key":   key,
+	})
+	customOpts := Options{
+		AllowedNet: opts.AllowedNet,
+		HTTPPort:   8080,
+		HTTPSPort:  8443,
+	}
+	r, err := FromArchive(arch, customOpts)
+	if err != nil {
+		t.Fatalf("FromArchive: %v", err)
+	}
+	s := find(r, "portal")
+	if s == nil {
+		t.Fatalf("portal site missing: %+v", r.Sites)
+	}
+	if s.Status != StatusFull || s.Blocking() || !s.Spec.ForceHTTPS || !s.CertFound {
+		t.Fatalf("expected full non-blocking site on 8080/8443, got %+v", s)
+	}
+	if !strings.Contains(r.HTTPSnippet, "client_max_body_size") || !strings.Contains(r.HTTPSnippet, "50m") {
+		t.Fatalf("user-customized client_max_body_size 50m should be kept in http snippet, got %q", r.HTTPSnippet)
+	}
+	if strings.Contains(r.HTTPSnippet, "edge_per_ip") {
+		t.Fatalf("platform baseline limit_req_zone leaked into http snippet: %q", r.HTTPSnippet)
+	}
+}
+
+func TestImportDoesNotDropMixedLoopbackServerAndReportsInvalidUpstreamParams(t *testing.T) {
+	cfg := `http {
+    upstream bad_params {
+        keepalive 2000;
+        server 10.0.1.20:8080 weight=200 max_fails=0 fail_timeout=0s;
+    }
+    server {
+        listen 127.0.0.1:80;
+        server_name internal.example.com;
+        location = /status {
+            stub_status;
+        }
+        location /api/ {
+            proxy_pass http://bad_params;
+        }
+    }
+}
+`
+	r, err := FromFiles([]conf.File{{Name: "syedge.conf", Body: []byte(cfg)}}, opts)
+	if err != nil {
+		t.Fatalf("FromFiles: %v", err)
+	}
+	// 混用 stub_status 与业务 proxy_pass 的本机 server 不能被当作平台状态页静默丢弃。
+	if r.Summary.Servers != 1 || find(r, "internal") == nil {
+		t.Fatalf("mixed loopback business server was unexpectedly dropped: summary=%+v sites=%+v", r.Summary, r.Sites)
+	}
+	if len(r.Upstreams) != 1 {
+		t.Fatalf("expected 1 upstream, got %+v", r.Upstreams)
+	}
+	u := r.Upstreams[0].Spec
+	if u.Keepalive != 0 || u.Servers[0].Weight != 0 || u.Servers[0].MaxFails != 0 || u.Servers[0].FailTimeout != 0 {
+		t.Fatalf("out-of-range upstream parameters should not be stored: %+v", u)
+	}
+	var reasons []string
+	for _, g := range r.Global {
+		reasons = append(reasons, g.Reason)
+	}
+	joined := strings.Join(reasons, " | ")
+	for _, want := range []string{"keepalive", "weight=200", "max_fails=0", "fail_timeout=0s"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected global warning mentioning %q, got %q", want, joined)
+		}
 	}
 }

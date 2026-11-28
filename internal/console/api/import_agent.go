@@ -31,7 +31,14 @@ func (s *Server) HandleAgentConfigSnapshot(ctx context.Context, node *store.Node
 			allowed = append(allowed, pp)
 		}
 	}
-	rep, err := importer.FromArchive(archive, importer.Options{AllowedNet: allowed})
+	opts := importer.Options{AllowedNet: allowed}
+	if s.Deploy != nil {
+		if prof, perr := s.Deploy.Profile(node.GroupID); perr == nil {
+			opts.HTTPPort = prof.HTTP()
+			opts.HTTPSPort = prof.HTTPS()
+		}
+	}
+	rep, err := importer.FromArchive(archive, opts)
 	if err != nil {
 		return nil, fmt.Errorf("解析上报配置失败：%w", err)
 	}
