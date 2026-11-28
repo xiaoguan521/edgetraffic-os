@@ -129,6 +129,7 @@ func TestNodeRealtimeLogsEndToEndSSE(t *testing.T) {
 	ag := conn.New(conn.Config{
 		Server:    lis.Addr().String(),
 		StateDir:  filepath.Join(agentDir, "agent"),
+		Modules:   filepath.Join(agentDir, "modules"),
 		AccessLog: accessPath,
 		Heartbeat: 200 * time.Millisecond,
 		Apply:     apply.Config{ConfRoot: filepath.Join(agentDir, "conf"), ErrorLog: errorPath},
@@ -138,8 +139,15 @@ func TestNodeRealtimeLogsEndToEndSSE(t *testing.T) {
 	}
 
 	agCtx, agCancel := context.WithCancel(context.Background())
-	t.Cleanup(agCancel)
-	go func() { _ = ag.Run(agCtx) }()
+	agDone := make(chan struct{})
+	t.Cleanup(func() {
+		agCancel()
+		<-agDone
+	})
+	go func() {
+		defer close(agDone)
+		_ = ag.Run(agCtx)
+	}()
 
 	var node store.Node
 	deadline := time.Now().Add(5 * time.Second)
