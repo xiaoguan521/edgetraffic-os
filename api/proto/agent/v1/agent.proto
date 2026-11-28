@@ -17,6 +17,9 @@ service AgentGateway {
   // 升级包分片下载（规格书 12.6）：只能下载控制台版本库中已验签的包；签名随 UpgradeDataplane / UpgradeAgent 下发，
   // 由 wrapper（数据面）或 agent（自身）在使用前校验。
   rpc FetchPackage(FetchPackageRequest) returns (stream BundleChunk);
+  // 独立节点接入时由 agent 主动上报本机当前配置快照（仅限本实例 conf/current/ 内受限文件），
+  // 控制台不向 agent 下发任何读文件指令；要求 mTLS 认证。
+  rpc PushConfigSnapshot(stream BundleChunk) returns (ConfigSnapshotResponse);
 }
 
 message EnrollRequest {
@@ -213,3 +216,19 @@ message FetchPackageRequest {
 
 message FetchBundleRequest { string revision_id = 1; }
 message BundleChunk { bytes data = 1; int64 offset = 2; bool last = 3; }
+
+message ConfigSnapshotResponse {
+  uint64 import_id = 1;
+  int32 sites = 2;
+  int32 full = 3;
+  int32 partial = 4;
+  int32 failed = 5;
+  int32 issues = 6;
+  bool auto_applied = 7;
+  int32 applied_sites = 8;
+  int32 applied_upstreams = 9;
+  int32 applied_certs = 10;
+  int32 applied_snippets = 11;
+  bool requires_legacy = 12;
+  string message = 13;
+}

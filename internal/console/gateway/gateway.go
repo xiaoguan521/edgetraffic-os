@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -60,9 +62,14 @@ type Server struct {
 	CheckHost func(groupID uint, hostKey string) error
 	// CheckInstance 核对 agent 上报的本机实例档案（nil 为旧版 agent 未上报）与节点组档案：注册时不一致则拒绝，上线时不一致则告警。
 	CheckInstance func(groupID uint, reported *render.Profile) error
+	// OnConfigSnapshot 接收独立节点接入时主动上报的本机配置快照（tar.gz），自动分析并在安全条件下生成草稿。
+	OnConfigSnapshot func(ctx context.Context, node *store.Node, ip string, archive []byte) (*agentv1.ConfigSnapshotResponse, error)
+	// SnapshotMinInterval 限制同一节点两次主动上报配置快照的最小间隔（0 默认 10s，<0 表示禁用限频）。
+	SnapshotMinInterval time.Duration
 
-	mu       sync.Mutex
-	sessions map[uint]*session
+	mu           sync.Mutex
+	sessions     map[uint]*session
+	lastSnapshot map[uint]time.Time
 }
 
 type session struct {
@@ -690,4 +697,69 @@ func RunningVersion(v string) string {
 		return ""
 	}
 	return v
+}
+
+const maxConfigSnapshotBytes = 20 << 20
+
+// PushConfigSnapshot 接收独立节点接入时由 agent 主动上报的本机受限配置快照（tar.gz）。
+// 仅接受 mTLS 已认证节点的主动上报，控制台不向 agent 下发任何读文件指令。
+func (s *Server) PushConfigSnapshot(stream agentv1.AgentGateway_PushConfigSnapshotServer) error {
+	if s.standby() {
+		return errStandby
+	}
+	ctx := stream.Context()
+	node, err := s.nodeFromPeer(ctx)
+	if err != nil {
+		return err
+	}
+	if s.Lic != nil {
+		if snap := s.Lic.Snapshot(); !snap.Writable() {
+			return status.Errorf(codes.FailedPrecondition, "license does not allow importing config: %s", snap.State)
+		}
+	}
+	if s.OnConfigSnapshot == nil {
+		return status.Error(codes.Unimplemented, "config snapshot import is not enabled on this console")
+	}
+	minInterval := s.SnapshotMinInterval
+	if minInterval == 0 {
+		minInterval = 10 * time.Second
+	}
+	if minInterval > 0 {
+		now := time.Now()
+		s.mu.Lock()
+		if s.lastSnapshot == nil {
+			s.lastSnapshot = map[uint]time.Time{}
+		}
+		if prev, ok := s.lastSnapshot[node.ID]; ok && now.Sub(prev) < minInterval {
+			s.mu.Unlock()
+			return status.Error(codes.ResourceExhausted, "config snapshot pushed too frequently; retry later")
+		}
+		s.lastSnapshot[node.ID] = now
+		s.mu.Unlock()
+	}
+	var buf bytes.Buffer
+	for {
+		ch, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if int64(buf.Len())+int64(len(ch.Data)) > maxConfigSnapshotBytes {
+			return status.Errorf(codes.InvalidArgument, "config snapshot exceeds %d bytes", maxConfigSnapshotBytes)
+		}
+		buf.Write(ch.Data)
+		if ch.Last {
+			break
+		}
+	}
+	if buf.Len() == 0 {
+		return status.Error(codes.InvalidArgument, "empty config snapshot")
+	}
+	resp, err := s.OnConfigSnapshot(ctx, node, remoteAddr(ctx), buf.Bytes())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	return stream.SendAndClose(resp)
 }

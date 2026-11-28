@@ -21,6 +21,7 @@ const profile = ref<any>(null)
 const managementMode = ref<any>(null)
 const view = ref<'group' | 'host'>('group')
 const hosts = ref<any[]>([])
+const recentImports = ref<any[]>([])
 const nodeSearch = ref('')
 const nodeFilter = ref<'all' | 'online' | 'offline' | 'drifted'>('all')
 
@@ -38,17 +39,28 @@ const filteredNodes = computed(() => {
 async function load() {
   await ws.loadGroups(Number(route.query.group) || undefined)
   if (!gid.value) return
-  const [n, p, h, m] = await Promise.all([
+  const [n, p, h, m, imps] = await Promise.all([
     api.get('/nodes', { group_id: gid.value }),
     api.get(`/node-groups/${gid.value}/profile`),
     api.get('/hosts'),
     api.get(`/node-groups/${gid.value}/management-mode`),
+    session.can('operator') ? api.get('/imports', { group_id: gid.value }).catch(() => []) : Promise.resolve([]),
   ])
   nodes.value = n.filter((x: any) => x.status !== 'revoked')
   profile.value = p
   managementMode.value = m
   hosts.value = h
+  recentImports.value = Array.isArray(imps) ? imps : []
 }
+const latestAgentImport = computed(() => recentImports.value.find((x: any) => x.source === 'agent') || null)
+watch(
+  () => `${latestAgentImport.value?.id || 0}:${latestAgentImport.value?.applied_at || ''}`,
+  (cur, prev) => {
+    if (prev && cur !== prev && latestAgentImport.value?.applied_at) {
+      ws.refreshDraftState()
+    }
+  },
+)
 const instanceLabel = computed(() => {
   const p = profile.value
   if (!p) return ''
@@ -79,12 +91,15 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(t))
 
-// 添加节点（分场景 Tab + 宿主机/Docker 切换 + 危险防呆 + 实时检测上线）
+// 添加节点（分场景 Tab + 宿主机/Docker 切换 + 危险防呆 + 实时检测上线与自动配置导入）
 const enroll = ref<any>(null)
 const enrollTab = ref<'new' | 'existing'>('new')
 const runtimeEnv = ref<'host' | 'docker'>('host')
 const dockerService = ref(brand.id)
+const autoImportConfig = ref(true)
+const autoImportCerts = ref(false)
 const enrollBaselineIds = ref<number[]>([])
+const enrollBaseImportId = ref(0)
 const enrolling = ref(false)
 const switchingMode = ref(false)
 const newlyJoinedNodes = computed(() => {
@@ -92,17 +107,33 @@ const newlyJoinedNodes = computed(() => {
   const base = new Set(enrollBaselineIds.value)
   return nodes.value.filter((n) => !base.has(n.id))
 })
+const enrollNewImport = computed(() => {
+  if (!enroll.value) return null
+  return recentImports.value.find((x: any) => x.source === 'agent' && x.id > enrollBaseImportId.value) || null
+})
+function importFlags() {
+  if (!autoImportConfig.value) return ''
+  return autoImportCerts.value ? ' -import-config -import-certs' : ' -import-config'
+}
 function dockerEnrollCmd(en: any, replaceLocal: boolean) {
   if (!en) return ''
   const svc = dockerService.value.trim() || brand.id
   const inst = en.instance ? ` -instance ${en.instance}` : ''
-  const rep = replaceLocal ? ' -replace-local-config' : ''
+  const rep = replaceLocal ? ` -replace-local-config${importFlags()}` : ''
   return `docker compose exec ${svc} ${brand.agent} enroll${inst} -server ${en.server} -token ${en.token} -ca-fingerprint ${en.ca_fingerprint}${rep}`
+}
+function existingEnrollCmd(en: any) {
+  if (!en) return ''
+  if (runtimeEnv.value === 'docker') return dockerEnrollCmd(en, true)
+  const flags = importFlags()
+  if (!flags) return en.existing_command
+  return String(en.existing_command || '').replace('-replace-local-config', `-replace-local-config${flags}`)
 }
 async function addNode(defaultTab: 'new' | 'existing' = 'new') {
   enrolling.value = true
   try {
     enrollBaselineIds.value = nodes.value.map((n) => n.id)
+    enrollBaseImportId.value = recentImports.value.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0)
     enrollTab.value = defaultTab
     enroll.value = await api.post(`/node-groups/${gid.value}/enroll`)
   } catch (e) {
@@ -127,21 +158,24 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => message.success('已复制'))
 }
 
-// 独立节点接管向导（4 步串起 观察/兼容 → 自检与注册 → 导出导入 → 切管发布）
+// 独立节点接管向导（4 步串起 观察/兼容 → 自检注册自动上报 → 核对导入结果 → 切管发布）
 const takeoverOpen = ref(false)
 const takeoverStep = ref(0)
 const takeoverGoal = ref<'observe' | 'legacy'>('observe')
 const takeoverEnroll = ref<any>(null)
 const takeoverBaseIds = ref<number[]>([])
+const takeoverBaseImportId = ref(0)
 const takeoverJoined = computed(() => {
   const base = new Set(takeoverBaseIds.value)
   return nodes.value.filter((n) => !base.has(n.id))
 })
+const takeoverNewImport = computed(() => recentImports.value.find((x: any) => x.source === 'agent' && x.id > takeoverBaseImportId.value) || null)
 function openTakeover() {
   takeoverStep.value = 0
   takeoverGoal.value = managementMode.value?.mode === 'legacy' ? 'legacy' : 'observe'
   takeoverEnroll.value = null
   takeoverBaseIds.value = nodes.value.map((n) => n.id)
+  takeoverBaseImportId.value = recentImports.value.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0)
   takeoverOpen.value = true
 }
 async function takeoverApplyModeAndNext() {
@@ -149,6 +183,7 @@ async function takeoverApplyModeAndNext() {
     await quickSwitchMode(takeoverGoal.value)
   }
   takeoverBaseIds.value = nodes.value.map((n) => n.id)
+  takeoverBaseImportId.value = recentImports.value.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0)
   try {
     takeoverEnroll.value = await api.post(`/node-groups/${gid.value}/enroll`)
     takeoverStep.value = 1
@@ -164,6 +199,17 @@ const preflightCmd = computed(() => {
   }
   if (p.mode === 'user' && p.root) return `${p.root}/bin/${brand.agent} preflight -root ${p.root}${p.instance ? ` -instance ${p.instance}` : ''}`
   return `sudo ${brand.agent} preflight${p.instance ? ` -instance ${p.instance}` : ''}`
+})
+const pushConfigCmd = computed(() => {
+  const p = profile.value || {}
+  const inst = p.instance ? ` -instance ${p.instance}` : ''
+  const certs = autoImportCerts.value ? ' -import-certs' : ''
+  if (runtimeEnv.value === 'docker') {
+    const svc = dockerService.value.trim() || brand.id
+    return `docker compose exec ${svc} ${brand.agent} push-config${inst}${certs}`
+  }
+  if (p.mode === 'user' && p.root) return `${p.root}/bin/${brand.agent} push-config -root ${p.root}${inst}${certs}`
+  return `sudo ${brand.agent} push-config${inst}${certs}`
 })
 const exportCmd = computed(() => {
   const p = profile.value || {}
@@ -572,6 +618,22 @@ function mb(b: number) {
         </div>
       </div>
       <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon message="观察接入：节点上线和心跳不会触发配置下发；导入内容只会进入控制台草稿。确认配置后，请在节点组设置切回“控制台托管”，再手动预览、审批和发布。" style="margin-bottom: 14px" />
+      <a-alert
+        v-if="managementMode?.mode === 'observe' && latestAgentImport && session.can('operator')"
+        type="success"
+        show-icon
+        style="margin-bottom: 14px"
+        :message="latestAgentImport.applied_at
+          ? `已自动导入节点配置为草稿（${latestAgentImport.file_name}，识别 ${latestAgentImport.sites} 个站点：完全 ${latestAgentImport.full} / 部分 ${latestAgentImport.partial} / 无法 ${latestAgentImport.failed}）`
+          : `已收到节点上报的配置快照（${latestAgentImport.file_name}，识别 ${latestAgentImport.sites} 个站点），等待核对应用`"
+      >
+        <template #action>
+          <a-space size="small">
+            <a-button v-if="latestAgentImport.applied_at" size="small" @click="router.push({ name: 'sites', query: { group: gid } })">查看站点草稿</a-button>
+            <a-button size="small" type="primary" @click="router.push({ name: 'imports', query: { group: gid, import: latestAgentImport.id } })">查看导入报告</a-button>
+          </a-space>
+        </template>
+      </a-alert>
       <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：原生配置包由管理员提交，经另一位管理员审批后才会下发；控制台不会自动发布站点草稿。" style="margin-bottom: 14px" />
       <a-alert v-if="managementMode?.mode === 'managed' && managementMode?.handoff_pending" type="warning" show-icon message="等待首次接管发布：节点重连不会自动对齐。核对并备份现网配置后，请显式发布。" style="margin-bottom: 14px" />
       <div class="toolbar">
@@ -689,8 +751,28 @@ function mb(b: number) {
           <pre class="cmd code">{{ preflightCmd }}</pre>
           <a-button size="small" @click="copy(preflightCmd)">复制自检命令</a-button>
           <p class="sub" style="margin-top: 14px">② 执行注册命令（检测到本地改动会自动备份当前版本目录）：</p>
-          <pre class="cmd code">{{ runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, true) : enroll.existing_command }}</pre>
-          <a-button type="primary" @click="copy(runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, true) : enroll.existing_command)">复制已有实例注册命令</a-button>
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px">
+            <a-checkbox v-model:checked="autoImportConfig">注册后自动上报本机配置到控制台（免导出上传）</a-checkbox>
+            <a-checkbox v-if="autoImportConfig" v-model:checked="autoImportCerts">经 mTLS 加密一并导入目录内证书私钥</a-checkbox>
+          </div>
+          <pre class="cmd code">{{ existingEnrollCmd(enroll) }}</pre>
+          <a-button type="primary" @click="copy(existingEnrollCmd(enroll))">复制已有实例注册命令</a-button>
+          <a-alert
+            v-if="enrollNewImport"
+            type="success"
+            show-icon
+            style="margin-top: 12px"
+            :message="enrollNewImport.applied_at
+              ? `已自动导入节点配置为草稿（导入 #${enrollNewImport.id}，共 ${enrollNewImport.sites} 个站点）`
+              : `已自动收到节点上报的配置快照（导入 #${enrollNewImport.id}，共 ${enrollNewImport.sites} 个站点）`"
+          >
+            <template #action>
+              <a-space size="small">
+                <a-button v-if="enrollNewImport.applied_at" size="small" @click="enroll = null; router.push({ name: 'sites', query: { group: gid } })">查看站点</a-button>
+                <a-button size="small" type="primary" @click="enroll = null; router.push({ name: 'imports', query: { group: gid, import: enrollNewImport.id } })">查看导入报告</a-button>
+              </a-space>
+            </template>
+          </a-alert>
         </template>
         <a-descriptions :column="1" size="small" style="margin-top: 18px">
           <a-descriptions-item label="控制台地址"><span class="code">{{ enroll.server }}</span></a-descriptions-item>
@@ -706,14 +788,14 @@ function mb(b: number) {
       </div>
       <a-alert v-if="runtimeEnv === 'docker'" type="info" show-icon style="margin-bottom: 14px"
         message="Docker 独立部署请先在 docker-compose.yml 中挂载 ./agent:<前缀>/agent 卷（保存节点证书与 machine-id），重建容器不掉线。" />
-      <a-steps :current="takeoverStep" size="small" style="margin-bottom: 20px" :items="[{ title: '选择保护模式' }, { title: '自检与注册' }, { title: '导出与导入' }, { title: '切回托管发布' }]" />
+      <a-steps :current="takeoverStep" size="small" style="margin-bottom: 20px" :items="[{ title: '选择保护模式' }, { title: '自检与自动导入' }, { title: '核对配置草稿' }, { title: '切回托管发布' }]" />
       <template v-if="takeoverStep === 0">
         <a-alert type="info" show-icon style="margin-bottom: 14px" message="先在“观察接入”或“兼容配置”模式下接入节点，可确保控制台绝不覆盖节点现网流量配置。" />
         <a-form layout="vertical">
           <a-form-item label="目标接管方式">
             <a-radio-group v-model:value="takeoverGoal">
               <div style="display: grid; gap: 10px">
-                <a-radio value="observe"><b>观察接入 → 平滑迁移为可视化托管</b>（推荐：先导入原配置并核对草稿，确认无误后再切回托管并显式发布）</a-radio>
+                <a-radio value="observe"><b>观察接入 → 平滑迁移为可视化托管</b>（推荐：注册时自动把原配置上报为草稿，核对无误后再切回托管发布）</a-radio>
                 <a-radio value="legacy"><b>兼容配置（原生 Lua）</b>（原配置含复杂原生 Lua / 第三方库，保留完整配置包由双管理员审批发布）</a-radio>
               </div>
             </a-radio-group>
@@ -729,28 +811,68 @@ function mb(b: number) {
           style="margin-bottom: 12px"
           :message="`节点已成功接入：${takeoverJoined.map((n) => n.name).join('、')}`"
         />
+        <a-alert
+          v-if="takeoverNewImport"
+          type="success"
+          show-icon
+          style="margin-bottom: 12px"
+          :message="takeoverNewImport.applied_at
+            ? `已自动导入节点配置为草稿（导入 #${takeoverNewImport.id}）：识别 ${takeoverNewImport.sites} 个站点（完全 ${takeoverNewImport.full} / 部分 ${takeoverNewImport.partial} / 无法 ${takeoverNewImport.failed}）`
+            : `已自动收到节点上报的配置快照（导入 #${takeoverNewImport.id}）：识别 ${takeoverNewImport.sites} 个站点`"
+        >
+          <template #action>
+            <a-button size="small" type="primary" @click="takeoverStep = 2">去核对</a-button>
+          </template>
+        </a-alert>
         <p class="sub">1. 在节点执行自检，确认安装目录、端口与 Lua 情况：</p>
         <pre class="cmd code">{{ preflightCmd }}</pre>
         <a-button size="small" @click="copy(preflightCmd)">复制自检命令</a-button>
-        <p class="sub" style="margin-top: 14px">2. 执行已有实例注册命令上线（不会下发配置）：</p>
-        <pre v-if="takeoverEnroll" class="cmd code">{{ runtimeEnv === 'docker' ? dockerEnrollCmd(takeoverEnroll, true) : takeoverEnroll.existing_command }}</pre>
+        <p class="sub" style="margin-top: 14px">2. 执行注册命令上线并自动把现有配置上报控制台（不会覆盖节点现网配置）：</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px">
+          <a-checkbox v-model:checked="autoImportConfig">注册成功后自动上报本机配置到控制台（推荐）</a-checkbox>
+          <a-checkbox v-if="autoImportConfig" v-model:checked="autoImportCerts">经 mTLS 加密一并导入目录内证书与私钥</a-checkbox>
+        </div>
+        <pre v-if="takeoverEnroll" class="cmd code">{{ existingEnrollCmd(takeoverEnroll) }}</pre>
         <a-space>
-          <a-button v-if="takeoverEnroll" @click="copy(runtimeEnv === 'docker' ? dockerEnrollCmd(takeoverEnroll, true) : takeoverEnroll.existing_command)">复制注册命令</a-button>
-          <a-button type="primary" @click="takeoverStep = 2">下一步：导出与导入配置</a-button>
+          <a-button v-if="takeoverEnroll" @click="copy(existingEnrollCmd(takeoverEnroll))">复制注册命令</a-button>
+          <a-button type="primary" @click="takeoverStep = 2">下一步：核对导入配置</a-button>
         </a-space>
       </template>
       <template v-else-if="takeoverStep === 2">
-        <p>在节点执行一键扫描导出命令（自动识别 include、证书与 Lua 引用并生成规范压缩包）：</p>
-        <pre class="cmd code">{{ exportCmd }}</pre>
-        <a-space style="margin-bottom: 16px">
-          <a-button @click="copy(exportCmd)">复制导出命令</a-button>
-        </a-space>
-        <p class="sub">将导出的 tar.gz（或 <span class="code">sudo {{ brand.id }} -T</span> 输出）下载到本地后，前往控制台上传：</p>
-        <a-space>
-          <a-button v-if="takeoverGoal === 'observe'" type="primary" @click="takeoverOpen = false; router.push({ name: 'imports', query: { group: gid } })">前往“配置导入”</a-button>
-          <a-button v-else type="primary" @click="takeoverOpen = false; router.push({ name: 'releases', query: { group: gid } })">前往“发布”提交兼容包</a-button>
-          <a-button v-if="takeoverGoal === 'observe'" @click="takeoverStep = 3">已导入并核对完毕，下一步</a-button>
-        </a-space>
+        <template v-if="takeoverNewImport">
+          <a-alert
+            type="success"
+            show-icon
+            style="margin-bottom: 16px"
+            :message="takeoverNewImport.applied_at
+              ? `节点现有配置已自动导入为控制台草稿（导入 #${takeoverNewImport.id}）`
+              : `已自动收到节点上报的配置快照（导入 #${takeoverNewImport.id}）`"
+            :description="`共识别 ${takeoverNewImport.sites} 个站点：完全转换 ${takeoverNewImport.full}、部分转换 ${takeoverNewImport.partial}、无法转换 ${takeoverNewImport.failed}。现网流量保持不变，核对无误后即可切回托管发布。`"
+          />
+          <a-space wrap>
+            <a-button v-if="takeoverNewImport.applied_at" type="primary" @click="takeoverOpen = false; router.push({ name: 'sites', query: { group: gid } })">前往“站点与上游”核对草稿</a-button>
+            <a-button :type="takeoverNewImport.applied_at ? 'default' : 'primary'" @click="takeoverOpen = false; router.push({ name: 'imports', query: { group: gid, import: takeoverNewImport.id } })">查看完整导入报告</a-button>
+            <a-button v-if="takeoverGoal === 'observe'" @click="takeoverStep = 3">已核对完毕，下一步切回托管</a-button>
+          </a-space>
+        </template>
+        <template v-else>
+          <p>若节点注册时未开启自动上报，或想把已接入节点的最新配置直传到控制台，可直接执行一键上报命令（复用 mTLS 证书，免导出拷贝上传）：</p>
+          <div style="margin-bottom: 8px">
+            <a-checkbox v-model:checked="autoImportCerts">经 mTLS 加密一并导入配置目录内引用的证书与私钥</a-checkbox>
+          </div>
+          <pre class="cmd code">{{ pushConfigCmd }}</pre>
+          <a-space style="margin-bottom: 16px">
+            <a-button type="primary" @click="copy(pushConfigCmd)">复制一键上报命令</a-button>
+            <a-button v-if="takeoverGoal === 'observe'" @click="takeoverOpen = false; router.push({ name: 'imports', query: { group: gid } })">前往“配置导入”</a-button>
+            <a-button v-else @click="takeoverOpen = false; router.push({ name: 'releases', query: { group: gid } })">前往“发布”提交兼容包</a-button>
+            <a-button v-if="takeoverGoal === 'observe'" @click="takeoverStep = 3">已核对完毕，下一步</a-button>
+          </a-space>
+          <details class="adv">
+            <summary>备选：离线导出 tar.gz 后手动上传</summary>
+            <pre class="cmd code" style="margin-top: 8px">{{ exportCmd }}</pre>
+            <a-button size="small" @click="copy(exportCmd)">复制导出命令</a-button>
+          </details>
+        </template>
       </template>
       <template v-else>
         <a-alert type="warning" show-icon style="margin-bottom: 14px" message="切回“控制台托管”后仍不会自动覆盖节点，直到你在发布页确认接管检查单并显式发布。" />

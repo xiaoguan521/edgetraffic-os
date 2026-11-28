@@ -46,10 +46,11 @@ type Server struct {
 	WebCAPEM      []byte      // -tls-auto 时的 Web CA 证书，公开下载以便导入浏览器
 	HA            *ha.Elector // 主备选主；nil 视为单机
 
-	jwtKey    []byte
-	fails     sync.Map // ip -> *loginFail
-	ruleTplMu sync.Mutex
-	routes    func() gin.RoutesInfo
+	jwtKey        []byte
+	fails         sync.Map // ip -> *loginFail
+	ruleTplMu     sync.Mutex
+	agentImportMu sync.Mutex
+	routes        func() gin.RoutesInfo
 }
 
 type loginFail struct {

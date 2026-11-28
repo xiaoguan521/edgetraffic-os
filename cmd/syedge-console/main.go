@@ -172,6 +172,7 @@ func run(log *slog.Logger, o options) error {
 	}
 	apiSrv := &api.Server{Store: st, GW: gw, Deploy: dep, Certs: crt, Acme: acm, Alerts: alr, Lic: lic, Audit: aud, Log: log, Web: web.Dist(),
 		GRPCAddr: grpcAdvertise, CAFingerprint: pki.Fingerprint(ca.Cert.Raw), SecureCookie: useTLS, HA: el}
+	gw.OnConfigSnapshot = apiSrv.HandleAgentConfigSnapshot
 	if webCA != nil {
 		apiSrv.WebCAPEM = webCA.CertPEM()
 	}
