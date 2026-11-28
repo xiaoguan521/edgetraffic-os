@@ -9,6 +9,7 @@ import { useSession } from '../stores/session'
 import { useWorkspace } from '../stores/workspace'
 import DiffView from '../components/DiffView.vue'
 import NodeLogDrawer from '../components/NodeLogDrawer.vue'
+import KeepalivedModal from '../components/KeepalivedModal.vue'
 
 const session = useSession()
 const ws = useWorkspace()
@@ -224,9 +225,10 @@ const exportCmd = computed(() => {
   return `sudo ${brand.agent} export-config${inst} --output ${outName}`
 })
 
-// 节点组设置（含实例档案）
+// 节点组设置（含实例档案与入口高可用 VIP）
 const editing = ref(false)
-const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '' })
+const keepalivedOpen = ref(false)
+const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '', vips: '' })
 const modeForm = ref('managed')
 const pform = reactive({ instance: '', mode: 'system', root: '', resource_mode: 'shared', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
 const locked = computed(() => nodes.value.length > 0)
@@ -234,7 +236,7 @@ watch(() => pform.instance, (name) => {
   if (!name && !locked.value) pform.resource_mode = 'shared'
 })
 function openGroup() {
-  Object.assign(gform, { name: group.value.name, description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
+  Object.assign(gform, { name: group.value.name, description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from, vips: group.value.vips || '' })
   const p = profile.value || {}
   const e = p.effective || {}
   Object.assign(pform, { instance: p.instance || '', mode: p.mode || 'system', root: p.root || '', resource_mode: p.resource_mode || 'shared', http_port: e.http_port, https_port: e.https_port, status_port: e.status_port, nofile: p.nofile || 0 })
@@ -560,12 +562,13 @@ function mb(b: number) {
         <p>节点上的 {{ brand.agent }} 只向控制台发起连接，节点不需要开放任何管理端口。</p>
       </div>
       <a-space wrap>
-        <a-dropdown v-if="session.can('admin') || (session.can('operator') && groups.length > 1)">
-          <a-button :disabled="!session.writable">更多 ▾</a-button>
+        <a-dropdown v-if="session.can('operator')">
+          <a-button>更多 ▾</a-button>
           <template #overlay>
-            <a-menu @click="(e: any) => (e.key === 'create' ? openCreate() : openCopyModal())">
-              <a-menu-item v-if="session.can('admin')" key="create">新建节点组</a-menu-item>
-              <a-menu-item v-if="session.can('operator') && groups.length > 1" key="copy">从其他组复制配置</a-menu-item>
+            <a-menu @click="(e: any) => (e.key === 'create' ? openCreate() : e.key === 'copy' ? openCopyModal() : (keepalivedOpen = true))">
+              <a-menu-item key="keepalived">高可用配置（Keepalived）</a-menu-item>
+              <a-menu-item v-if="session.can('admin')" key="create" :disabled="!session.writable">新建节点组</a-menu-item>
+              <a-menu-item v-if="session.can('operator') && groups.length > 1" key="copy" :disabled="!session.writable">从其他组复制配置</a-menu-item>
             </a-menu>
           </template>
         </a-dropdown>
@@ -619,6 +622,14 @@ function mb(b: number) {
           <div class="gsum-v">{{ instanceLabel || '默认实例' }}</div>
         </div>
         <div class="gsum-cell">
+          <div class="gsum-k">入口高可用 VIP</div>
+          <div class="gsum-v code">
+            <template v-if="group.vips">{{ group.vips }}</template>
+            <a v-else-if="session.can('operator')" style="font-weight: 400; font-size: 12px" @click="keepalivedOpen = true">未配置 · 生成 Keepalived</a>
+            <span v-else>未配置</span>
+          </div>
+        </div>
+        <div class="gsum-cell">
           <div class="gsum-k">允许回源网段</div>
           <div class="gsum-v code">{{ group.allowed_cidrs || '未设置' }}</div>
         </div>
@@ -664,7 +675,15 @@ function mb(b: number) {
         </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
-            <div class="nm">{{ record.name }}</div>
+            <div class="nm">
+              {{ record.name }}
+              <a-tooltip v-if="record.vip_role === 'master'" :title="`当前持有入口 VIP：${(record.held_vips || []).join('、')}；灰度与热升级将自动排在最后一批`">
+                <a-tag color="blue" class="gm">VIP 主</a-tag>
+              </a-tooltip>
+              <a-tooltip v-else-if="record.vip_role === 'backup'" title="当前未持有入口 VIP（备机）；灰度与热升级将优先调度">
+                <a-tag color="default" class="gm">VIP 备</a-tag>
+              </a-tooltip>
+            </div>
             <div class="sub code">{{ record.remote_addr }}</div>
           </template>
           <template v-else-if="column.key === 'status'">
@@ -996,6 +1015,9 @@ function mb(b: number) {
         <a-form-item label="CDN / 负载均衡回源网段" :extra="`填写后，${brand.id} 从 X-Forwarded-For 中取客户端真实 IP。`">
           <a-input v-model:value="gform.real_ip_from" class="code" placeholder="例如 10.0.0.0/8" />
         </a-form-item>
+        <a-form-item label="入口高可用 VIP（可选）" extra="逗号分隔 IP（如 10.0.0.100）。填写后 Agent 自动感知主备角色，控制台启用 VIP 漂移告警，且灰度与热升级自动“先备后主”。">
+          <a-input v-model:value="gform.vips" class="code" placeholder="例如 10.0.0.100" />
+        </a-form-item>
         <a-divider orientation="left" style="font-size: 13px">实例档案</a-divider>
         <p class="sub" style="margin-top: -8px">组内所有节点使用同一个档案。同一台服务器上运行多套 {{ brand.id }} 时，每套属于不同的节点组，实例名与端口不能冲突。{{ locked ? '组内已有节点：实例名、运行方式、安装目录与共享方式不能再改，端口可以改（改后需在各节点上按新端口重建实例）。' : '' }}</p>
         <a-form-item label="实例名" extra="留空为默认实例；具名实例只能用小写字母、数字和短横线。">
@@ -1080,6 +1102,7 @@ function mb(b: number) {
     </a-drawer>
 
     <NodeLogDrawer :node="logNode" @close="logNode = null" />
+    <KeepalivedModal v-model:open="keepalivedOpen" :group="group" :nodes="nodes" />
   </div>
 </template>
 

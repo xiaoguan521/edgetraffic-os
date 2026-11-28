@@ -425,3 +425,73 @@ func TestEvaluateNodeDiskUsage(t *testing.T) {
 		t.Fatalf("expected node disk alerts to resolve, got %+v", evs)
 	}
 }
+
+func TestEvaluateVIPFailover(t *testing.T) {
+	s, _ := newSvc(t, true)
+	now := time.Now().UTC()
+	s.Now = func() time.Time { return now }
+	if err := s.SaveRule(KindVIPFailover, true, 0, nil, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	q := query.Use(s.Store.DB)
+	ctx := context.Background()
+	grp := store.NodeGroup{Name: "ha-edge", VIPs: "10.0.0.100"}
+	if err := q.NodeGroup.WithContext(ctx).Create(&grp); err != nil {
+		t.Fatal(err)
+	}
+	n1 := store.Node{GroupID: grp.ID, Name: "edge-1", Status: "online", LocalIPs: "10.0.0.11"}
+	n2 := store.Node{GroupID: grp.ID, Name: "edge-2", Status: "online", LocalIPs: "10.0.0.12"}
+	_ = q.Node.WithContext(ctx).Create(&n1)
+	_ = q.Node.WithContext(ctx).Create(&n2)
+
+	firing := func() []store.AlertEvent {
+		var evs []store.AlertEvent
+		s.Store.DB.Where("status = ? AND kind = ?", "firing", KindVIPFailover).Find(&evs)
+		return evs
+	}
+
+	// 1. 无节点持有 VIP -> 告警失联
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 1 || !strings.Contains(evs[0].Message, "无在线节点持有") {
+		t.Fatalf("expected absent VIP alert, got %+v", evs)
+	}
+
+	// 2. edge-1 持有 VIP -> 正常恢复并记录 owner
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.ID.Eq(n1.ID)).Update(q.Node.LocalIPs, "10.0.0.11,10.0.0.100")
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 0 {
+		t.Fatalf("expected healthy single-owner VIP, got %+v", evs)
+	}
+
+	// 3. VIP 从 edge-1 漂移到 edge-2 -> 触发漂移告警
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.ID.Eq(n1.ID)).Update(q.Node.LocalIPs, "10.0.0.11")
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.ID.Eq(n2.ID)).Update(q.Node.LocalIPs, "10.0.0.12,10.0.0.100")
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 1 || !strings.Contains(evs[0].Message, "edge-1 → edge-2") {
+		t.Fatalf("expected VIP failover alert, got %+v", evs)
+	}
+
+	// 4. 超过 10 分钟且主稳定后自动恢复
+	now = now.Add(11 * time.Minute)
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 0 {
+		t.Fatalf("expected failover alert resolved after window, got %+v", evs)
+	}
+
+	// 5. 两台同时持有 VIP -> 触发脑裂告警
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.ID.Eq(n1.ID)).Update(q.Node.LocalIPs, "10.0.0.11,10.0.0.100")
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 1 || !strings.Contains(evs[0].Message, "脑裂") {
+		t.Fatalf("expected split-brain VIP alert, got %+v", evs)
+	}
+}

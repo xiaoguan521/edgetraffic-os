@@ -17,7 +17,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,6 +133,36 @@ func LuaAddon(v string) string {
 		return v
 	}
 	return ""
+}
+
+// normalizeLocalIPs 校验并归一化 agent 上报的本机非回环 IP 列表，用于识别 Keepalived VIP 归属。
+func normalizeLocalIPs(raw []string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		addr, err := netip.ParseAddr(strings.TrimSpace(s))
+		if err != nil {
+			continue
+		}
+		addr = addr.Unmap()
+		if !addr.IsValid() || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() {
+			continue
+		}
+		k := addr.String()
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+		if len(out) >= 64 {
+			break
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
 }
 
 // DisconnectAll 断开全部节点（失去主身份时调用）。
@@ -400,6 +432,7 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		}
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.LuaAddon.Value(LuaAddon(hb.LuaAddon)), nd.CPUPercent.Value(hb.CpuPercent),
 			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.DiskUsedPercent.Value(hb.DiskUsedPercent), nd.DiskInodePercent.Value(hb.DiskInodePercent),
+			nd.LocalIPs.Value(normalizeLocalIPs(hb.LocalIps)),
 			nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
 			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now), nd.RunningVersion.Value(RunningVersion(hb.RunningVersion)))
 		if !drifted {

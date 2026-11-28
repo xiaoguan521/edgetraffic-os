@@ -341,6 +341,7 @@ type groupReq struct {
 	Description  string `json:"description"`
 	AllowedCIDRs string `json:"allowed_cidrs"`
 	RealIPFrom   string `json:"real_ip_from"`
+	VIPs         string `json:"vips"`
 }
 
 func validCIDRs(csv string) error {
@@ -402,10 +403,15 @@ func (s *Server) createGroup(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	vips, err := normalizeVIPs(req.VIPs)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	if s.groupNameTaken(c, req.Name, 0) {
 		return
 	}
-	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom, InstanceProfile: defaultGroupProfile()}
+	g := &store.NodeGroup{Name: req.Name, Description: req.Description, AllowedCIDRs: req.AllowedCIDRs, RealIPFrom: req.RealIPFrom, VIPs: vips, InstanceProfile: defaultGroupProfile()}
 	if err := s.q().NodeGroup.WithContext(c.Request.Context()).Create(g); err != nil {
 		failErr(c, err)
 		return
@@ -428,6 +434,11 @@ func (s *Server) updateGroup(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
+	vips, err := normalizeVIPs(req.VIPs)
+	if err != nil {
+		failErr(c, err)
+		return
+	}
 	g, err := store.First[store.NodeGroup](s.Store, id)
 	if err != nil {
 		failErr(c, err)
@@ -447,11 +458,11 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	ng := s.q().NodeGroup
 	if _, err := ng.WithContext(c.Request.Context()).Where(ng.ID.Eq(g.ID)).UpdateSimple(ng.Name.Value(name), ng.Description.Value(req.Description),
-		ng.AllowedCIDRs.Value(req.AllowedCIDRs), ng.RealIPFrom.Value(req.RealIPFrom)); err != nil {
+		ng.AllowedCIDRs.Value(req.AllowedCIDRs), ng.RealIPFrom.Value(req.RealIPFrom), ng.VIPs.Value(vips)); err != nil {
 		failErr(c, err)
 		return
 	}
-	g.Name, g.Description, g.AllowedCIDRs, g.RealIPFrom = name, req.Description, req.AllowedCIDRs, req.RealIPFrom
+	g.Name, g.Description, g.AllowedCIDRs, g.RealIPFrom, g.VIPs = name, req.Description, req.AllowedCIDRs, req.RealIPFrom, vips
 	s.audit(c, "group.update", "node_group", fmt.Sprint(id), req)
 	c.JSON(http.StatusOK, g)
 }
@@ -621,8 +632,10 @@ func enrollCommand(p render.Profile, server, token, caFP string) string {
 // ---------- 节点 ----------
 
 func (s *Server) listNodes(c *gin.Context) {
-	nd := s.q().Node
-	sel := nd.WithContext(c.Request.Context()).Order(nd.ID)
+	ctx := c.Request.Context()
+	q := s.q()
+	nd := q.Node
+	sel := nd.WithContext(ctx).Order(nd.ID)
 	if g := queryGroup(c); g != 0 {
 		sel = sel.Where(nd.GroupID.Eq(g))
 	}
@@ -631,7 +644,33 @@ func (s *Server) listNodes(c *gin.Context) {
 		failErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, ns)
+	gs, _ := q.NodeGroup.WithContext(ctx).Find()
+	groupVIPs := map[uint]string{}
+	for _, g := range gs {
+		if g.VIPs != "" {
+			groupVIPs[g.ID] = g.VIPs
+		}
+	}
+	type nodeView struct {
+		*store.Node
+		HeldVIPs []string `json:"held_vips,omitempty"`
+		VIPRole  string   `json:"vip_role,omitempty"` // master | backup | ""
+	}
+	out := make([]nodeView, 0, len(ns))
+	for _, n := range ns {
+		v := nodeView{Node: n}
+		if gv := groupVIPs[n.GroupID]; gv != "" && n.Status == "online" {
+			held := heldVIPs(n.LocalIPs, gv)
+			if len(held) > 0 {
+				v.HeldVIPs = held
+				v.VIPRole = "master"
+			} else {
+				v.VIPRole = "backup"
+			}
+		}
+		out = append(out, v)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Server) restoreNode(c *gin.Context) {

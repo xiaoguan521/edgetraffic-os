@@ -155,6 +155,8 @@ func (d *Service) StartCanary(groupID uint, note, user, ip string, o CanaryOptio
 		}
 		return nil, err
 	}
+	// 配置了入口 VIP 时自动“先备后主”：先在非 VIP 节点验证灰度，最后一批才切主节点
+	nodes = orderBackupFirst(nodes, parseGroupVIPs(g.VIPs))
 	ids := make([]uint, len(nodes))
 	for i, n := range nodes {
 		ids[i] = n.ID

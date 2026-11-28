@@ -87,6 +87,7 @@ message Heartbeat {
   string running_version = 9;       // 同 Hello.running_version
   double disk_used_percent = 10;    // 节点日志/运行目录所在分区磁盘使用率（%）；旧版 agent 为 0
   double disk_inode_percent = 11;   // 节点日志/运行目录所在分区 inode 使用率（%）；旧版 agent 为 0
+  repeated string local_ips = 12;   // 节点网卡当前绑定的非回环 IP（含 Keepalived VIP，只读采集，无需 root）
 }
 
 message SiteMinute {
