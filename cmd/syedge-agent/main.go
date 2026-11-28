@@ -53,6 +53,26 @@ func main() {
 		}
 		return
 	}
+	if cmd == "preflight" {
+		if err := preflightMain(args, os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintln(os.Stderr, brand.Agent()+":", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if cmd == "export-config" {
+		if err := exportConfig(args, os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintln(os.Stderr, brand.Agent()+":", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if cmd == "package-defaults" { // 打包时使用：写入初始版本与独立模式文件
 		if len(args) != 2 || args[0] != "-out" {
 			fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" package-defaults -out <安装根目录的暂存目录>")

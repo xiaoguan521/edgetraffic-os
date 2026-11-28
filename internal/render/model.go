@@ -35,13 +35,15 @@ type AcmeChallenge struct {
 
 // Site 是一个站点（规格书 6.1，MVP 子集）。
 type Site struct {
-	Name       string   `json:"name"`
-	Domains    []string `json:"domains"`
-	HTTPS      *TLS     `json:"https,omitempty"`
-	ForceHTTPS bool     `json:"force_https"`
-	HTTP2      bool     `json:"http2"`
-	Routes     []Route  `json:"routes"`
-	Rules      []Rule   `json:"rules,omitempty"` // 访问规则（P10 规则积木，rules.go）
+	Name              string   `json:"name"`
+	Domains           []string `json:"domains"`
+	HTTPS             *TLS     `json:"https,omitempty"`
+	ForceHTTPS        bool     `json:"force_https"`
+	HTTP2             bool     `json:"http2"`
+	ClientMaxBodySize string   `json:"client_max_body_size,omitempty"` // 如 10m、100m、0；留空沿用全局 1m
+	Gzip              bool     `json:"gzip,omitempty"`                 // 启用站点级 gzip 压缩
+	Routes            []Route  `json:"routes"`
+	Rules             []Rule   `json:"rules,omitempty"` // 访问规则（P10 规则积木，rules.go）
 
 	ServerSnippet string `json:"-"` // 已审批的 server 层自定义片段（不随站点表单保存，由控制台按审批状态填入）
 }
@@ -111,6 +113,7 @@ type StaticSpec struct {
 	IndexHTML string `json:"index_html"`
 	// BundleID 引用控制台的静态资源包（P9 静态资源发布）；渲染前由控制台解析为 Files，随配置版本一起原子切换
 	BundleID uint              `json:"bundle_id,omitempty"`
+	SPA      bool              `json:"spa,omitempty"` // 单页应用模式：未命中文件时回退到本路由 index.html
 	Files    map[string][]byte `json:"-"`
 }
 
@@ -143,8 +146,14 @@ func ValidateStaticPath(p string) error {
 const StaticWellKnown = ".well-known"
 
 type ProxySpec struct {
-	Upstream  string `json:"upstream"` // UpstreamGroup.Name
-	WebSocket bool   `json:"websocket,omitempty"`
+	Upstream       string `json:"upstream"` // UpstreamGroup.Name
+	WebSocket      bool   `json:"websocket,omitempty"`
+	HTTPS          bool   `json:"https,omitempty"`           // HTTPS 回源（开启 proxy_ssl_server_name）
+	StripPrefix    bool   `json:"strip_prefix,omitempty"`    // 转发时剥离路由前缀（仅前缀匹配且以 / 结尾的非根路径可用）
+	ConnectTimeout int    `json:"connect_timeout,omitempty"` // 连接超时（秒，1–60；0 沿用全局 3s）
+	ReadTimeout    int    `json:"read_timeout,omitempty"`    // 读取超时（秒，1–3600；0 沿用全局 30s）
+	SendTimeout    int    `json:"send_timeout,omitempty"`    // 发送超时（秒，1–3600；0 沿用全局 30s）
+	Buffering      *bool  `json:"buffering,omitempty"`       // nil 沿用默认；false 关闭缓冲（适合 SSE / 流式响应）
 }
 
 type RedirectSpec struct {
@@ -155,19 +164,25 @@ type RedirectSpec struct {
 // UpstreamGroup 是一组回源服务器。
 type UpstreamGroup struct {
 	Name      string           `json:"name"`
-	Algorithm string           `json:"algorithm"` // round_robin | least_conn | ip_hash
+	Algorithm string           `json:"algorithm"`           // round_robin | least_conn | ip_hash
+	Keepalive int              `json:"keepalive,omitempty"` // 0 沿用默认 32，有效范围 1–1024
 	Servers   []UpstreamServer `json:"servers"`
 }
 
 type UpstreamServer struct {
-	Addr   string `json:"addr"` // ip:port
-	Weight int    `json:"weight"`
+	Addr        string `json:"addr"` // ip:port
+	Weight      int    `json:"weight"`
+	MaxFails    int    `json:"max_fails,omitempty"`    // 0 沿用默认 3，有效范围 1–100
+	FailTimeout int    `json:"fail_timeout,omitempty"` // 秒；0 沿用默认 10，有效范围 1–600
+	Backup      bool   `json:"backup,omitempty"`       // 备机（ip_hash 下不可用）
+	Down        bool   `json:"down,omitempty"`         // 临时摘流
 }
 
 const maxIndexHTML = 256 << 10
 
 var (
 	revisionRe = regexp.MustCompile(`^r[0-9]{6,12}$`)
+	bodySizeRe = regexp.MustCompile(`^(0|[1-9][0-9]{0,5}[kKmMgG]?)$`)
 )
 
 // Validate 对输入做结构与语义校验（规格书 6.2 第 1、2 步）。
@@ -203,9 +218,13 @@ func (in *Input) Validate() error {
 		default:
 			return fmt.Errorf("upstream %q: unknown algorithm %q", u.Name, u.Algorithm)
 		}
+		if u.Keepalive < 0 || u.Keepalive > 1024 {
+			return fmt.Errorf("upstream %q: keepalive out of range (0-1024)", u.Name)
+		}
 		if len(u.Servers) == 0 {
 			return fmt.Errorf("upstream %q has no servers", u.Name)
 		}
+		nonBackup := 0
 		for _, s := range u.Servers {
 			if err := ValidateUpstream(s.Addr, in.AllowedNet); err != nil {
 				return fmt.Errorf("upstream %q: %w", u.Name, err)
@@ -213,6 +232,21 @@ func (in *Input) Validate() error {
 			if s.Weight < 0 || s.Weight > 100 {
 				return fmt.Errorf("upstream %q: weight out of range", u.Name)
 			}
+			if s.MaxFails < 0 || s.MaxFails > 100 {
+				return fmt.Errorf("upstream %q: max_fails out of range (0-100)", u.Name)
+			}
+			if s.FailTimeout < 0 || s.FailTimeout > 600 {
+				return fmt.Errorf("upstream %q: fail_timeout out of range (0-600)", u.Name)
+			}
+			if s.Backup && u.Algorithm == "ip_hash" {
+				return fmt.Errorf("upstream %q: backup server cannot be used with ip_hash", u.Name)
+			}
+			if !s.Backup {
+				nonBackup++
+			}
+		}
+		if nonBackup == 0 {
+			return fmt.Errorf("upstream %q: at least one non-backup server is required", u.Name)
 		}
 	}
 
@@ -261,6 +295,9 @@ func (in *Input) Validate() error {
 		} else if s.ForceHTTPS || s.HTTP2 {
 			return fmt.Errorf("site %q: force_https / http2 require https", s.Name)
 		}
+		if s.ClientMaxBodySize != "" && !bodySizeRe.MatchString(s.ClientMaxBodySize) {
+			return fmt.Errorf("site %q: invalid client_max_body_size %q", s.Name, s.ClientMaxBodySize)
+		}
 		if len(s.Routes) == 0 {
 			return fmt.Errorf("site %q has no routes", s.Name)
 		}
@@ -303,6 +340,9 @@ func (r *Route) validateMode(ups map[string]bool) error {
 		if r.Static.BundleID != 0 && r.Match != "prefix" {
 			return fmt.Errorf("static bundle requires a prefix route")
 		}
+		if r.Static.SPA && r.Match != "prefix" {
+			return fmt.Errorf("spa mode requires a prefix route")
+		}
 		total := 0
 		if len(r.Static.Files) > MaxStaticFiles {
 			return fmt.Errorf("static bundle has more than %d files", MaxStaticFiles)
@@ -319,6 +359,18 @@ func (r *Route) validateMode(ups map[string]bool) error {
 	case "proxy":
 		if r.Proxy == nil || !ups[r.Proxy.Upstream] {
 			return fmt.Errorf("proxy upstream not defined")
+		}
+		if r.Proxy.StripPrefix && (r.Match != "prefix" || r.Path == "/" || !strings.HasSuffix(r.Path, "/")) {
+			return fmt.Errorf("strip_prefix requires a non-root prefix route ending with /")
+		}
+		if r.Proxy.ConnectTimeout < 0 || r.Proxy.ConnectTimeout > 60 {
+			return fmt.Errorf("connect_timeout out of range (0-60)")
+		}
+		if r.Proxy.ReadTimeout < 0 || r.Proxy.ReadTimeout > 3600 {
+			return fmt.Errorf("read_timeout out of range (0-3600)")
+		}
+		if r.Proxy.SendTimeout < 0 || r.Proxy.SendTimeout > 3600 {
+			return fmt.Errorf("send_timeout out of range (0-3600)")
 		}
 	case "redirect":
 		if r.Redirect == nil {

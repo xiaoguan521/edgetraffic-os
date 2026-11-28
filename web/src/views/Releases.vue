@@ -6,14 +6,16 @@ import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import { brand } from '../brand'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 import ReleaseLanes from '../components/ReleaseLanes.vue'
 import DiffView from '../components/DiffView.vue'
 import { deployStatus, kindName } from '../components/status'
 
 const route = useRoute()
 const session = useSession()
-const groups = ref<any[]>([])
-const gid = ref(0)
+const ws = useWorkspace()
+const groups = computed(() => ws.groups)
+const gid = computed(() => ws.groupId)
 const group = computed(() => groups.value.find((g) => g.id === gid.value))
 const preview = ref<any>(null)
 const previewErr = ref('')
@@ -76,9 +78,70 @@ const canaryStatus: Record<string, { t: string; c: string }> = {
 }
 const batchStatus: Record<string, string> = { pending: '等待', deploying: '发布中', observing: '观察中', passed: '通过', failed: '失败', rolled_back: '已回滚', rollback_failed: '回滚失败', skipped: '未执行' }
 
+// 首次接管检查单（handoff_pending 时关联最近已应用的导入报告）
+const handoffImport = ref<any>(null)
+async function loadHandoffChecklist() {
+  handoffImport.value = null
+  if (!group.value?.handoff_pending || !session.can('operator')) return
+  try {
+    const list = await api.get<any[]>('/imports', { group_id: gid.value })
+    const applied = list.find((x) => x.applied_at)
+    if (applied) {
+      const review = await api.get(`/imports/${applied.id}/review`).catch(() => null)
+      handoffImport.value = { item: applied, review }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// 历史版本查看 & 任意两版本对比
+const revInspectOpen = ref(false)
+const revInspect = ref<any>(null)
+const revInspectLoading = ref(false)
+async function inspectRevision(revId: string) {
+  revInspectOpen.value = true
+  revInspectLoading.value = true
+  try {
+    revInspect.value = await api.get(`/revisions/${revId}/files`, { group_id: gid.value })
+  } catch (e) {
+    message.error(errMsg(e))
+    revInspectOpen.value = false
+  } finally {
+    revInspectLoading.value = false
+  }
+}
+const diffOpen = ref(false)
+const diffFrom = ref('')
+const diffTo = ref('')
+const diffFilesList = ref<any[]>([])
+const diffLoading = ref(false)
+function openDiffModal() {
+  if (revisions.value.length >= 2) {
+    diffTo.value = revisions.value[0].id
+    diffFrom.value = revisions.value[1].id
+  }
+  diffOpen.value = true
+  runRevisionDiff()
+}
+async function runRevisionDiff() {
+  if (!diffFrom.value || !diffTo.value || diffFrom.value === diffTo.value) {
+    diffFilesList.value = []
+    return
+  }
+  diffLoading.value = true
+  try {
+    const r = await api.get('/revisions/diff', { group_id: gid.value, from: diffFrom.value, to: diffTo.value })
+    diffFilesList.value = r.files || []
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    diffLoading.value = false
+  }
+}
+
 async function loadGroups() {
-  groups.value = await api.get('/node-groups')
-  if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
+  await ws.loadGroups(Number(route.query.group) || undefined)
 }
 async function loadPreview() {
   previewErr.value = ''
@@ -107,7 +170,9 @@ async function loadApproval() {
 }
 async function loadAll() {
   await loadGroups()
-  await Promise.all([loadPreview(), loadHistory(), loadApproval(), loadCanaries()])
+  if (!gid.value) return
+  await Promise.all([loadPreview(), loadHistory(), loadApproval(), loadCanaries(), loadHandoffChecklist()])
+  ws.loadBadges()
 }
 
 let poll: number | undefined
@@ -240,6 +305,7 @@ function show(d: any) {
 }
 
 onMounted(async () => {
+  if (route.query.group) ws.setGroup(Number(route.query.group))
   await loadAll()
   const running = deployments.value.find((d) => d.status === 'APPLYING')
   if (running) watchDeployment(running.id)
@@ -252,11 +318,13 @@ canaryPoll = window.setInterval(() => {
   if (canaries.value.some((c) => c.status === 'running')) loadCanaries().then(loadHistory)
 }, 2000)
 watch(gid, () => {
+  if (!gid.value) return
   active.value = null
   loadPreview()
   loadHistory()
   loadApproval()
   loadCanaries()
+  loadHandoffChecklist()
 })
 
 const changeText: Record<string, string> = { added: '新增', removed: '删除', modified: '修改' }
@@ -277,7 +345,6 @@ function lastDeploy(rev: string) {
         <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: gid, import: route.query.import } }">返回导入报告</router-link>
         <p>每次发布生成一个不可变版本。节点逐台校验、切换、加载并探活，任何一步失败都会自动回滚，流量不中断。</p>
       </div>
-      <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
     <a-alert v-if="group?.management_mode === 'observe'" type="warning" show-icon style="margin-bottom: 16px"
       message="当前节点组是观察接入" description="预览仍可用，但发布、灰度、回滚和审批下发已暂停，不会覆盖节点本地配置。完成导入核对后，请到“节点”页切回控制台托管。" />
@@ -285,6 +352,19 @@ function lastDeploy(rev: string) {
       message="当前节点组是原生兼容配置" description="原生配置及 Lua 可执行任意代码，部分节点可能以 root 执行。管理员提交、另一位管理员检查并审批后才下发；普通站点草稿不会下发。" />
     <a-alert v-if="group?.handoff_pending" type="warning" show-icon style="margin-bottom: 16px"
       message="接管尚未发布" description="本页预览仅比较控制台保存的版本，不能代表节点上的完整独立配置。确认迁移和备份后显式发布；在此之前节点重连不会自动对齐。" />
+    <section v-if="group?.handoff_pending && handoffImport" class="panel" style="border-color: #d9a21b">
+      <div class="phead">
+        <h2>首次接管检查单 <span class="sub">关联导入 #{{ handoffImport.item.id }}（{{ handoffImport.item.file_name }}）</span></h2>
+        <router-link :to="{ path: '/imports', query: { group: gid, import: handoffImport.item.id } }">查看完整导入报告</router-link>
+      </div>
+      <div class="hint" style="margin-top: 0">
+        导入站点：<b>{{ handoffImport.item.sites }}</b> 个（完全 {{ handoffImport.item.full }} / 部分 {{ handoffImport.item.partial }} / 无法 {{ handoffImport.item.failed }}）；
+        <template v-if="handoffImport.review">
+          模型校验通过 <b>{{ handoffImport.review.sites.filter((s: any) => s.valid).length }} / {{ handoffImport.review.sites.length }}</b> 个，
+          待审批片段 <b>{{ handoffImport.review.snippets.filter((s: any) => s.status === 'pending').length }}</b> 个。
+        </template>
+      </div>
+    </section>
 
     <section class="panel req" v-if="pendingReq">
       <div class="phead">
@@ -384,8 +464,11 @@ function lastDeploy(rev: string) {
     </section>
 
     <section class="panel">
-      <h2>版本历史</h2>
-      <a-table :data-source="revisions" row-key="id" :pagination="false" size="middle" :columns="[{ title: '版本', key: 'id', width: 110 }, { title: '说明', key: 'note' }, { title: '最近一次下发', key: 'dep', width: 260 }, { title: '创建', key: 'created', width: 170 }, { title: '', key: 'ops', width: 130 }]">
+      <div class="phead">
+        <h2>版本历史</h2>
+        <a-button v-if="revisions.length >= 2" size="small" @click="openDiffModal">对比任意两版本</a-button>
+      </div>
+      <a-table :data-source="revisions" row-key="id" :pagination="{ pageSize: 15, hideOnSinglePage: true }" size="middle" :columns="[{ title: '版本', key: 'id', width: 120 }, { title: '说明', key: 'note' }, { title: '最近一次下发', key: 'dep', width: 240 }, { title: '创建', key: 'created', width: 170 }, { title: '', key: 'ops', width: 200 }]">
         <template #emptyText><a-empty description="还没有版本" /></template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'id'">
@@ -405,16 +488,55 @@ function lastDeploy(rev: string) {
             <div class="sub">{{ record.created_by }}</div>
           </template>
           <template v-else-if="column.key === 'ops'">
-            <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
-              <a-button size="small">回滚到此版本</a-button>
-            </a-popconfirm>
-            <a-popconfirm v-if="session.can('admin') && group?.management_mode === 'legacy' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`申请回退到兼容版本 ${record.id}？需要另一位管理员审批。`" ok-text="提交申请" @confirm="requestLegacyRollback(record.id)">
-              <a-button size="small" :disabled="!!pendingReq">申请回退</a-button>
-            </a-popconfirm>
+            <a-space size="small">
+              <a-button size="small" type="link" @click="inspectRevision(record.id)">查看配置</a-button>
+              <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
+                <a-button size="small">回滚到此版本</a-button>
+              </a-popconfirm>
+              <a-popconfirm v-if="session.can('admin') && group?.management_mode === 'legacy' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`申请回退到兼容版本 ${record.id}？需要另一位管理员审批。`" ok-text="提交申请" @confirm="requestLegacyRollback(record.id)">
+                <a-button size="small" :disabled="!!pendingReq">申请回退</a-button>
+              </a-popconfirm>
+            </a-space>
           </template>
         </template>
       </a-table>
     </section>
+
+    <a-drawer v-model:open="revInspectOpen" :width="780" :title="`版本 ${revInspect?.revision_id || ''} 配置内容`">
+      <a-spin :spinning="revInspectLoading">
+        <a-collapse v-if="revInspect?.files?.length" :bordered="false" class="files">
+          <a-collapse-panel v-for="f in revInspect.files" :key="f.path">
+            <template #header>
+              <span class="code">{{ f.path }}</span>
+              <span class="sub" style="margin-left: 10px">{{ f.size }} B · {{ f.sha256.slice(0, 12) }}</span>
+            </template>
+            <pre class="code" style="margin: 0; white-space: pre-wrap; font-size: 12px">{{ f.content }}</pre>
+          </a-collapse-panel>
+        </a-collapse>
+      </a-spin>
+    </a-drawer>
+
+    <a-modal v-model:open="diffOpen" title="历史版本对比" :footer="null" width="840px">
+      <a-space style="margin-bottom: 12px" wrap>
+        <span>基准版本</span>
+        <a-select v-model:value="diffFrom" style="width: 150px" :options="revisions.map((r) => ({ value: r.id, label: r.id }))" @change="runRevisionDiff" />
+        <span>→ 目标版本</span>
+        <a-select v-model:value="diffTo" style="width: 150px" :options="revisions.map((r) => ({ value: r.id, label: r.id }))" @change="runRevisionDiff" />
+      </a-space>
+      <a-spin :spinning="diffLoading">
+        <a-empty v-if="!diffFilesList.length" description="两个版本没有差异" />
+        <a-collapse v-else :bordered="false" class="files">
+          <a-collapse-panel v-for="f in diffFilesList" :key="f.path">
+            <template #header>
+              <span class="fchg" :class="f.change">{{ changeText[f.change] }}</span>
+              <span class="code">{{ f.path }}</span>
+            </template>
+            <DiffView v-if="f.diff && f.diff.startsWith('---')" :diff="f.diff" />
+            <div v-else class="nodiff">{{ f.diff || '无文本差异' }}</div>
+          </a-collapse-panel>
+        </a-collapse>
+      </a-spin>
+    </a-modal>
 
     <section class="panel" v-for="cy in canaries.slice(0, 3)" :key="'c' + cy.id">
       <div class="phead">

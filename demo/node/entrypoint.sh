@@ -7,11 +7,17 @@
 set -euo pipefail
 R=${SYEDGE_PREFIX:-/opt/syedge}
 LOG_DIR="$R/logs"; CACHE_DIR="$R/cache"; STATE_DIR="$R/agent"; RUN_DIR="$R/run"
-# 每个容器模拟一台独立的服务器：镜像中没有机器 ID，首次启动时生成一个（同机多实例检查以机器 ID 识别主机）
-if [[ ! -s /etc/machine-id ]]; then
-  tr -d '-' < /proc/sys/kernel/random/uuid > /etc/machine-id
-fi
+# 每个容器模拟一台独立的服务器：将 machine-id 持久化在 STATE_DIR 中，
+# 挂载 ./agent 卷后重建或升级容器时主机标识与节点证书均保持不变。
 mkdir -p "$RUN_DIR" /run/syedge-agent "$LOG_DIR" "$CACHE_DIR" "$STATE_DIR" "$R/conf/releases"
+if [[ ! -s "$STATE_DIR/machine-id" ]]; then
+  if [[ -s /etc/machine-id ]]; then
+    cp /etc/machine-id "$STATE_DIR/machine-id"
+  else
+    tr -d '-' < /proc/sys/kernel/random/uuid > "$STATE_DIR/machine-id"
+  fi
+fi
+cp "$STATE_DIR/machine-id" /etc/machine-id
 chown -R syedge-agent:syedge "$R/conf" /run/syedge-agent "$STATE_DIR"
 chmod 0750 "$STATE_DIR"
 

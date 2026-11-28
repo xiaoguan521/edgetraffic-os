@@ -71,9 +71,10 @@ run() { # 发行版名 镜像 安装命令 [自定义安装根目录]
 }
 deb='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq /pkgs/syedge_*.deb /pkgs/syedge-agent_*.deb /pkgs/syedge-console_*.deb >/dev/null'
 dnf='dnf install -y -q /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm >/dev/null'
-# openEuler 默认启用 everything / EPOL / update 等大仓库，从 CI 所在地区拉取元数据常常超过场景超时：
-# 只启用 OS 基础仓库（依赖都在其中），并对慢速镜像设置超时与最低速率，失败重试而不是卡住
-dnf_oe='dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=20k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm'
+# openEuler 默认启用 everything / EPOL / update 等大仓库，从 CI 所在地区拉取元数据常常超时或触发镜像抖动：
+# 注意 scenarios 表按 "|" 分列，此处不得出现 "|" 字符。
+# 依次尝试默认 OS 仓库、华为云镜像与阿里云镜像（用 --repofrompath 绕过异常 metalink，全程仍做完整依赖解析）。
+dnf_oe='oe_ok=0; for m in "" "https://repo.huaweicloud.com/openeuler" "https://mirrors.aliyun.com/openeuler"; do if [ -z "$m" ]; then if dnf install -y -q --disablerepo="*" --enablerepo=OS --setopt=install_weak_deps=False --setopt=timeout=45 --setopt=minrate=5k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm; then oe_ok=1; break; fi; else if dnf install -y -q --disablerepo="*" --repofrompath="oe-mirror,$m/openEuler-22.03-LTS/OS/$(uname -m)/" --enablerepo=oe-mirror --nogpgcheck --setopt=install_weak_deps=False --setopt=timeout=45 --setopt=minrate=5k --setopt=retries=3 /pkgs/syedge-[0-9]*.rpm /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm; then oe_ok=1; break; fi; fi; done; test "$oe_ok" = 1'
 # CentOS 7 的官方软件源已下线：只安装本产品的软件包（sudo 依赖跳过），重点验证 glibc 2.17 兼容
 el7='rpm -i /pkgs/syedge-[0-9]*.rpm && rpm -i --nodeps /pkgs/syedge-agent-*.rpm /pkgs/syedge-console-*.rpm'
 

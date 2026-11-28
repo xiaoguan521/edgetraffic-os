@@ -5,10 +5,12 @@ import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 
 const session = useSession()
-const groups = ref<any[]>([])
-const gid = ref(0)
+const ws = useWorkspace()
+const groups = computed(() => ws.groups)
+const gid = computed(() => ws.groupId)
 const nodes = ref<any[]>([])
 const packages = ref<any[]>([])
 const upgrades = ref<any[]>([])
@@ -18,10 +20,8 @@ const variant = ref('standard')
 const starting = ref(false)
 
 async function load() {
-  if (!groups.value.length) {
-    groups.value = await api.get('/node-groups')
-    if (!gid.value && groups.value.length) gid.value = groups.value[0].id
-  }
+  if (!ws.groups.length) await ws.loadGroups()
+  if (!gid.value) return
   const [n, p, u, h] = await Promise.all([api.get('/nodes'), session.can('operator') ? api.get('/packages') : Promise.resolve([]), api.get('/upgrades', { group_id: gid.value }), api.get('/hosts')])
   nodes.value = n.filter((x: any) => x.group_id === gid.value && x.status !== 'revoked')
   packages.value = p
@@ -160,7 +160,6 @@ async function rollbackHosts(u: any) {
         <h1>数据面版本</h1>
         <p>导入厂商签名的 {{ brand.id }} 升级包，按节点组分批热升级（二进制热替换，连接不中断）。同一主机上的实例共用一个二进制，按主机分批、主机内依次升级。任一节点探活失败会自动回到旧版本并停止后续主机；回退即用上一版本再升级一次。</p>
       </div>
-      <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
     </div>
 
     <section class="panel">

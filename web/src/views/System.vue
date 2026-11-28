@@ -103,9 +103,23 @@ async function updUser(u: any, body: any) {
     message.error(errMsg(e))
   }
 }
-async function resetPw(u: any) {
-  const pw = window.prompt(`为 ${u.username} 设置临时口令（对方首次登录须修改）`)
-  if (pw) await updUser(u, { reset_password: pw })
+const resetOpen = ref(false)
+const resetTarget = ref<any>(null)
+const resetPassword = ref('')
+function resetPw(u: any) {
+  resetTarget.value = u
+  resetPassword.value = ''
+  resetOpen.value = true
+}
+async function confirmResetPw() {
+  if (!resetTarget.value || !resetPassword.value) return
+  await updUser(resetTarget.value, { reset_password: resetPassword.value })
+  resetOpen.value = false
+  resetPassword.value = ''
+  message.success('临时口令已重置，对方首次登录须修改')
+}
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 async function delUser(u: any) {
   try {
@@ -167,9 +181,17 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <h1>授权与系统</h1>
         <p>授权过期只限制控制台的新增变更，从不停止或干扰节点上的 {{ brand.id }} 流量。</p>
       </div>
+      <a-space wrap size="small">
+        <a-button size="small" @click="scrollToSection('sec-lic')">授权</a-button>
+        <a-button size="small" @click="scrollToSection('sec-api')">API 令牌</a-button>
+        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-users')">用户</a-button>
+        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-pol')">安全策略</a-button>
+        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-sso')">单点登录</a-button>
+        <a-button size="small" @click="scrollToSection('sec-about')">关于</a-button>
+      </a-space>
     </div>
 
-    <div class="cols">
+    <div id="sec-lic" class="cols">
       <section class="panel lic" :class="tone" v-if="lic">
         <div class="state">
           <span class="badge">{{ licenseStateName[lic.state] }}</span>
@@ -218,7 +240,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </section>
     </div>
 
-    <section class="panel">
+    <section id="sec-api" class="panel">
       <div class="uhead">
         <h2>开放 API 令牌</h2>
         <a-button size="small" :disabled="!apiLicensed || !session.writable" @click="tkOpen = true">新建令牌</a-button>
@@ -265,7 +287,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </p>
     </section>
 
-    <section class="panel" v-if="session.can('admin')">
+    <section id="sec-users" class="panel" v-if="session.can('admin')">
       <div class="uhead">
         <h2>用户</h2>
         <a-button size="small" :disabled="!session.writable" @click="uOpen = true">新建用户</a-button>
@@ -296,7 +318,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </a-table>
     </section>
 
-    <section class="panel" v-if="session.can('admin') && pol">
+    <section id="sec-pol" class="panel" v-if="session.can('admin') && pol">
       <div class="uhead">
         <h2>账号安全策略</h2>
         <a-button size="small" :disabled="!session.writable" @click="savePolicy">保存</a-button>
@@ -314,7 +336,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </div>
     </section>
 
-    <section class="panel" v-if="session.can('admin') && oidcCfg">
+    <section id="sec-sso" class="panel" v-if="session.can('admin') && oidcCfg">
       <div class="uhead">
         <h2>OIDC 单点登录</h2>
         <a-button size="small" type="primary" :disabled="!session.writable" @click="saveOIDC">保存</a-button>
@@ -373,11 +395,19 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </a-modal>
     </section>
 
-    <section class="panel about">
+    <section id="sec-about" class="panel about">
       <h2>关于</h2>
       <p>{{ brand.product }}（{{ brand.fullname }}），数据面 {{ brand.proc }}。</p>
       <p class="sub">The {{ brand.proc }} data plane is based on NGINX Open Source (BSD-2-Clause). 完整的第三方许可声明见安装目录 /opt/{{ brand.id }}/share/doc/NOTICE。</p>
     </section>
+
+    <a-modal v-model:open="resetOpen" :title="`重置 ${resetTarget?.username || ''} 的口令`" ok-text="确认重置" :ok-button-props="{ disabled: !resetPassword }" @ok="confirmResetPw">
+      <a-form layout="vertical">
+        <a-form-item label="临时口令" extra="对方首次登录时必须修改口令">
+          <a-input-password v-model:value="resetPassword" autocomplete="new-password" placeholder="请输入符合安全策略的临时口令" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
 
     <a-modal v-model:open="uOpen" title="新建用户" ok-text="创建" @ok="addUser">
       <a-form layout="vertical">

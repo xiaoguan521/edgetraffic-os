@@ -1,24 +1,23 @@
 <script setup lang="ts">
 // IP 集与地域库（P10）：节点组的命名网段集合，被站点访问规则的“IP 集 / 地域”条件引用。
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 
 const session = useSession()
-const groups = ref<any[]>([])
-const gid = ref(0)
+const ws = useWorkspace()
+const gid = computed(() => ws.groupId)
 const rows = ref<any[]>([])
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    if (!groups.value.length) {
-      groups.value = await api.get('/node-groups')
-      if (!gid.value && groups.value.length) gid.value = groups.value[0].id
-    }
+    if (!ws.groups.length) await ws.loadGroups()
+    if (!gid.value) return
     rows.value = await api.get('/ip-sets', { group_id: gid.value })
   } finally {
     loading.value = false
@@ -119,7 +118,6 @@ const columns = [
         <p>在站点的访问规则中按“IP 集 / 地域”放行或拒绝。地域库从 RIR 公开的分配统计文件（delegated-*-extended-latest）按国家 / 地区代码导入，定期重新导入即可更新。</p>
       </div>
       <a-space>
-        <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
         <template v-if="session.can('operator')">
           <a-button :disabled="!session.writable" @click="openEdit()">新建 IP 集</a-button>
           <a-button type="primary" :disabled="!session.writable" @click="(error = ''), (impOpen = true)">导入地域库</a-button>

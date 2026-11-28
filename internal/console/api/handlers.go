@@ -1333,7 +1333,21 @@ type point struct {
 }
 
 func (s *Server) series(groupID uint, minutes int) []point {
-	since := time.Now().Add(-time.Duration(minutes) * time.Minute).Truncate(time.Minute).Unix()
+	return s.seriesFiltered(groupID, 0, minutes)
+}
+
+func (s *Server) seriesFiltered(groupID, nodeID uint, minutes int) []point {
+	bucketSec := int64(60)
+	switch {
+	case minutes > 24*60:
+		bucketSec = 3600
+	case minutes > 6*60:
+		bucketSec = 900
+	case minutes > 180:
+		bucketSec = 300
+	}
+	end := time.Now().Truncate(time.Duration(bucketSec) * time.Second).Unix()
+	since := time.Now().Add(-time.Duration(minutes) * time.Minute).Truncate(time.Duration(bucketSec) * time.Second).Unix()
 	type agg struct {
 		Minute   int64
 		Requests uint64
@@ -1347,17 +1361,27 @@ func (s *Server) series(groupID uint, minutes int) []point {
 	sel := m.WithContext(bg).Select(m.Minute, m.Requests.Sum().As("requests"), m.S5xx.Sum().As("s5xx"),
 		m.S4xx.Sum().As("s4xx"), m.P95ms.Max().As("p95ms")).
 		Where(m.Minute.Gte(since)).Group(m.Minute).Order(m.Minute)
-	if groupID != 0 {
+	if nodeID != 0 {
+		sel = sel.Where(m.NodeID.Eq(nodeID))
+	} else if groupID != 0 {
 		sel = sel.Where(m.Columns(m.NodeID).In(nd.WithContext(bg).Select(nd.ID).Where(nd.GroupID.Eq(groupID))))
 	}
 	_ = sel.Scan(&rows)
 	idx := map[int64]agg{}
 	for _, r := range rows {
-		idx[r.Minute] = r
+		b := (r.Minute / bucketSec) * bucketSec
+		cur := idx[b]
+		cur.Minute = b
+		cur.Requests += r.Requests
+		cur.S5xx += r.S5xx
+		cur.S4xx += r.S4xx
+		if r.P95ms > cur.P95ms {
+			cur.P95ms = r.P95ms
+		}
+		idx[b] = cur
 	}
-	out := make([]point, 0, minutes)
-	end := time.Now().Truncate(time.Minute).Unix()
-	for m := since; m < end; m += 60 {
+	out := make([]point, 0, int((end-since)/bucketSec)+1)
+	for m := since; m < end; m += bucketSec {
 		r := idx[m]
 		out = append(out, point{Minute: m, Requests: r.Requests, S5xx: r.S5xx, S4xx: r.S4xx, P95ms: r.P95ms})
 	}
@@ -1366,10 +1390,11 @@ func (s *Server) series(groupID uint, minutes int) []point {
 
 func (s *Server) metrics(c *gin.Context) {
 	minutes, _ := strconv.Atoi(c.DefaultQuery("minutes", "30"))
-	if minutes <= 0 || minutes > 24*60 {
+	if minutes <= 0 || minutes > 7*24*60 {
 		minutes = 30
 	}
-	c.JSON(http.StatusOK, gin.H{"series": s.series(queryGroup(c), minutes)})
+	nodeID, _ := strconv.ParseUint(c.Query("node_id"), 10, 64)
+	c.JSON(http.StatusOK, gin.H{"series": s.seriesFiltered(queryGroup(c), uint(nodeID), minutes)})
 }
 
 func (s *Server) dashboard(c *gin.Context) {
@@ -1411,8 +1436,26 @@ func (s *Server) listAudit(c *gin.Context) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
+	}
 	a := s.q().AuditLog
-	rows, err := a.WithContext(c.Request.Context()).Order(a.ID.Desc()).Limit(limit).Find()
+	sel := a.WithContext(c.Request.Context()).Order(a.ID.Desc())
+	if u := strings.TrimSpace(c.Query("username")); u != "" {
+		sel = sel.Where(a.Username.Eq(u))
+	}
+	if act := strings.TrimSpace(c.Query("action")); act != "" {
+		sel = sel.Where(a.Action.Eq(act))
+	}
+	if res := strings.TrimSpace(c.Query("result")); res != "" {
+		sel = sel.Where(a.Result.Eq(res))
+	}
+	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
+		pat := "%" + kw + "%"
+		sel = sel.Where(a.WithContext(c.Request.Context()).Where(a.Username.Like(pat)).Or(a.Action.Like(pat)).Or(a.ObjectID.Like(pat)).Or(a.Detail.Like(pat)))
+	}
+	rows, err := sel.Offset(offset).Limit(limit).Find()
 	if err != nil {
 		failErr(c, err)
 		return

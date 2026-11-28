@@ -45,6 +45,14 @@ server {
 {{- end }}
 
     include  snippets/security.conf;
+{{- if $s.ClientMaxBodySize }}
+    client_max_body_size  {{ $s.ClientMaxBodySize }};
+{{- end }}
+{{- if $s.Gzip }}
+    gzip  on;
+    gzip_min_length  1024;
+    gzip_types  text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+{{- end }}
 {{- if not (and $s.HTTPS $s.ForceHTTPS) }}
     include  snippets/acme-challenge.conf;
 {{- end }}
@@ -64,6 +72,9 @@ server {
 {{- else }}
         alias  {{ $.P.SitesDir }}{{ $s.Name }}/{{ routeDir $r }}/;
         index  index.html;
+{{- if $r.Static.SPA }}
+        try_files  $uri  $uri/  {{ $r.Path }}index.html;
+{{- end }}
 {{- if $r.Static.Files }}
         expires  1h;
         etag     on;
@@ -83,7 +94,24 @@ server {
 {{- else }}
         proxy_set_header  Connection         "";
 {{- end }}
-        proxy_pass        http://up_{{ $r.Proxy.Upstream }};
+{{- if gt $r.Proxy.ConnectTimeout 0 }}
+        proxy_connect_timeout  {{ $r.Proxy.ConnectTimeout }}s;
+{{- end }}
+{{- if gt $r.Proxy.ReadTimeout 0 }}
+        proxy_read_timeout     {{ $r.Proxy.ReadTimeout }}s;
+{{- end }}
+{{- if gt $r.Proxy.SendTimeout 0 }}
+        proxy_send_timeout     {{ $r.Proxy.SendTimeout }}s;
+{{- end }}
+{{- if and $r.Proxy.Buffering (not (derefBool $r.Proxy.Buffering)) }}
+        proxy_buffering        off;
+        proxy_cache            off;
+{{- end }}
+{{- if $r.Proxy.HTTPS }}
+        proxy_ssl_server_name  on;
+        proxy_ssl_name         $host;
+{{- end }}
+        proxy_pass        {{ if $r.Proxy.HTTPS }}https{{ else }}http{{ end }}://up_{{ $r.Proxy.Upstream }}{{ if $r.Proxy.StripPrefix }}/{{ end }};
 {{- else if eq $r.Mode "redirect" }}
         return  {{ $r.Redirect.Code }}  {{ $r.Redirect.To }};
 {{- else if eq $r.Mode "deny" }}

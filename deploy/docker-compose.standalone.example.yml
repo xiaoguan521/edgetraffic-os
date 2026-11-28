@@ -39,6 +39,9 @@ services:
       - ./conf:/home/atwasoft/syedge/conf
       # 日志：error.log、access.json（宿主机可直接查看、交给日志采集）。
       - ./logs:/home/atwasoft/syedge/logs
+      # 节点身份与状态目录：纯独立模式为空；后续接入控制台时用于持久化 node.json、mTLS 证书与 machine-id，
+      # 确保重建容器或升级镜像后不掉线。
+      - ./agent:/home/atwasoft/syedge/agent
       # 站点静态文件（可选）：配置里 root 指向 /home/atwasoft/syedge/html/xxx
       # - ./html:/home/atwasoft/syedge/html:ro
       # 你自己的 Lua 库（可选，node-lua / node-gm-lua）：require("hello") 加载
@@ -75,5 +78,15 @@ services:
 #     docker compose exec syedge bash /usr/local/share/syedge-lua/install.sh --standalone-disable
 #   国密证书与指令见仓库 docs/gm.md，Lua 用法见 docs/lua.md。
 #
-# 升级：保留 ./conf ./logs，把 ETOS_TAG 改成新版本，docker compose pull && docker compose up -d；配置不变。
+# 升级：保留 ./conf ./logs ./agent，把 ETOS_TAG 改成新版本，docker compose pull && docker compose up -d；配置与节点身份不变。
+#
+# 后续接入控制台管理（确保上面已挂载 ./agent 卷）：
+#   1. 在控制台“节点”页点击“接管独立节点”并切换运行环境为“Docker 容器”，先将节点组设为“观察接入”或“兼容配置”。
+#   2. 容器内自检实例档案与 Lua 情况：
+#        docker compose exec syedge syedge-agent preflight
+#   3. 执行控制台生成的注册命令（不需要 systemctl，entrypoint 会自动拉起 agent）：
+#        docker compose exec syedge syedge-agent enroll -server <控制台:9443> -token <令牌> -ca-fingerprint <指纹> -replace-local-config
+#   4. 导出配置上传控制台“配置导入”或“兼容配置”：
+#        docker compose exec syedge syedge-agent export-config --output /tmp/syedge-export.tar.gz
+#        docker compose cp syedge:/tmp/syedge-export.tar.gz ./syedge-export.tar.gz
 # 旧版（≤0.4.8）布局的目录与新布局不兼容，请用新目录重新开始。
