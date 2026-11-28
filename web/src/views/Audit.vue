@@ -55,6 +55,7 @@ const actionName: Record<string, string> = {
   'node.update': '编辑/迁移节点',
   'node.restore': '恢复节点配置',
   'node.sync': '对齐节点版本',
+  'node.tail_log': '查看节点实时日志',
   'node.revoke': '吊销节点',
   'site.create': '新建站点',
   'site.update': '修改站点',

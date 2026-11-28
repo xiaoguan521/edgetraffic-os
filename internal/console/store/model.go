@@ -48,30 +48,32 @@ type NodeGroup struct {
 }
 
 type Node struct {
-	ID              uint       `gorm:"primaryKey" json:"id"`
-	GroupID         uint       `gorm:"index" json:"group_id"`
-	Name            string     `json:"name"`
-	Hostname        string     `json:"hostname"`
-	HostKey         string     `gorm:"index;size:64" json:"host_key"` // /etc/machine-id 的 sha256（agent 注册与 Hello 上报），同机实例的冲突检查以它为单位
-	RemoteAddr      string     `json:"remote_addr"`
-	CertSerial      string     `json:"-"`
-	Status          string     `gorm:"size:16" json:"status"` // online | offline | revoked
-	AgentVersion    string     `json:"agent_version"`
-	Arch            string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
-	SyappVersion    string     `json:"syapp_version"`
-	RunningVersion  string     `gorm:"size:32" json:"running_version"` // 本实例 worker 实际运行的版本（同机实例共用二进制时可能与 syapp_version 不同）
-	SyappSHA256     string     `json:"syapp_sha256"`
-	TLSLib          string     `gorm:"size:16" json:"tls_lib"`   // syedge -V 中的 TLS 库：openssl | tongsuo（国密变体）
-	LuaAddon        string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syedge-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）
-	AppliedRevision string     `gorm:"size:16" json:"applied_revision"`
-	TreeHash        string     `json:"tree_hash"`
-	Drifted         bool       `json:"drifted"`
-	CPUPercent      float64    `json:"cpu_percent"`
-	MemUsedBytes    uint64     `json:"mem_used_bytes"`
-	ActiveConns     uint64     `json:"active_connections"`
-	RequestsTotal   uint64     `json:"requests_total"`
-	LastSeenAt      *time.Time `json:"last_seen_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID               uint       `gorm:"primaryKey" json:"id"`
+	GroupID          uint       `gorm:"index" json:"group_id"`
+	Name             string     `json:"name"`
+	Hostname         string     `json:"hostname"`
+	HostKey          string     `gorm:"index;size:64" json:"host_key"` // /etc/machine-id 的 sha256（agent 注册与 Hello 上报），同机实例的冲突检查以它为单位
+	RemoteAddr       string     `json:"remote_addr"`
+	CertSerial       string     `json:"-"`
+	Status           string     `gorm:"size:16" json:"status"` // online | offline | revoked
+	AgentVersion     string     `json:"agent_version"`
+	Arch             string     `gorm:"size:16" json:"arch"` // agent 上报（amd64 | arm64），旧版 agent 为空
+	SyappVersion     string     `json:"syapp_version"`
+	RunningVersion   string     `gorm:"size:32" json:"running_version"` // 本实例 worker 实际运行的版本（同机实例共用二进制时可能与 syapp_version 不同）
+	SyappSHA256      string     `json:"syapp_sha256"`
+	TLSLib           string     `gorm:"size:16" json:"tls_lib"`   // syedge -V 中的 TLS 库：openssl | tongsuo（国密变体）
+	LuaAddon         string     `gorm:"size:40" json:"lua_addon"` // 已安装的 syedge-lua 附加包：<包版本>/<基础变体>，未安装为空（P10）
+	AppliedRevision  string     `gorm:"size:16" json:"applied_revision"`
+	TreeHash         string     `json:"tree_hash"`
+	Drifted          bool       `json:"drifted"`
+	CPUPercent       float64    `json:"cpu_percent"`
+	MemUsedBytes     uint64     `json:"mem_used_bytes"`
+	DiskUsedPercent  float64    `json:"disk_used_percent"`
+	DiskInodePercent float64    `json:"disk_inode_percent"`
+	ActiveConns      uint64     `json:"active_connections"`
+	RequestsTotal    uint64     `json:"requests_total"`
+	LastSeenAt       *time.Time `json:"last_seen_at"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type EnrollToken struct {

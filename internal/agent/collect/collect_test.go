@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -77,5 +79,97 @@ func TestReadVersion(t *testing.T) {
 		if got != c.want || (c.want == "") != (err != nil) {
 			t.Errorf("%d %q: got %q, %v", c.code, c.body, got, err)
 		}
+	}
+}
+
+func TestDiskUsage(t *testing.T) {
+	used, inode, err := DiskUsage(t.TempDir())
+	if err != nil {
+		t.Fatalf("DiskUsage: %v", err)
+	}
+	if used < 0 || used > 100 || inode < 0 || inode > 100 {
+		t.Fatalf("unexpected disk usage: used=%v inode=%v", used, inode)
+	}
+}
+
+func TestTailFileInitialAppendRotationAndTruncate(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "access.json")
+	if err := os.WriteFile(p, []byte("line-1\nline-2\nline-3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var got []string
+	notify := make(chan struct{}, 32)
+	done := make(chan error, 1)
+	go func() {
+		done <- TailFile(ctx, p, TailOptions{
+			InitialLines: 2,
+			MaxLineBytes: 24,
+			PollInterval: 30 * time.Millisecond,
+		}, func(lines []string) {
+			mu.Lock()
+			got = append(got, lines...)
+			mu.Unlock()
+			select {
+			case notify <- struct{}{}:
+			default:
+			}
+		})
+	}()
+
+	waitFor := func(wantSub string) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			mu.Lock()
+			joined := strings.Join(got, "\n")
+			mu.Unlock()
+			if strings.Contains(joined, wantSub) {
+				return
+			}
+			select {
+			case <-notify:
+			case <-deadline:
+				t.Fatalf("timed out waiting for %q; got:\n%s", wantSub, joined)
+			}
+		}
+	}
+
+	// 1. 初始回放末尾 2 行（不包含 line-1）
+	waitFor("line-3")
+	mu.Lock()
+	initJoined := strings.Join(got, "\n")
+	mu.Unlock()
+	if strings.Contains(initJoined, "line-1") || !strings.Contains(initJoined, "line-2") {
+		t.Fatalf("unexpected initial lines: %q", initJoined)
+	}
+
+	// 2. 增量写入 + 超长行截断
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("live-4\n" + strings.Repeat("x", 40) + "\n")
+	_ = f.Close()
+	waitFor("live-4")
+	waitFor("...[truncated]")
+
+	// 3. 模拟日志轮转（重命名旧文件并创建新文件）
+	if err := os.Rename(p, p+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("rotated-1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("rotated-1")
+
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

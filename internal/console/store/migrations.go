@@ -34,6 +34,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202611050001_instance_profile", Migrate: migrateInstanceProfile},
 		{ID: "202611050002_running_version", Migrate: migrateRunningVersion},
 		{ID: "202611180001_token_version", Migrate: migrateTokenVersion},
+		{ID: "202611280001_node_disk_usage", Migrate: migrateNodeDiskUsage},
 	}
 }
 
@@ -591,4 +592,14 @@ func migrateTokenVersion(tx *gorm.DB) error {
 		TokenVersion int `gorm:"not null;default:0"`
 	}
 	return tx.AutoMigrate(&User{})
+}
+
+// ---- 202611280001_node_disk_usage：边缘节点磁盘与 inode 使用率上报 ----
+
+func migrateNodeDiskUsage(tx *gorm.DB) error {
+	type Node struct {
+		DiskUsedPercent  float64
+		DiskInodePercent float64
+	}
+	return tx.AutoMigrate(&Node{})
 }

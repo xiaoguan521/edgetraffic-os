@@ -67,6 +67,10 @@ type state struct {
 	CommandPub []byte `json:"command_pub"`
 }
 
+type tailEntry struct {
+	cancel context.CancelFunc
+}
+
 // Agent 是一个边缘节点探针实例。
 type Agent struct {
 	C       Config
@@ -78,6 +82,7 @@ type Agent struct {
 	verifier *cmdsig.Verifier
 	licRaw   string
 	licKeys  license.KeyRing // 为空时使用 license.BuiltinKeyRing()
+	tails    map[string]*tailEntry
 
 	lastDrift string
 	exit      func(code int) // 自升级后退出（测试可替换），默认 os.Exit // 最近一次上报的漂移文件状态指纹（heartbeat goroutine 独占）
@@ -465,6 +470,11 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 		case now := <-t.C:
 			cpu, mem := host.Sample()
 			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem, LuaAddon: a.luaAddon(), RunningVersion: a.runningVersion(ctx)}
+			if dir := a.diskDir(); dir != "" {
+				if used, inode, err := collect.DiskUsage(dir); err == nil {
+					hb.DiskUsedPercent, hb.DiskInodePercent = used, inode
+				}
+			}
 			if st, err := collect.ReadStub(ctx, a.C.StatusURL); err == nil {
 				hb.ActiveConnections, hb.RequestsTotal = st.Active, st.Requests
 			}
@@ -609,9 +619,103 @@ func (a *Agent) handle(ctx context.Context, client agentv1.AgentGatewayClient, m
 		a.handleUpgrade(ctx, client, b.Upgrade, reply, send)
 	case *agentv1.ServerMessage_UpgradeAgent:
 		a.handleAgentUpgrade(ctx, client, b.UpgradeAgent, reply)
+	case *agentv1.ServerMessage_Tail:
+		a.handleTail(ctx, b.Tail, reply, send)
 	default:
 		reply(agentv1.CommandResult_REJECTED, "command not supported by this agent", "")
 	}
+}
+
+const (
+	maxTailSeconds    = 300
+	maxConcurrentTail = 4
+)
+
+func (a *Agent) diskDir() string {
+	if a.C.AccessLog != "" {
+		return filepath.Dir(a.C.AccessLog)
+	}
+	if a.C.Apply.ErrorLog != "" {
+		return filepath.Dir(a.C.Apply.ErrorLog)
+	}
+	return a.C.Apply.ConfRoot
+}
+
+func (a *Agent) handleTail(ctx context.Context, req *agentv1.TailLog, reply func(agentv1.CommandResult_Status, string, string), send func(*agentv1.AgentMessage)) {
+	if req == nil || req.TailId == "" || len(req.TailId) > 64 {
+		reply(agentv1.CommandResult_REJECTED, "invalid tail_id", "")
+		return
+	}
+	// seconds <= 0 表示主动停止指定 tail_id 的实时日志流
+	if req.Seconds <= 0 {
+		a.mu.Lock()
+		if entry := a.tails[req.TailId]; entry != nil {
+			entry.cancel()
+			delete(a.tails, req.TailId)
+		}
+		a.mu.Unlock()
+		reply(agentv1.CommandResult_APPLIED, "tail stopped", "")
+		return
+	}
+	var path, fileLabel string
+	switch req.File {
+	case agentv1.TailLog_ACCESS:
+		path = a.C.AccessLog
+		fileLabel = "access.json"
+	case agentv1.TailLog_ERROR:
+		path = a.C.Apply.ErrorLog
+		fileLabel = "error.log"
+	default:
+		reply(agentv1.CommandResult_REJECTED, "unsupported log file", "")
+		return
+	}
+	if path == "" {
+		reply(agentv1.CommandResult_INVALID, "log path is not configured on this agent", "")
+		return
+	}
+	secs := int(req.Seconds)
+	if secs > maxTailSeconds {
+		secs = maxTailSeconds
+	}
+	a.mu.Lock()
+	if a.tails == nil {
+		a.tails = map[string]*tailEntry{}
+	}
+	if prev := a.tails[req.TailId]; prev != nil {
+		prev.cancel()
+		delete(a.tails, req.TailId)
+	}
+	if len(a.tails) >= maxConcurrentTail {
+		a.mu.Unlock()
+		reply(agentv1.CommandResult_REJECTED, "too many concurrent log streams on this node", "")
+		return
+	}
+	tctx, cancel := context.WithTimeout(ctx, time.Duration(secs)*time.Second)
+	entry := &tailEntry{cancel: cancel}
+	a.tails[req.TailId] = entry
+	a.mu.Unlock()
+
+	reply(agentv1.CommandResult_APPLIED, "tail started", "")
+
+	tailID := req.TailId
+	go func() {
+		defer func() {
+			cancel()
+			a.mu.Lock()
+			if a.tails[tailID] == entry {
+				delete(a.tails, tailID)
+			}
+			a.mu.Unlock()
+			// 发送空行块通知控制台本次日志流已自然结束
+			send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Log{Log: &agentv1.LogChunk{TailId: tailID, File: fileLabel}}})
+		}()
+		_ = collect.TailFile(tctx, path, collect.TailOptions{}, func(lines []string) {
+			if len(lines) == 0 {
+				return
+			}
+			send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Log{Log: &agentv1.LogChunk{TailId: tailID, File: fileLabel, Lines: lines}}})
+		})
+	}()
 }
 
 // certOnly 判断新版本相对线上版本是否只替换了证书文件。

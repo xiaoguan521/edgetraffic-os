@@ -384,3 +384,44 @@ func TestEvaluateHostVersionMixed(t *testing.T) {
 		t.Fatalf("independent instance caused mixed-version alert: %+v", evs)
 	}
 }
+
+func TestEvaluateNodeDiskUsage(t *testing.T) {
+	s, _ := newSvc(t, true)
+	if err := s.SaveRule(KindNodeDiskUsage, true, 85, nil, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	q := query.Use(s.Store.DB)
+	ctx := context.Background()
+	nodes := []store.Node{
+		{Name: "edge-high-disk", Status: "online", DiskUsedPercent: 91.2, DiskInodePercent: 20},
+		{Name: "edge-high-inode", Status: "online", DiskUsedPercent: 40.0, DiskInodePercent: 88.5},
+		{Name: "edge-offline", Status: "offline", DiskUsedPercent: 99.0},
+		{Name: "edge-healthy", Status: "online", DiskUsedPercent: 32.0, DiskInodePercent: 10.0},
+	}
+	for i := range nodes {
+		if err := q.Node.WithContext(ctx).Create(&nodes[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firing := func() []store.AlertEvent {
+		var evs []store.AlertEvent
+		s.Store.DB.Where("status = ? AND kind = ?", "firing", KindNodeDiskUsage).Find(&evs)
+		return evs
+	}
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	evs := firing()
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 firing node disk alerts, got %+v", evs)
+	}
+	// 清理磁盘后自动恢复
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.Name.Eq("edge-high-disk")).Update(q.Node.DiskUsedPercent, 50.0)
+	_, _ = q.Node.WithContext(ctx).Where(q.Node.Name.Eq("edge-high-inode")).Update(q.Node.DiskInodePercent, 30.0)
+	if err := s.Evaluate(); err != nil {
+		t.Fatal(err)
+	}
+	if evs := firing(); len(evs) != 0 {
+		t.Fatalf("expected node disk alerts to resolve, got %+v", evs)
+	}
+}

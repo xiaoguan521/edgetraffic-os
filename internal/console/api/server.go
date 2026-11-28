@@ -202,6 +202,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/nodes/:id/restore", role(store.RoleReleaser), s.restoreNode) // 漂移恢复：与回滚一样在过期状态下可用
 	a.GET("/nodes/:id/drift", role(store.RoleOperator), s.nodeDrift)
 	a.POST("/nodes/:id/drift/adopt", role(store.RoleOperator), s.writable, s.adoptDrift)
+	a.GET("/nodes/:id/logs/stream", role(store.RoleOperator), s.streamNodeLogs)
 
 	a.GET("/sites", s.listSites)
 	a.GET("/sites/:id", s.getSite)

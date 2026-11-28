@@ -16,6 +16,7 @@ const unit: Record<string, string> = {
   deployment_rolled_back: '',
   backup_stale: '小时',
   disk_usage: '%',
+  node_disk_usage: '%',
   host_version_mixed: '',
 }
 const hint: Record<string, string> = {
@@ -26,6 +27,7 @@ const hint: Record<string, string> = {
   deployment_rolled_back: '近期发布失败或灰度发布触发自动回滚',
   backup_stale: '距离控制台上一次成功加密备份超过该时长',
   disk_usage: '控制台数据目录磁盘空间或 inode 使用率达到该阈值',
+  node_disk_usage: '在线边缘节点日志/运行目录所在分区磁盘空间或 inode 使用率达到该阈值',
   host_version_mixed: '同一台主机上的多个实例运行着不同的数据面版本',
 }
 
