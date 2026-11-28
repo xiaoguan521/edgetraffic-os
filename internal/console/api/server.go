@@ -141,6 +141,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.GET("/node-groups/:id/management-mode", s.getManagementMode)
 	a.PUT("/node-groups/:id/management-mode", role(store.RoleOperator), s.writable, s.setManagementMode)
 	a.POST("/node-groups/:id/copy-from", role(store.RoleOperator), s.writable, s.copyGroupConfig)
+	a.POST("/keepalived/render", role(store.RoleOperator), s.renderKeepalived)
 	a.POST("/node-groups/:id/enroll", role(store.RoleOperator), s.writable, s.enrollToken)
 	a.GET("/node-groups/:id/preview", s.preview)
 	a.POST("/node-groups/:id/publish", role(store.RoleReleaser), s.writable, s.publish)

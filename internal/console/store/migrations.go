@@ -35,6 +35,7 @@ func migrations() []*gormigrate.Migration {
 		{ID: "202611050002_running_version", Migrate: migrateRunningVersion},
 		{ID: "202611180001_token_version", Migrate: migrateTokenVersion},
 		{ID: "202611280001_node_disk_usage", Migrate: migrateNodeDiskUsage},
+		{ID: "202611280002_node_vip_ha", Migrate: migrateNodeVIPHA},
 	}
 }
 
@@ -600,6 +601,21 @@ func migrateNodeDiskUsage(tx *gorm.DB) error {
 	type Node struct {
 		DiskUsedPercent  float64
 		DiskInodePercent float64
+	}
+	return tx.AutoMigrate(&Node{})
+}
+
+// ---- 202611280002_node_vip_ha：节点组入口高可用 VIP 与节点网卡 IP 上报 ----
+
+func migrateNodeVIPHA(tx *gorm.DB) error {
+	type NodeGroup struct {
+		VIPs string `gorm:"column:vips"`
+	}
+	type Node struct {
+		LocalIPs string `gorm:"column:local_ips"`
+	}
+	if err := tx.AutoMigrate(&NodeGroup{}); err != nil {
+		return err
 	}
 	return tx.AutoMigrate(&Node{})
 }
