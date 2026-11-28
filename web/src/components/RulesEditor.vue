@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { brand } from '../brand'
 // 访问规则（P10 规则积木）：条件全部满足时执行动作。原生规则所有版本可用；JWT 需要 lua 授权与节点的 syedge-lua 附加包。
-import { computed } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { message } from 'antdv-next'
+import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
 import RuleAction from './RuleAction.vue'
 
@@ -22,9 +24,63 @@ export interface Rule {
 }
 
 const rules = defineModel<Rule[]>({ required: true })
-const props = defineProps<{ upstreams: any[]; ipSets: any[] }>()
+const props = defineProps<{ upstreams: any[]; ipSets: any[]; templateMode?: boolean }>()
 const session = useSession()
 const luaLicensed = computed(() => !!session.license?.features?.includes('lua'))
+
+// 公共规则模板导入与另存
+const templates = ref<any[]>([])
+const pickTplOpen = ref(false)
+const selectedTpl = ref('')
+const saveTplOpen = ref(false)
+const saveTplForm = reactive({ name: '', description: '' })
+const savingTpl = ref(false)
+
+async function loadTemplates() {
+  if (props.templateMode) return
+  templates.value = await api.get('/rule-templates').catch(() => [])
+}
+onMounted(loadTemplates)
+
+function applyTemplate() {
+  const tpl = templates.value.find((t) => t.name === selectedTpl.value)
+  if (!tpl) return
+  const existing = new Set(rules.value.map((r) => r.name))
+  for (const raw of tpl.rules || []) {
+    const r = JSON.parse(JSON.stringify(raw)) as Rule
+    let name = r.name || 'rule'
+    let idx = 2
+    while (existing.has(name)) {
+      name = `${r.name}-${idx++}`
+    }
+    r.name = name
+    existing.add(name)
+    r.conditions = (r.conditions || []).map((c) => ({ ...c, negate: !!c.negate }))
+    rules.value.push(r)
+  }
+  pickTplOpen.value = false
+  selectedTpl.value = ''
+  message.success(`已导入模板 ${tpl.name}（${(tpl.rules || []).length} 条规则）`)
+}
+
+async function saveAsTemplate() {
+  savingTpl.value = true
+  try {
+    await api.post('/rule-templates', {
+      name: saveTplForm.name.trim(),
+      description: saveTplForm.description.trim(),
+      rules: rules.value,
+    })
+    saveTplOpen.value = false
+    Object.assign(saveTplForm, { name: '', description: '' })
+    message.success('已保存为公共规则模板，可在其他节点组复用')
+    await loadTemplates()
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    savingTpl.value = false
+  }
+}
 
 const kinds = [
   { value: 'ip', label: 'IP / 网段' },
@@ -110,7 +166,11 @@ const valueNeeded = (c: Condition) => c.op !== 'exists'
         <h3>访问规则</h3>
         <span class="sub">条件全部满足时执行动作。执行顺序：拒绝 / 跳转 → 限速 → 外部鉴权 → JWT；ACME 证书验证不受影响。</span>
       </div>
-      <a-button size="small" @click="addRule">添加规则</a-button>
+      <a-space size="small">
+        <a-button v-if="!templateMode && templates.length" size="small" @click="pickTplOpen = true">从公共模板导入</a-button>
+        <a-button v-if="!templateMode && rules.length && session.can('operator') && session.writable" size="small" @click="saveTplOpen = true">另存为模板</a-button>
+        <a-button size="small" @click="addRule">添加规则</a-button>
+      </a-space>
     </div>
     <a-alert v-if="hasJWT" type="info" show-icon class="lua-note"
       :message="`JWT 规则需要节点组内每个节点都安装与其 ${brand.id} 版本匹配的 ${brand.lua} 附加包；未安装时预览与发布会列出缺少附加包的节点。`" />
@@ -131,7 +191,7 @@ const valueNeeded = (c: Condition) => c.op !== 'exists'
           <a-select v-model:value="c.cidrs" mode="tags" :open="false" class="grow code" placeholder="10.0.0.0/8 或 203.0.113.7，回车添加" />
         </template>
         <template v-else-if="c.kind === 'ip_set'">
-          <a-select v-model:value="c.set" class="grow" placeholder="选择 IP 集" :options="ipSets.map((s) => ({ value: s.name, label: `${s.label || s.name}（${s.count} 条）` }))">
+          <a-select v-model:value="c.set" class="grow" placeholder="选择 IP 集" :options="ipSets.map((s) => ({ value: s.name, label: `${s.global || s.group_id === 0 ? '[全局] ' : ''}${s.label || s.name}（${s.count} 条）` }))">
             <template #notFoundContent><router-link to="/ip-sets">先创建 IP 集或导入地域库</router-link></template>
           </a-select>
         </template>
@@ -152,6 +212,22 @@ const valueNeeded = (c: Condition) => c.op !== 'exists'
       <RuleAction v-model:action="rule.action" :upstreams="upstreams" :lua-licensed="luaLicensed" @type="(t: string) => setAction(rule, t)" />
     </div>
     <a-empty v-if="!rules.length" description="没有访问规则" :image="false" />
+
+    <a-modal v-model:open="pickTplOpen" title="从公共规则模板导入" ok-text="追加到当前站点" :ok-button-props="{ disabled: !selectedTpl }" @ok="applyTemplate">
+      <a-form layout="vertical">
+        <a-form-item label="选择模板">
+          <a-select v-model:value="selectedTpl" placeholder="选择公共规则模板" :options="templates.map((t) => ({ value: t.name, label: `${t.name}${t.description ? ` — ${t.description}` : ''}（${(t.rules || []).length} 条）` }))" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal v-model:open="saveTplOpen" title="另存为公共规则模板" ok-text="保存" :confirm-loading="savingTpl" :ok-button-props="{ disabled: !saveTplForm.name.trim() }" @ok="saveAsTemplate">
+      <p class="sub" style="margin-top: 0">将当前 {{ rules.length }} 条规则保存为跨组共享模板（JWT 密钥不会存入模板）。</p>
+      <a-form layout="vertical">
+        <a-form-item label="模板名称" extra="小写字母、数字、连字符"><a-input v-model:value="saveTplForm.name" class="code" placeholder="api-rate-guard" /></a-form-item>
+        <a-form-item label="说明（可选）"><a-input v-model:value="saveTplForm.description" /></a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 

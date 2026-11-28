@@ -800,8 +800,50 @@ func (s *Service) Evaluate() error {
 	return nil
 }
 
+const (
+	silenceUntilKey  = "alert_silence_until"
+	silenceReasonKey = "alert_silence_reason"
+)
+
+// Silence 返回当前维护静默窗口的截止时间与原因；未静默或已过期时返回零时间。
+func (s *Service) Silence() (time.Time, string) {
+	if s.Store == nil {
+		return time.Time{}, ""
+	}
+	raw, err := s.Store.GetKV(silenceUntilKey)
+	if err != nil || raw == "" {
+		return time.Time{}, ""
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil || !t.After(s.now()) {
+		return time.Time{}, ""
+	}
+	reason, _ := s.Store.GetKV(silenceReasonKey)
+	return t, reason
+}
+
+// SetSilence 设置或清除告警维护静默窗口（零时间表示取消静默）。
+func (s *Service) SetSilence(until time.Time, reason string) error {
+	if until.IsZero() {
+		if err := s.Store.SetKV(silenceUntilKey, ""); err != nil {
+			return err
+		}
+		return s.Store.SetKV(silenceReasonKey, "")
+	}
+	if err := s.Store.SetKV(silenceUntilKey, until.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return s.Store.SetKV(silenceReasonKey, strings.TrimSpace(reason))
+}
+
 // notify 发送到规则关联的启用通道，返回结果摘要。
 func (s *Service) notify(r *store.AlertRule, m Message) string {
+	if until, reason := s.Silence(); !until.IsZero() {
+		if reason != "" {
+			return "已静默（" + reason + "）"
+		}
+		return "已静默（维护窗口）"
+	}
 	if r == nil || r.ChannelIDs == "" {
 		return "未配置通道"
 	}

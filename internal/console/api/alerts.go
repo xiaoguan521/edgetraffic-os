@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -41,8 +42,49 @@ func (s *Server) alertsGet(c *gin.Context) {
 	if evs == nil {
 		evs = []*store.AlertEvent{}
 	}
+	silenceUntil, silenceReason := s.Alerts.Silence()
+	var silenceAt *string
+	if !silenceUntil.IsZero() {
+		ts := silenceUntil.Format(time.RFC3339)
+		silenceAt = &ts
+	}
 	c.JSON(http.StatusOK, gin.H{"rules": rules, "channels": views, "events": evs, "kind_names": alerts.KindName,
-		"im_licensed": s.Alerts.IMAllow == nil || s.Alerts.IMAllow()})
+		"im_licensed":   s.Alerts.IMAllow == nil || s.Alerts.IMAllow(),
+		"silence_until": silenceAt, "silence_reason": silenceReason})
+}
+
+func (s *Server) setAlertSilence(c *gin.Context) {
+	var req struct {
+		Minutes int    `json:"minutes"` // 0 表示取消静默，最大 10080（7 天）
+		Reason  string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		failErr(c, err)
+		return
+	}
+	if req.Minutes < 0 || req.Minutes > 7*24*60 {
+		fail(c, http.StatusBadRequest, "INVALID_ARGUMENT", "静默时长需在 0–10080 分钟之间")
+		return
+	}
+	if len(req.Reason) > 120 {
+		fail(c, http.StatusBadRequest, "INVALID_ARGUMENT", "原因不能超过 120 个字符")
+		return
+	}
+	var until time.Time
+	if req.Minutes > 0 {
+		until = time.Now().UTC().Add(time.Duration(req.Minutes) * time.Minute)
+	}
+	if err := s.Alerts.SetSilence(until, req.Reason); err != nil {
+		failErr(c, err)
+		return
+	}
+	s.audit(c, "alert.silence", "alert", "silence", map[string]any{"minutes": req.Minutes, "reason": req.Reason})
+	var ts *string
+	if !until.IsZero() {
+		v := until.Format(time.RFC3339)
+		ts = &v
+	}
+	c.JSON(http.StatusOK, gin.H{"silence_until": ts, "silence_reason": req.Reason})
 }
 
 func (s *Server) saveChannel(c *gin.Context) {

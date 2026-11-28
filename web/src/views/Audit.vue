@@ -49,8 +49,12 @@ const actionName: Record<string, string> = {
   'license.import': '导入授权',
   'group.create': '新建节点组',
   'group.update': '修改节点组',
+  'group.copy_config': '跨组复制配置',
   'node.enroll_token': '生成注册令牌',
   'node.enroll': '节点注册',
+  'node.update': '编辑/迁移节点',
+  'node.restore': '恢复节点配置',
+  'node.sync': '对齐节点版本',
   'node.revoke': '吊销节点',
   'site.create': '新建站点',
   'site.update': '修改站点',
@@ -58,9 +62,20 @@ const actionName: Record<string, string> = {
   'upstream.create': '新建上游',
   'upstream.update': '修改上游',
   'upstream.delete': '删除上游',
+  'ip_set.create': '新建 IP 集',
+  'ip_set.update': '修改 IP 集',
+  'ip_set.import': '导入地域 IP 集',
+  'ip_set.delete': '删除 IP 集',
+  'rule_template.save': '保存规则模板',
+  'rule_template.delete': '删除规则模板',
   'release.publish': '发布',
   'release.rollback': '回滚',
+  'release.cert_renew': '证书续期下发',
   'release.result': '发布结果',
+  'alert.silence': '维护静默设置',
+  'alert.rule_save': '修改告警规则',
+  'alert.channel_save': '保存告警通道',
+  'alert.channel_delete': '删除告警通道',
   'audit.export': '导出审计',
   'user.create': '新建用户',
 }
@@ -105,7 +120,7 @@ const resultColor: Record<string, string> = { success: 'green', applied: 'green'
         <a-button type="primary" :loading="loading" @click="load">查询</a-button>
         <a-button @click="resetFilter">重置</a-button>
       </div>
-      <a-table :data-source="rows" :loading="loading" row-key="id" size="middle" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'] }" :columns="[{ title: '时间', key: 'ts', width: 170 }, { title: '操作人', key: 'user', width: 160 }, { title: '操作', key: 'action', width: 140 }, { title: '对象', key: 'obj', width: 160 }, { title: '结果', key: 'result', width: 100 }, { title: '详情', key: 'detail' }]">
+      <a-table :data-source="rows" :loading="loading" row-key="id" size="middle" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'] }" :columns="[{ title: '时间', key: 'ts', width: 170 }, { title: '操作人', key: 'user', width: 160 }, { title: '操作', key: 'action', width: 140 }, { title: '对象', key: 'obj', width: 160 }, { title: '结果', key: 'result', width: 100 }, { title: '详情', key: 'detail' }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'ts'"><span class="num">{{ dayjs(record.ts).format('YYYY-MM-DD HH:mm:ss') }}</span></template>
           <template v-else-if="column.key === 'user'">

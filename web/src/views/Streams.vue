@@ -74,6 +74,7 @@ async function save() {
     if (editId.value) await api.put(`/streams/${editId.value}`, { spec })
     else await api.post('/streams', { group_id: gid.value, spec })
     open.value = false
+    ws.markDraftDirty()
     message.success('已保存，发布后生效')
     await load()
   } catch (e) {
@@ -83,6 +84,7 @@ async function save() {
 async function toggle(r: any) {
   try {
     await api.put(`/streams/${r.id}`, { spec: r.spec, enabled: !r.enabled })
+    ws.markDraftDirty()
     await load()
   } catch (e) {
     message.error(errMsg(e))
@@ -90,6 +92,7 @@ async function toggle(r: any) {
 }
 async function del(r: any) {
   await api.del(`/streams/${r.id}`)
+  ws.markDraftDirty()
   await load()
 }
 </script>
@@ -107,7 +110,7 @@ async function del(r: any) {
     </div>
     <a-alert v-if="!licensed" type="info" show-icon style="margin-bottom: 16px" message="当前授权不包含四层代理（专业版及以上）。" />
     <section class="panel">
-      <a-table :data-source="rows" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }" size="middle"
+      <a-table :data-source="rows" row-key="id" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 20, hideOnSinglePage: true }" size="middle"
         :columns="[{ title: '名称', key: 'name' }, { title: '监听', key: 'listen' }, { title: '后端', key: 'servers' }, { title: '状态', key: 'st', width: 90 }, { title: '', key: 'op', width: 200 }]">
         <template #emptyText><a-empty description="还没有四层代理服务" /></template>
         <template #bodyCell="{ column, record }">

@@ -71,6 +71,36 @@ func (d *Service) groupLock(id uint) *sync.Mutex {
 	return d.locks[id]
 }
 
+// TryLockGroups 按节点组 ID 升序尝试加锁（避免与并发发布/升级竞争）；全部成功时返回解锁函数。
+func (d *Service) TryLockGroups(ids ...uint) (func(), bool) {
+	uniq := make([]uint, 0, len(ids))
+	seen := map[uint]bool{}
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniq = append(uniq, id)
+	}
+	sort.Slice(uniq, func(i, j int) bool { return uniq[i] < uniq[j] })
+	acquired := make([]*sync.Mutex, 0, len(uniq))
+	for _, id := range uniq {
+		lk := d.groupLock(id)
+		if !lk.TryLock() {
+			for i := len(acquired) - 1; i >= 0; i-- {
+				acquired[i].Unlock()
+			}
+			return nil, false
+		}
+		acquired = append(acquired, lk)
+	}
+	return func() {
+		for i := len(acquired) - 1; i >= 0; i-- {
+			acquired[i].Unlock()
+		}
+	}, true
+}
+
 func prefixes(csv string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, s := range strings.Split(csv, ",") {
@@ -618,6 +648,63 @@ func (d *Service) Rollback(groupID uint, revID, user, ip string) (*store.Deploym
 	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "release.rollback", ObjectType: "node_group", ObjectID: fmt.Sprint(groupID),
 		Detail: map[string]string{"to": rev.ID, "from": g.CurrentRevisionID}})
 	return d.start(lk, g, rev, "rollback", "回滚到 "+rev.ID, user, nil)
+}
+
+// SyncNode 由发布员（兼容配置组需管理员）显式触发，把指定在线节点对齐到所在节点组的当前线上版本。
+func (d *Service) SyncNode(nodeID uint, user string, allowLegacy bool, ip string) (*store.Deployment, error) {
+	n, err := store.First[store.Node](d.Store, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if n.Status != "online" {
+		return nil, fmt.Errorf("节点 %s 当前离线，无法立即对齐", n.Name)
+	}
+	g, err := store.First[store.NodeGroup](d.Store, n.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	if g.CurrentRevisionID == "" {
+		return nil, fmt.Errorf("节点组 %s 还没有已发布的版本", g.Name)
+	}
+	lk := d.groupLock(g.ID)
+	if !lk.TryLock() {
+		return nil, ErrBusy
+	}
+	mode, err := d.ManagementMode(g.ID)
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	if mode == ManagementModeObserve {
+		lk.Unlock()
+		return nil, configManagementError(mode)
+	}
+	if err := d.ensureHandoffComplete(g.ID); err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	rev, err := d.revision(g.CurrentRevisionID, g.ID)
+	if err != nil {
+		lk.Unlock()
+		return nil, err
+	}
+	legacy := isLegacyRevision(rev)
+	if mode == ManagementModeLegacy || legacy {
+		if !allowLegacy {
+			lk.Unlock()
+			return nil, ErrLegacyAdminRequired
+		}
+		if mode != ManagementModeLegacy || !legacy {
+			lk.Unlock()
+			return nil, ErrLegacyModeRequired
+		}
+	}
+	_ = d.Audit.Write(audit.Entry{Username: user, IP: ip, Action: "node.sync", ObjectType: "node", ObjectID: fmt.Sprint(nodeID),
+		Detail: map[string]any{"node": n.Name, "group": g.ID, "revision": rev.ID}})
+	if legacy {
+		return d.startLegacy(lk, g, rev, "align", "手动对齐兼容版本 "+rev.ID, user, []uint{nodeID}, nil)
+	}
+	return d.start(lk, g, rev, "align", "手动对齐版本 "+rev.ID, user, []uint{nodeID})
 }
 
 // Align 让刚上线的节点对齐到组的当前版本（规格书 7.2：离线节点上线后自动对齐）。

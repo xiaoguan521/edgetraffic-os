@@ -46,9 +46,10 @@ type Server struct {
 	WebCAPEM      []byte      // -tls-auto 时的 Web CA 证书，公开下载以便导入浏览器
 	HA            *ha.Elector // 主备选主；nil 视为单机
 
-	jwtKey []byte
-	fails  sync.Map // ip -> *loginFail
-	routes func() gin.RoutesInfo
+	jwtKey    []byte
+	fails     sync.Map // ip -> *loginFail
+	ruleTplMu sync.Mutex
+	routes    func() gin.RoutesInfo
 }
 
 type loginFail struct {
@@ -108,6 +109,7 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	// 告警（P9，规格书 7.1 M9）：企业微信 / 钉钉通道需要授权功能 alert_im
 	a.GET("/alerts", s.alertsGet)
+	a.PUT("/alerts/silence", role(store.RoleAdmin), s.writable, s.setAlertSilence)
 	a.POST("/alert-channels", role(store.RoleAdmin), s.writable, s.saveChannel)
 	a.PUT("/alert-channels/:id", role(store.RoleAdmin), s.writable, s.saveChannel)
 	a.DELETE("/alert-channels/:id", role(store.RoleAdmin), s.deleteChannel)
@@ -120,6 +122,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.DELETE("/api-tokens/:id", s.revokeToken)
 	a.GET("/dashboard", s.dashboard)
 	a.GET("/badges", s.badges)
+	a.GET("/search", s.globalSearch)
 	a.GET("/metrics", s.metrics)
 
 	a.GET("/license", s.licenseGet)
@@ -136,6 +139,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.PUT("/node-groups/:id/profile", role(store.RoleOperator), s.writable, s.setProfile)
 	a.GET("/node-groups/:id/management-mode", s.getManagementMode)
 	a.PUT("/node-groups/:id/management-mode", role(store.RoleOperator), s.writable, s.setManagementMode)
+	a.POST("/node-groups/:id/copy-from", role(store.RoleOperator), s.writable, s.copyGroupConfig)
 	a.POST("/node-groups/:id/enroll", role(store.RoleOperator), s.writable, s.enrollToken)
 	a.GET("/node-groups/:id/preview", s.preview)
 	a.POST("/node-groups/:id/publish", role(store.RoleReleaser), s.writable, s.publish)
@@ -191,6 +195,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/release-requests/:id/cancel", role(store.RoleReleaser), s.cancelRelease)
 
 	a.GET("/nodes", s.listNodes)
+	a.PATCH("/nodes/:id", role(store.RoleOperator), s.writable, s.updateNode)
+	a.POST("/nodes/:id/sync", role(store.RoleReleaser), s.writable, s.syncNode)
 	a.POST("/nodes/:id/revoke", role(store.RoleAdmin), s.revokeNode)
 	a.POST("/nodes/:id/restore", role(store.RoleReleaser), s.restoreNode) // 漂移恢复：与回滚一样在过期状态下可用
 	a.GET("/nodes/:id/drift", role(store.RoleOperator), s.nodeDrift)
@@ -208,6 +214,10 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/ip-sets/import", role(store.RoleOperator), s.writable, s.importIPSet)
 	a.PUT("/ip-sets/:id", role(store.RoleOperator), s.writable, s.updateIPSet)
 	a.DELETE("/ip-sets/:id", role(store.RoleOperator), s.writable, s.deleteIPSet)
+
+	a.GET("/rule-templates", s.listRuleTemplates)
+	a.POST("/rule-templates", role(store.RoleOperator), s.writable, s.saveRuleTemplate)
+	a.DELETE("/rule-templates/:name", role(store.RoleOperator), s.writable, s.deleteRuleTemplate)
 
 	a.GET("/certificates", s.listCerts)
 	a.POST("/certificates", role(store.RoleOperator), s.writable, s.createCert)

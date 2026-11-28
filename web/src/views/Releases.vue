@@ -42,6 +42,7 @@ const canaryOpen = ref(false)
 const canaryForm = ref({ percents: '10,50,100', observe_minutes: 5, max_5xx_percent: 5, min_requests: 50 })
 const batchOpen = ref(false)
 const batchGroups = ref<number[]>([])
+const historyTab = ref<'revisions' | 'canaries' | 'requests'>('revisions')
 const hasFeature = (f: string) => !!session.license?.features?.includes(f)
 async function loadCanaries() {
   canaries.value = hasFeature('canary') ? await api.get('/canaries', { group_id: gid.value }) : []
@@ -173,6 +174,7 @@ async function loadAll() {
   if (!gid.value) return
   await Promise.all([loadPreview(), loadHistory(), loadApproval(), loadCanaries(), loadHandoffChecklist()])
   ws.loadBadges()
+  ws.refreshDraftState()
 }
 
 let poll: number | undefined
@@ -184,6 +186,7 @@ function watchDeployment(id: number) {
       clearInterval(poll)
       await loadGroups()
       await Promise.all([loadPreview(), loadHistory()])
+      ws.refreshDraftState()
       const s = active.value.status
       if (s === 'APPLIED') message.success(`${active.value.revision_id} 已在全部在线节点生效`)
       else if (s === 'FAILED' || s === 'PARTIAL') message.warning(`${active.value.revision_id} ${deployStatus[s].text}，详见各节点结果`)
@@ -464,42 +467,90 @@ function lastDeploy(rev: string) {
     </section>
 
     <section class="panel">
-      <div class="phead">
-        <h2>版本历史</h2>
-        <a-button v-if="revisions.length >= 2" size="small" @click="openDiffModal">对比任意两版本</a-button>
-      </div>
-      <a-table :data-source="revisions" row-key="id" :pagination="{ pageSize: 15, hideOnSinglePage: true }" size="middle" :columns="[{ title: '版本', key: 'id', width: 120 }, { title: '说明', key: 'note' }, { title: '最近一次下发', key: 'dep', width: 240 }, { title: '创建', key: 'created', width: 170 }, { title: '', key: 'ops', width: 200 }]">
-        <template #emptyText><a-empty description="还没有版本" /></template>
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'id'">
-            <span class="num rev">{{ record.id }}</span>
-            <a-tag v-if="record.id === group?.current_revision_id" color="cyan" style="margin-left: 6px">线上</a-tag>
-          </template>
-          <template v-else-if="column.key === 'note'">{{ record.note || '—' }}</template>
-          <template v-else-if="column.key === 'dep'">
-            <template v-if="lastDeploy(record.id)">
-              <a @click="show(lastDeploy(record.id))">
-                <span class="kd">{{ kindName[lastDeploy(record.id).kind] }}</span><a-tag :color="deployStatus[lastDeploy(record.id).status]?.color">{{ deployStatus[lastDeploy(record.id).status]?.text }}</a-tag>
-              </a>
+      <a-tabs v-model:active-key="historyTab" class="hist-tabs">
+        <a-tab-pane key="revisions" :tab="`版本历史 (${revisions.length})`">
+          <div class="phead" style="margin-bottom: 10px">
+            <span class="sub">保留每次发布的不可变配置快照，支持任意版本对比与一键回滚</span>
+            <a-button v-if="revisions.length >= 2" size="small" @click="openDiffModal">对比任意两版本</a-button>
+          </div>
+          <a-table :data-source="revisions" row-key="id" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 15, hideOnSinglePage: true }" size="middle" :columns="[{ title: '版本', key: 'id', width: 120 }, { title: '说明', key: 'note' }, { title: '最近一次下发', key: 'dep', width: 240 }, { title: '创建', key: 'created', width: 170 }, { title: '', key: 'ops', width: 200 }]">
+            <template #emptyText><a-empty description="还没有版本" /></template>
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'id'">
+                <span class="num rev">{{ record.id }}</span>
+                <a-tag v-if="record.id === group?.current_revision_id" color="cyan" style="margin-left: 6px">线上</a-tag>
+              </template>
+              <template v-else-if="column.key === 'note'">{{ record.note || '—' }}</template>
+              <template v-else-if="column.key === 'dep'">
+                <template v-if="lastDeploy(record.id)">
+                  <a @click="show(lastDeploy(record.id))">
+                    <span class="kd">{{ kindName[lastDeploy(record.id).kind] }}</span><a-tag :color="deployStatus[lastDeploy(record.id).status]?.color">{{ deployStatus[lastDeploy(record.id).status]?.text }}</a-tag>
+                  </a>
+                </template>
+              </template>
+              <template v-else-if="column.key === 'created'">
+                <div>{{ dayjs(record.created_at).format('MM-DD HH:mm') }}</div>
+                <div class="sub">{{ record.created_by }}</div>
+              </template>
+              <template v-else-if="column.key === 'ops'">
+                <a-space size="small">
+                  <a-button size="small" type="link" @click="inspectRevision(record.id)">查看配置</a-button>
+                  <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
+                    <a-button size="small">回滚到此版本</a-button>
+                  </a-popconfirm>
+                  <a-popconfirm v-if="session.can('admin') && group?.management_mode === 'legacy' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`申请回退到兼容版本 ${record.id}？需要另一位管理员审批。`" ok-text="提交申请" @confirm="requestLegacyRollback(record.id)">
+                    <a-button size="small" :disabled="!!pendingReq">申请回退</a-button>
+                  </a-popconfirm>
+                </a-space>
+              </template>
             </template>
-          </template>
-          <template v-else-if="column.key === 'created'">
-            <div>{{ dayjs(record.created_at).format('MM-DD HH:mm') }}</div>
-            <div class="sub">{{ record.created_by }}</div>
-          </template>
-          <template v-else-if="column.key === 'ops'">
-            <a-space size="small">
-              <a-button size="small" type="link" @click="inspectRevision(record.id)">查看配置</a-button>
-              <a-popconfirm v-if="session.can('releaser') && group?.management_mode === 'managed' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`把 ${group?.name} 的全部节点回滚到 ${record.id}？`" ok-text="回滚" @confirm="rollback(record.id)">
-                <a-button size="small">回滚到此版本</a-button>
-              </a-popconfirm>
-              <a-popconfirm v-if="session.can('admin') && group?.management_mode === 'legacy' && record.id !== group?.current_revision_id && everApplied(record.id)" :title="`申请回退到兼容版本 ${record.id}？需要另一位管理员审批。`" ok-text="提交申请" @confirm="requestLegacyRollback(record.id)">
-                <a-button size="small" :disabled="!!pendingReq">申请回退</a-button>
-              </a-popconfirm>
-            </a-space>
-          </template>
-        </template>
-      </a-table>
+          </a-table>
+        </a-tab-pane>
+
+        <a-tab-pane v-if="hasFeature('canary') || canaries.length" key="canaries" :tab="`灰度记录 (${canaries.length})`">
+          <a-empty v-if="!canaries.length" description="还没有灰度发布记录" />
+          <div v-for="cy in canaries.slice(0, 5)" :key="'c' + cy.id" class="canary-item">
+            <div class="phead">
+              <h3>灰度 #{{ cy.id }} <span class="num">{{ cy.revision_id }}</span></h3>
+              <span class="cur"><a-tag :color="canaryStatus[cy.status]?.c">{{ canaryStatus[cy.status]?.t }}</a-tag>{{ cy.created_by }}，{{ dayjs(cy.created_at).format('MM-DD HH:mm') }}</span>
+            </div>
+            <p class="hint" style="margin-top: 0; margin-bottom: 10px">{{ cy.message || `每批观察 ${Math.round(cy.options.observe / 6e10)} 分钟，5xx 占比超过 ${cy.options.max_5xx_percent}% 自动回滚到 ${cy.base_revision_id || '原版本'}` }}</p>
+            <a-table :data-source="cy.batches" :row-key="(r: any) => r.nodes.join(',')" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
+              :columns="[{ title: '批次', key: 'i', width: 70 }, { title: '节点数', key: 'n', width: 80 }, { title: '状态', key: 'st', width: 100 }, { title: '观察结果', key: 'r' }]">
+              <template #bodyCell="{ column, record, index }">
+                <template v-if="column.key === 'i'">{{ index + 1 }}</template>
+                <template v-else-if="column.key === 'n'">{{ record.nodes.length }}</template>
+                <template v-else-if="column.key === 'st'">{{ batchStatus[record.status] }}</template>
+                <template v-else-if="column.key === 'r'">
+                  <span v-if="record.requests">{{ record.requests }} 请求，5xx {{ record.errors_5xx }}（{{ record.rate.toFixed(1) }}%）</span>
+                  <span class="sub"> {{ record.message }}</span>
+                </template>
+              </template>
+            </a-table>
+          </div>
+        </a-tab-pane>
+
+        <a-tab-pane v-if="approval.enabled || recentReqs.length" key="requests" :tab="`发布申请记录 (${recentReqs.length})`">
+          <a-table :data-source="recentReqs" row-key="id" :pagination="false" size="middle" :scroll="{ x: 'max-content' }"
+            :columns="[{ title: '申请', key: 'id', width: 150 }, { title: '状态', key: 'st', width: 100 }, { title: '说明', dataIndex: 'note' }, { title: '提交', key: 'req', width: 170 }, { title: '审批', key: 'rev', width: 240 }]">
+            <template #emptyText><a-empty description="还没有发布申请记录" /></template>
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'id'"><span class="num">#{{ record.id }} · {{ record.revision_id }}</span></template>
+              <template v-else-if="column.key === 'st'"><a-tag :color="reqStatus[record.status]?.color">{{ reqStatus[record.status]?.text || record.status }}</a-tag></template>
+              <template v-else-if="column.key === 'req'">
+                <div>{{ record.requested_by }}</div>
+                <div class="sub">{{ dayjs(record.requested_at).format('MM-DD HH:mm') }}</div>
+              </template>
+              <template v-else-if="column.key === 'rev'">
+                <template v-if="record.reviewed_by">
+                  <div>{{ record.reviewed_by }}<span v-if="record.review_comment" class="sub">：{{ record.review_comment }}</span></div>
+                  <div class="sub">{{ dayjs(record.reviewed_at).format('MM-DD HH:mm') }}</div>
+                </template>
+              </template>
+            </template>
+          </a-table>
+        </a-tab-pane>
+      </a-tabs>
     </section>
 
     <a-drawer v-model:open="revInspectOpen" :width="780" :title="`版本 ${revInspect?.revision_id || ''} 配置内容`">
@@ -538,26 +589,6 @@ function lastDeploy(rev: string) {
       </a-spin>
     </a-modal>
 
-    <section class="panel" v-for="cy in canaries.slice(0, 3)" :key="'c' + cy.id">
-      <div class="phead">
-        <h2>灰度 #{{ cy.id }} <span class="num">{{ cy.revision_id }}</span></h2>
-        <span class="cur"><a-tag :color="canaryStatus[cy.status]?.c">{{ canaryStatus[cy.status]?.t }}</a-tag>{{ cy.created_by }}，{{ dayjs(cy.created_at).format('MM-DD HH:mm') }}</span>
-      </div>
-      <p class="hint">{{ cy.message || `每批观察 ${Math.round(cy.options.observe / 6e10)} 分钟，5xx 占比超过 ${cy.options.max_5xx_percent}% 自动回滚到 ${cy.base_revision_id || '原版本'}` }}</p>
-      <a-table :data-source="cy.batches" :row-key="(r: any) => r.nodes.join(',')" :pagination="false" size="small"
-        :columns="[{ title: '批次', key: 'i', width: 70 }, { title: '节点数', key: 'n', width: 80 }, { title: '状态', key: 'st', width: 100 }, { title: '观察结果', key: 'r' }]">
-        <template #bodyCell="{ column, record, index }">
-          <template v-if="column.key === 'i'">{{ index + 1 }}</template>
-          <template v-else-if="column.key === 'n'">{{ record.nodes.length }}</template>
-          <template v-else-if="column.key === 'st'">{{ batchStatus[record.status] }}</template>
-          <template v-else-if="column.key === 'r'">
-            <span v-if="record.requests">{{ record.requests }} 请求，5xx {{ record.errors_5xx }}（{{ record.rate.toFixed(1) }}%）</span>
-            <span class="sub"> {{ record.message }}</span>
-          </template>
-        </template>
-      </a-table>
-    </section>
-
     <a-modal v-model:open="canaryOpen" title="灰度发布" ok-text="开始灰度" @ok="startCanary">
       <p class="hint">新版本按批次下发，每批观察后比较这些节点的 5xx 占比；超过阈值自动回滚已灰度的节点并停止，线上版本保持不变。</p>
       <a-form layout="vertical">
@@ -574,27 +605,6 @@ function lastDeploy(rev: string) {
       <a-checkbox-group v-model:value="batchGroups" :options="groups.map((g) => ({ value: g.id, label: g.name }))" />
       <a-input v-model:value="note" placeholder="发布说明" style="margin-top: 12px" />
     </a-modal>
-
-    <section class="panel" v-if="recentReqs.length">
-      <h2>发布申请记录</h2>
-      <a-table :data-source="recentReqs" row-key="id" :pagination="false" size="middle"
-        :columns="[{ title: '申请', key: 'id', width: 150 }, { title: '状态', key: 'st', width: 100 }, { title: '说明', dataIndex: 'note' }, { title: '提交', key: 'req', width: 170 }, { title: '审批', key: 'rev', width: 240 }]">
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'id'"><span class="num">#{{ record.id }} · {{ record.revision_id }}</span></template>
-          <template v-else-if="column.key === 'st'"><a-tag :color="reqStatus[record.status]?.color">{{ reqStatus[record.status]?.text || record.status }}</a-tag></template>
-          <template v-else-if="column.key === 'req'">
-            <div>{{ record.requested_by }}</div>
-            <div class="sub">{{ dayjs(record.requested_at).format('MM-DD HH:mm') }}</div>
-          </template>
-          <template v-else-if="column.key === 'rev'">
-            <template v-if="record.reviewed_by">
-              <div>{{ record.reviewed_by }}<span v-if="record.review_comment" class="sub">：{{ record.review_comment }}</span></div>
-              <div class="sub">{{ dayjs(record.reviewed_at).format('MM-DD HH:mm') }}</div>
-            </template>
-          </template>
-        </template>
-      </a-table>
-    </section>
   </div>
 </template>
 
@@ -672,5 +682,21 @@ function lastDeploy(rev: string) {
 .sub {
   font-size: 12px;
   color: #8a9a9d;
+}
+.hist-tabs :deep(.ant-tabs-nav) {
+  margin-bottom: 14px;
+}
+.canary-item {
+  padding: 14px 0;
+  border-top: 1px solid #eef2f1;
+}
+.canary-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.canary-item h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #16323a;
 }
 </style>

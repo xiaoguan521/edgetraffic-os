@@ -50,6 +50,7 @@ const bundles = ref<any[]>([])
 const ipSets = ref<any[]>([])
 const localUpstreams = ref<any[]>([])
 const routeSearch = ref('')
+const editorTab = ref<'basic' | 'routes' | 'rules'>('basic')
 
 // 快速新建上游
 const quickUpOpen = ref(false)
@@ -171,6 +172,7 @@ watch(
     error.value = ''
     localUpstreams.value = [...props.upstreams]
     routeSearch.value = props.focusRoute || ''
+    editorTab.value = props.focusRoute ? 'routes' : 'basic'
     api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
     loadBundles()
     api.get('/ip-sets', { group_id: props.groupId }).then((x) => (ipSets.value = x)).catch(() => {})
@@ -258,7 +260,7 @@ async function save() {
   try {
     if (isNew.value) await api.post('/sites', { group_id: props.groupId, enabled: f.enabled, spec })
     else await api.put(`/sites/${props.site.id}`, { version: f.version, enabled: f.enabled, spec })
-    message.success('已保存草稿。可点击页面顶部“去发布变更”查看差异并下发。')
+    message.success('已保存草稿，可在顶部草稿提醒条点击“预览差异并发布”。')
     emit('saved')
   } catch (e) {
     error.value = errMsg(e)
@@ -277,106 +279,120 @@ const modes = [
 
 <template>
   <a-drawer :open="open" :title="isNew ? '新建站点' : `编辑站点 ${site?.name}`" width="780" @close="emit('close')">
+    <a-tabs
+      v-model:active-key="editorTab"
+      style="margin-top: -8px"
+      :items="[
+        { key: 'basic', label: '基础与 HTTPS' },
+        { key: 'routes', label: `路由转发（${f.routes.length}）` },
+        { key: 'rules', label: `访问规则（${f.rules.length}）` },
+      ]"
+    />
+    <a-alert v-if="error" type="error" :message="error" show-icon style="margin-bottom: 14px" />
     <a-form layout="vertical">
-      <div class="row2">
-        <a-form-item label="站点标识" extra="小写字母、数字、连字符，用于配置文件名，创建后不可修改">
-          <a-input v-model:value="f.name" :disabled="!isNew" placeholder="shop" />
-        </a-form-item>
-        <a-form-item label="状态">
-          <a-switch v-model:checked="f.enabled" checked-children="启用" un-checked-children="停用" />
-        </a-form-item>
-      </div>
-      <a-form-item label="域名" extra="回车添加；支持 *.example.com，不允许单独的 *">
-        <a-select v-model:value="f.domains" mode="tags" :open="false" placeholder="shop.example.com" />
-      </a-form-item>
-
-      <div class="row2">
-        <a-form-item label="请求体大小上限（可选）" extra="留空沿用全局 1m；如 10m、100m、0（不限）">
-          <a-input v-model:value="f.client_max_body_size" class="code" placeholder="1m" />
-        </a-form-item>
-        <a-form-item label="传输优化">
-          <a-checkbox v-model:checked="f.gzip">启用站点级 Gzip 压缩</a-checkbox>
-        </a-form-item>
-      </div>
-
-      <a-form-item>
-        <a-checkbox v-model:checked="f.https">启用 HTTPS</a-checkbox>
-      </a-form-item>
-      <template v-if="f.https">
-        <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期；勾选 HTTPS 时会自动匹配覆盖域名的有效证书'">
-          <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="stdCerts">
-            <template #notFoundContent>
-              <span>证书库为空，<router-link to="/certificates">先去上传证书</router-link></span>
-            </template>
-          </a-select>
-          <div v-if="certWarn" class="cert-warn" :class="{ soft: certWarn.includes('天后到期') }">{{ certWarn }}</div>
-        </a-form-item>
-        <a-form-item v-if="gmCerts.length || f.gm_cert_id" label="国密证书（可选）" :extra="gmWarn ? '' : '国密 TLCP 双证书：国密浏览器用 SM2 证书，其他客户端仍用上面的标准证书。只能发布到国密版 ' + brand.id + ' 节点。'">
-          <a-select v-model:value="f.gm_cert_id" allow-clear placeholder="不启用国密" :options="gmCerts" />
-          <div v-if="gmWarn" class="cert-warn" :class="{ soft: gmWarn.includes('天后到期') }">{{ gmWarn }}</div>
-        </a-form-item>
-        <a-space :size="24" style="margin-bottom: 16px">
-          <a-checkbox v-model:checked="f.force_https">HTTP 自动跳转 HTTPS</a-checkbox>
-          <a-checkbox v-model:checked="f.http2">启用 HTTP/2</a-checkbox>
-        </a-space>
-      </template>
-
-      <div class="routes-head">
-        <h3>路由</h3>
-        <a-button size="small" @click="addRoute">添加路由</a-button>
-      </div>
-      <a-input v-if="f.routes.length > 5 || routeSearch" v-model:value="routeSearch" allow-clear placeholder="按路径查找路由" style="margin-bottom: 10px" />
-      <a-alert v-if="migration && routeSearch && !f.routes.some((r) => r.path.toLowerCase().includes(routeSearch.toLowerCase()))" type="info" show-icon message="当前草稿没有匹配的路由，请核对原配置后添加；正则与特殊优先级不能直接转换为普通前缀路由。" style="margin-bottom: 10px" />
-      <template v-for="(r, i) in f.routes" :key="i">
-        <div v-if="!routeSearch || r.path.toLowerCase().includes(routeSearch.toLowerCase())" class="route">
-          <div class="rline">
-            <a-select v-model:value="r.match" style="width: 104px" :options="[{ label: '前缀匹配', value: 'prefix' }, { label: '精确匹配', value: 'exact' }]" />
-            <a-input v-model:value="r.path" class="code" style="flex: 1" />
-            <a-select :value="r.mode" style="width: 120px" :options="modes" @change="(v: any) => setMode(r, v)" />
-            <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
-          </div>
-          <template v-if="r.mode === 'static'">
-            <div v-if="migration" class="sub">请上传实际静态资源包，并核对原配置的 root、alias 和 try_files 行为；不会自动读取节点上的目录。</div>
-            <div class="rline" v-if="r.match === 'prefix'">
-              <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
-                :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
-              <a-button @click="uploadBundle(r)">上传 zip / tar.gz</a-button>
-            </div>
-            <a-checkbox v-if="r.match === 'prefix'" v-model:checked="r.static!.spa">单页应用模式（SPA：未命中文件时回退到 index.html）</a-checkbox>
-            <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
-          </template>
-          <template v-else-if="r.mode === 'proxy'">
-            <div class="rline">
-              <a-select v-model:value="r.proxy!.upstream" style="flex: 1" placeholder="选择上游服务" :options="allUpstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
-              <a-button size="small" @click="openQuickUp(r)">+ 新建上游</a-button>
-            </div>
-            <a-space wrap :size="14">
-              <a-checkbox v-model:checked="r.proxy!.websocket">WebSocket 升级</a-checkbox>
-              <a-checkbox v-model:checked="r.proxy!.https">HTTPS 回源</a-checkbox>
-              <a-checkbox v-if="r.match === 'prefix' && r.path !== '/' && r.path.endsWith('/')" v-model:checked="r.proxy!.strip_prefix">剥离路径前缀</a-checkbox>
-              <a-checkbox :checked="r.proxy!.buffering === false" @change="(e: any) => (r.proxy!.buffering = !e.target.checked)">关闭响应缓冲（SSE / 流式）</a-checkbox>
-            </a-space>
-            <details class="adv">
-              <summary>代理超时设置（可选，留空沿用全局 3s / 30s / 30s）</summary>
-              <a-space wrap style="margin-top: 6px">
-                <a-input-number v-model:value="r.proxy!.connect_timeout" :min="0" :max="60" placeholder="连接(s)" style="width: 120px" />
-                <a-input-number v-model:value="r.proxy!.read_timeout" :min="0" :max="3600" placeholder="读取(s)" style="width: 120px" />
-                <a-input-number v-model:value="r.proxy!.send_timeout" :min="0" :max="3600" placeholder="发送(s)" style="width: 120px" />
-              </a-space>
-            </details>
-            <div v-if="migration" class="sub">请核对原配置的 Host、升级头和超时；勾选只启用标准连接升级，不保证与自定义头或 Lua 逻辑一致。</div>
-          </template>
-          <div v-else-if="r.mode === 'redirect'" class="rline">
-            <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />
-            <a-select v-model:value="r.redirect!.code" style="width: 100px" :options="[301, 302, 307, 308].map((c) => ({ label: String(c), value: c }))" />
-          </div>
-          <div v-else class="deny">返回 403</div>
+      <div v-show="editorTab === 'basic'">
+        <div class="row2">
+          <a-form-item label="站点标识" extra="小写字母、数字、连字符，用于配置文件名，创建后不可修改">
+            <a-input v-model:value="f.name" :disabled="!isNew" placeholder="shop" />
+          </a-form-item>
+          <a-form-item label="状态">
+            <a-switch v-model:checked="f.enabled" checked-children="启用" un-checked-children="停用" />
+          </a-form-item>
         </div>
-      </template>
+        <a-form-item label="域名" extra="回车添加；支持 *.example.com，不允许单独的 *">
+          <a-select v-model:value="f.domains" mode="tags" :open="false" placeholder="shop.example.com" />
+        </a-form-item>
 
-      <RulesEditor v-model="f.rules" :upstreams="allUpstreams" :ip-sets="ipSets" />
+        <div class="row2">
+          <a-form-item label="请求体大小上限（可选）" extra="留空沿用全局 1m；如 10m、100m、0（不限）">
+            <a-input v-model:value="f.client_max_body_size" class="code" placeholder="1m" />
+          </a-form-item>
+          <a-form-item label="传输优化">
+            <a-checkbox v-model:checked="f.gzip">启用站点级 Gzip 压缩</a-checkbox>
+          </a-form-item>
+        </div>
 
-      <a-alert v-if="error" type="error" :message="error" show-icon style="margin-top: 16px" />
+        <a-form-item>
+          <a-checkbox v-model:checked="f.https">启用 HTTPS</a-checkbox>
+        </a-form-item>
+        <template v-if="f.https">
+          <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期；勾选 HTTPS 时会自动匹配覆盖域名的有效证书'">
+            <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="stdCerts">
+              <template #notFoundContent>
+                <span>证书库为空，<router-link to="/certificates">先去上传证书</router-link></span>
+              </template>
+            </a-select>
+            <div v-if="certWarn" class="cert-warn" :class="{ soft: certWarn.includes('天后到期') }">{{ certWarn }}</div>
+          </a-form-item>
+          <a-form-item v-if="gmCerts.length || f.gm_cert_id" label="国密证书（可选）" :extra="gmWarn ? '' : '国密 TLCP 双证书：国密浏览器用 SM2 证书，其他客户端仍用上面的标准证书。只能发布到国密版 ' + brand.id + ' 节点。'">
+            <a-select v-model:value="f.gm_cert_id" allow-clear placeholder="不启用国密" :options="gmCerts" />
+            <div v-if="gmWarn" class="cert-warn" :class="{ soft: gmWarn.includes('天后到期') }">{{ gmWarn }}</div>
+          </a-form-item>
+          <a-space :size="24" style="margin-bottom: 16px">
+            <a-checkbox v-model:checked="f.force_https">HTTP 自动跳转 HTTPS</a-checkbox>
+            <a-checkbox v-model:checked="f.http2">启用 HTTP/2</a-checkbox>
+          </a-space>
+        </template>
+      </div>
+
+      <div v-show="editorTab === 'routes'">
+        <div class="routes-head">
+          <h3>路由转发</h3>
+          <a-button size="small" @click="addRoute">添加路由</a-button>
+        </div>
+        <a-input v-if="f.routes.length > 5 || routeSearch" v-model:value="routeSearch" allow-clear placeholder="按路径查找路由" style="margin-bottom: 10px" />
+        <a-alert v-if="migration && routeSearch && !f.routes.some((r) => r.path.toLowerCase().includes(routeSearch.toLowerCase()))" type="info" show-icon message="当前草稿没有匹配的路由，请核对原配置后添加；正则与特殊优先级不能直接转换为普通前缀路由。" style="margin-bottom: 10px" />
+        <template v-for="(r, i) in f.routes" :key="i">
+          <div v-if="!routeSearch || r.path.toLowerCase().includes(routeSearch.toLowerCase())" class="route">
+            <div class="rline">
+              <a-select v-model:value="r.match" style="width: 104px" :options="[{ label: '前缀匹配', value: 'prefix' }, { label: '精确匹配', value: 'exact' }]" />
+              <a-input v-model:value="r.path" class="code" style="flex: 1" />
+              <a-select :value="r.mode" style="width: 120px" :options="modes" @change="(v: any) => setMode(r, v)" />
+              <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
+            </div>
+            <template v-if="r.mode === 'static'">
+              <div v-if="migration" class="sub">请上传实际静态资源包，并核对原配置的 root、alias 和 try_files 行为；不会自动读取节点上的目录。</div>
+              <div class="rline" v-if="r.match === 'prefix'">
+                <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
+                  :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
+                <a-button @click="uploadBundle(r)">上传 zip / tar.gz</a-button>
+              </div>
+              <a-checkbox v-if="r.match === 'prefix'" v-model:checked="r.static!.spa">单页应用模式（SPA：未命中文件时回退到 index.html）</a-checkbox>
+              <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
+            </template>
+            <template v-else-if="r.mode === 'proxy'">
+              <div class="rline">
+                <a-select v-model:value="r.proxy!.upstream" style="flex: 1" placeholder="选择上游服务" :options="allUpstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
+                <a-button size="small" @click="openQuickUp(r)">+ 新建上游</a-button>
+              </div>
+              <a-space wrap :size="14">
+                <a-checkbox v-model:checked="r.proxy!.websocket">WebSocket 升级</a-checkbox>
+                <a-checkbox v-model:checked="r.proxy!.https">HTTPS 回源</a-checkbox>
+                <a-checkbox v-if="r.match === 'prefix' && r.path !== '/' && r.path.endsWith('/')" v-model:checked="r.proxy!.strip_prefix">剥离路径前缀</a-checkbox>
+                <a-checkbox :checked="r.proxy!.buffering === false" @change="(e: any) => (r.proxy!.buffering = !e.target.checked)">关闭响应缓冲（SSE / 流式）</a-checkbox>
+              </a-space>
+              <details class="adv">
+                <summary>代理超时设置（可选，留空沿用全局 3s / 30s / 30s）</summary>
+                <a-space wrap style="margin-top: 6px">
+                  <a-input-number v-model:value="r.proxy!.connect_timeout" :min="0" :max="60" placeholder="连接(s)" style="width: 120px" />
+                  <a-input-number v-model:value="r.proxy!.read_timeout" :min="0" :max="3600" placeholder="读取(s)" style="width: 120px" />
+                  <a-input-number v-model:value="r.proxy!.send_timeout" :min="0" :max="3600" placeholder="发送(s)" style="width: 120px" />
+                </a-space>
+              </details>
+              <div v-if="migration" class="sub">请核对原配置的 Host、升级头和超时；勾选只启用标准连接升级，不保证与自定义头或 Lua 逻辑一致。</div>
+            </template>
+            <div v-else-if="r.mode === 'redirect'" class="rline">
+              <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />
+              <a-select v-model:value="r.redirect!.code" style="width: 100px" :options="[301, 302, 307, 308].map((c) => ({ label: String(c), value: c }))" />
+            </div>
+            <div v-else class="deny">返回 403</div>
+          </div>
+        </template>
+      </div>
+
+      <div v-show="editorTab === 'rules'">
+        <RulesEditor v-model="f.rules" :upstreams="allUpstreams" :ip-sets="ipSets" />
+      </div>
     </a-form>
     <template #footer>
       <a-space style="float: right">
