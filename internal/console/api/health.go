@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strings"
 	"time"
 
@@ -156,19 +157,91 @@ func (s *Server) promMetrics(c *gin.Context) {
 		fmt.Fprintf(&b, "# TYPE etos_node_cpu_percent gauge\n")
 		fmt.Fprintf(&b, "# HELP etos_node_memory_used_bytes Reported memory used in bytes per node.\n")
 		fmt.Fprintf(&b, "# TYPE etos_node_memory_used_bytes gauge\n")
+		fmt.Fprintf(&b, "# HELP etos_node_disk_used_percent Reported disk usage percent per node.\n")
+		fmt.Fprintf(&b, "# TYPE etos_node_disk_used_percent gauge\n")
+		fmt.Fprintf(&b, "# HELP etos_node_disk_inode_percent Reported disk inode usage percent per node.\n")
+		fmt.Fprintf(&b, "# TYPE etos_node_disk_inode_percent gauge\n")
 		fmt.Fprintf(&b, "# HELP etos_node_active_connections Reported active connections per node.\n")
 		fmt.Fprintf(&b, "# TYPE etos_node_active_connections gauge\n")
 		fmt.Fprintf(&b, "# HELP etos_node_requests_total Reported total requests per node.\n")
 		fmt.Fprintf(&b, "# TYPE etos_node_requests_total counter\n")
+		nodeGroupID := map[uint]uint{}
 		for _, n := range nodes {
+			nodeGroupID[n.ID] = n.GroupID
 			if n.Status == "revoked" {
 				continue
 			}
-			lbl := fmt.Sprintf(`node=%q`, promEscape(n.Name))
+			lbl := fmt.Sprintf(`node="%s"`, promEscape(n.Name))
 			fmt.Fprintf(&b, "etos_node_cpu_percent{%s} %.2f\n", lbl, n.CPUPercent)
 			fmt.Fprintf(&b, "etos_node_memory_used_bytes{%s} %d\n", lbl, n.MemUsedBytes)
+			fmt.Fprintf(&b, "etos_node_disk_used_percent{%s} %.2f\n", lbl, n.DiskUsedPercent)
+			fmt.Fprintf(&b, "etos_node_disk_inode_percent{%s} %.2f\n", lbl, n.DiskInodePercent)
 			fmt.Fprintf(&b, "etos_node_active_connections{%s} %d\n", lbl, n.ActiveConns)
 			fmt.Fprintf(&b, "etos_node_requests_total{%s} %d\n", lbl, n.RequestsTotal)
+		}
+
+		// 近 5 分钟按节点组与站点聚合的请求状态码、字节数与 P95 延迟
+		groups, _ := q.NodeGroup.WithContext(ctx).Find()
+		groupName := map[uint]string{}
+		for _, g := range groups {
+			groupName[g.ID] = g.Name
+		}
+		since := time.Now().Add(-5 * time.Minute).Truncate(time.Minute).Unix()
+		mm := q.MetricMinute
+		rows, _ := mm.WithContext(ctx).Where(mm.Minute.Gte(since)).Find()
+		type siteAgg struct {
+			group, site            string
+			s2xx, s3xx, s4xx, s5xx uint64
+			bytes                  uint64
+			p95                    float64
+		}
+		aggMap := map[string]*siteAgg{}
+		for _, r := range rows {
+			gn := groupName[nodeGroupID[r.NodeID]]
+			if gn == "" {
+				gn = "unknown"
+			}
+			site := r.Site
+			if site == "" {
+				site = "(default)"
+			}
+			key := gn + "\x00" + site
+			a := aggMap[key]
+			if a == nil {
+				a = &siteAgg{group: gn, site: site}
+				aggMap[key] = a
+			}
+			a.s2xx += r.S2xx
+			a.s3xx += r.S3xx
+			a.s4xx += r.S4xx
+			a.s5xx += r.S5xx
+			a.bytes += r.Bytes
+			if r.P95ms > a.p95 {
+				a.p95 = r.P95ms
+			}
+		}
+		if len(aggMap) > 0 {
+			keys := make([]string, 0, len(aggMap))
+			for k := range aggMap {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			fmt.Fprintf(&b, "# HELP etos_site_requests_5m Requests in the last 5 minutes per node group, site, and status class.\n")
+			fmt.Fprintf(&b, "# TYPE etos_site_requests_5m gauge\n")
+			fmt.Fprintf(&b, "# HELP etos_site_p95_latency_ms Max P95 latency in milliseconds over the last 5 minutes per node group and site.\n")
+			fmt.Fprintf(&b, "# TYPE etos_site_p95_latency_ms gauge\n")
+			fmt.Fprintf(&b, "# HELP etos_site_bytes_sent_5m Bytes sent in the last 5 minutes per node group and site.\n")
+			fmt.Fprintf(&b, "# TYPE etos_site_bytes_sent_5m gauge\n")
+			for _, k := range keys {
+				a := aggMap[k]
+				baseLbl := fmt.Sprintf(`group="%s",site="%s"`, promEscape(a.group), promEscape(a.site))
+				fmt.Fprintf(&b, "etos_site_requests_5m{%s,status_class=\"2xx\"} %d\n", baseLbl, a.s2xx)
+				fmt.Fprintf(&b, "etos_site_requests_5m{%s,status_class=\"3xx\"} %d\n", baseLbl, a.s3xx)
+				fmt.Fprintf(&b, "etos_site_requests_5m{%s,status_class=\"4xx\"} %d\n", baseLbl, a.s4xx)
+				fmt.Fprintf(&b, "etos_site_requests_5m{%s,status_class=\"5xx\"} %d\n", baseLbl, a.s5xx)
+				fmt.Fprintf(&b, "etos_site_p95_latency_ms{%s} %.2f\n", baseLbl, a.p95)
+				fmt.Fprintf(&b, "etos_site_bytes_sent_5m{%s} %d\n", baseLbl, a.bytes)
+			}
 		}
 
 		certs, _ := q.Certificate.WithContext(ctx).Find()

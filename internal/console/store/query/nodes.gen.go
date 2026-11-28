@@ -47,6 +47,8 @@ func newNode(db *gorm.DB, opts ...gen.DOOption) node {
 	_node.Drifted = field.NewBool(tableName, "drifted")
 	_node.CPUPercent = field.NewFloat64(tableName, "cpu_percent")
 	_node.MemUsedBytes = field.NewUint64(tableName, "mem_used_bytes")
+	_node.DiskUsedPercent = field.NewFloat64(tableName, "disk_used_percent")
+	_node.DiskInodePercent = field.NewFloat64(tableName, "disk_inode_percent")
 	_node.ActiveConns = field.NewUint64(tableName, "active_conns")
 	_node.RequestsTotal = field.NewUint64(tableName, "requests_total")
 	_node.LastSeenAt = field.NewTime(tableName, "last_seen_at")
@@ -60,31 +62,33 @@ func newNode(db *gorm.DB, opts ...gen.DOOption) node {
 type node struct {
 	nodeDo nodeDo
 
-	ALL             field.Asterisk
-	ID              field.Uint
-	GroupID         field.Uint
-	Name            field.String
-	Hostname        field.String
-	HostKey         field.String
-	RemoteAddr      field.String
-	CertSerial      field.String
-	Status          field.String
-	AgentVersion    field.String
-	Arch            field.String
-	SyappVersion    field.String
-	RunningVersion  field.String
-	SyappSHA256     field.String
-	TLSLib          field.String
-	LuaAddon        field.String
-	AppliedRevision field.String
-	TreeHash        field.String
-	Drifted         field.Bool
-	CPUPercent      field.Float64
-	MemUsedBytes    field.Uint64
-	ActiveConns     field.Uint64
-	RequestsTotal   field.Uint64
-	LastSeenAt      field.Time
-	CreatedAt       field.Time
+	ALL              field.Asterisk
+	ID               field.Uint
+	GroupID          field.Uint
+	Name             field.String
+	Hostname         field.String
+	HostKey          field.String
+	RemoteAddr       field.String
+	CertSerial       field.String
+	Status           field.String
+	AgentVersion     field.String
+	Arch             field.String
+	SyappVersion     field.String
+	RunningVersion   field.String
+	SyappSHA256      field.String
+	TLSLib           field.String
+	LuaAddon         field.String
+	AppliedRevision  field.String
+	TreeHash         field.String
+	Drifted          field.Bool
+	CPUPercent       field.Float64
+	MemUsedBytes     field.Uint64
+	DiskUsedPercent  field.Float64
+	DiskInodePercent field.Float64
+	ActiveConns      field.Uint64
+	RequestsTotal    field.Uint64
+	LastSeenAt       field.Time
+	CreatedAt        field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -121,6 +125,8 @@ func (n *node) updateTableName(table string) *node {
 	n.Drifted = field.NewBool(table, "drifted")
 	n.CPUPercent = field.NewFloat64(table, "cpu_percent")
 	n.MemUsedBytes = field.NewUint64(table, "mem_used_bytes")
+	n.DiskUsedPercent = field.NewFloat64(table, "disk_used_percent")
+	n.DiskInodePercent = field.NewFloat64(table, "disk_inode_percent")
 	n.ActiveConns = field.NewUint64(table, "active_conns")
 	n.RequestsTotal = field.NewUint64(table, "requests_total")
 	n.LastSeenAt = field.NewTime(table, "last_seen_at")
@@ -149,7 +155,7 @@ func (n *node) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (n *node) fillFieldMap() {
-	n.fieldMap = make(map[string]field.Expr, 24)
+	n.fieldMap = make(map[string]field.Expr, 26)
 	n.fieldMap["id"] = n.ID
 	n.fieldMap["group_id"] = n.GroupID
 	n.fieldMap["name"] = n.Name
@@ -170,6 +176,8 @@ func (n *node) fillFieldMap() {
 	n.fieldMap["drifted"] = n.Drifted
 	n.fieldMap["cpu_percent"] = n.CPUPercent
 	n.fieldMap["mem_used_bytes"] = n.MemUsedBytes
+	n.fieldMap["disk_used_percent"] = n.DiskUsedPercent
+	n.fieldMap["disk_inode_percent"] = n.DiskInodePercent
 	n.fieldMap["active_conns"] = n.ActiveConns
 	n.fieldMap["requests_total"] = n.RequestsTotal
 	n.fieldMap["last_seen_at"] = n.LastSeenAt

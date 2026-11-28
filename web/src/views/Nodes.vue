@@ -8,6 +8,7 @@ import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
 import { useWorkspace } from '../stores/workspace'
 import DiffView from '../components/DiffView.vue'
+import NodeLogDrawer from '../components/NodeLogDrawer.vue'
 
 const session = useSession()
 const ws = useWorkspace()
@@ -527,14 +528,19 @@ async function revoke(n: any) {
   ws.loadBadges()
 }
 
+const logNode = ref<any>(null)
+function openNodeLogs(n: any) {
+  logNode.value = n
+}
+
 const columns = [
   { title: '节点', key: 'name' },
   { title: '状态', key: 'status', width: 110 },
   { title: '当前版本', key: 'rev', width: 130 },
   { title: '数据面', key: 'dataplane' },
-  { title: '负载', key: 'load', width: 210 },
+  { title: '负载', key: 'load', width: 230 },
   { title: '最后心跳', key: 'seen', width: 120 },
-  { title: '', key: 'ops', width: 140 },
+  { title: '', key: 'ops', width: 190 },
 ]
 function ago(t?: string) {
   if (!t) return '—'
@@ -692,13 +698,19 @@ function mb(b: number) {
           <template v-else-if="column.key === 'load'">
             <template v-if="record.status === 'online'">
               <div class="num">CPU {{ Math.round(record.cpu_percent) }}%，内存 {{ mb(record.mem_used_bytes) }}</div>
-              <div class="sub num">{{ record.active_connections }} 个连接</div>
+              <div class="sub num">
+                {{ record.active_connections }} 个连接
+                <template v-if="record.disk_used_percent > 0">
+                  · <span :class="record.disk_used_percent >= 85 ? 'disk-bad' : record.disk_used_percent >= 75 ? 'disk-warn' : ''">磁盘 {{ Math.round(record.disk_used_percent) }}%</span>
+                </template>
+              </div>
             </template>
             <span v-else>—</span>
           </template>
           <template v-else-if="column.key === 'seen'">{{ ago(record.last_seen_at) }}</template>
           <template v-else-if="column.key === 'ops'">
             <a-space :size="0">
+              <a-button v-if="session.can('operator')" type="link" size="small" :disabled="record.status !== 'online'" @click="openNodeLogs(record)">日志</a-button>
               <a-button v-if="session.can('operator')" type="link" size="small" :disabled="!session.writable" @click="openNodeEdit(record)">编辑</a-button>
               <a-popconfirm v-if="session.can('admin')" title="吊销后该节点证书立即失效，需重新注册。确定吊销？" ok-text="吊销" @confirm="revoke(record)">
                 <a-button type="link" danger size="small">吊销</a-button>
@@ -1066,6 +1078,8 @@ function mb(b: number) {
         </template>
       </template>
     </a-drawer>
+
+    <NodeLogDrawer :node="logNode" @close="logNode = null" />
   </div>
 </template>
 
@@ -1152,6 +1166,14 @@ function mb(b: number) {
 .warn {
   font-size: 12px;
   color: #a3332d;
+}
+.disk-warn {
+  color: #b45309;
+  font-weight: 600;
+}
+.disk-bad {
+  color: #b91c1c;
+  font-weight: 600;
 }
 .dfile {
   margin-bottom: 12px;

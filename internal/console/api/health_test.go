@@ -60,7 +60,14 @@ func TestPromMetricsAuthAndLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = st.SetKV("last_backup_at", time.Now().UTC().Format(time.RFC3339))
-	st.DB.Create(&store.Node{Name: "edge-1", Status: "online", CPUPercent: 12.5, RequestsTotal: 42})
+	grp := store.NodeGroup{Name: "prod"}
+	st.DB.Create(&grp)
+	nd := store.Node{GroupID: grp.ID, Name: "edge-1", Status: "online", CPUPercent: 12.5, DiskUsedPercent: 63.4, DiskInodePercent: 18.2, RequestsTotal: 42}
+	st.DB.Create(&nd)
+	st.DB.Create(&store.MetricMinute{
+		NodeID: nd.ID, Site: "api.example.com", Minute: time.Now().Add(-1 * time.Minute).Truncate(time.Minute).Unix(),
+		Requests: 120, S2xx: 110, S3xx: 2, S4xx: 5, S5xx: 3, P50ms: 12, P95ms: 85.5, Bytes: 4096,
+	})
 
 	s := &Server{Store: st, jwtKey: []byte("test-secret-key-32-bytes-minimum")}
 	gin.SetMode(gin.TestMode)
@@ -90,6 +97,12 @@ func TestPromMetricsAuthAndLoopback(t *testing.T) {
 		"etos_console_db_up 1",
 		`etos_nodes_total{status="online"} 1`,
 		`etos_node_requests_total{node="edge-1"} 42`,
+		`etos_node_disk_used_percent{node="edge-1"} 63.40`,
+		`etos_node_disk_inode_percent{node="edge-1"} 18.20`,
+		`etos_site_requests_5m{group="prod",site="api.example.com",status_class="2xx"} 110`,
+		`etos_site_requests_5m{group="prod",site="api.example.com",status_class="5xx"} 3`,
+		`etos_site_p95_latency_ms{group="prod",site="api.example.com"} 85.50`,
+		`etos_site_bytes_sent_5m{group="prod",site="api.example.com"} 4096`,
 		"etos_backup_last_success_timestamp_seconds",
 	} {
 		if !containsLine(body, want) {

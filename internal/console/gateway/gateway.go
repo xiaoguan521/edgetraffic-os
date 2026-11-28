@@ -78,6 +78,7 @@ type session struct {
 	mu      sync.Mutex
 	native  bool
 	waiters map[string]chan *agentv1.CommandResult
+	logSubs map[string]chan *agentv1.LogChunk
 	done    chan struct{}
 }
 
@@ -282,7 +283,13 @@ func (s *Server) Connect(stream agentv1.AgentGateway_ConnectServer) error {
 	if err != nil {
 		return err
 	}
-	sess := &session{nodeID: node.ID, out: make(chan *agentv1.ServerMessage, 16), waiters: map[string]chan *agentv1.CommandResult{}, done: make(chan struct{})}
+	sess := &session{
+		nodeID:  node.ID,
+		out:     make(chan *agentv1.ServerMessage, 16),
+		waiters: map[string]chan *agentv1.CommandResult{},
+		logSubs: map[string]chan *agentv1.LogChunk{},
+		done:    make(chan struct{}),
+	}
 	s.mu.Lock()
 	if s.sessions == nil {
 		s.sessions = map[uint]*session{}
@@ -293,6 +300,12 @@ func (s *Server) Connect(stream agentv1.AgentGateway_ConnectServer) error {
 	s.sessions[node.ID] = sess
 	s.mu.Unlock()
 	defer func() {
+		sess.mu.Lock()
+		for id, ch := range sess.logSubs {
+			close(ch)
+			delete(sess.logSubs, id)
+		}
+		sess.mu.Unlock()
 		s.mu.Lock()
 		if s.sessions[node.ID] == sess {
 			delete(s.sessions, node.ID)
@@ -386,7 +399,8 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 			}
 		}
 		_, _ = nd.WithContext(ctx).Where(nd.ID.Eq(nodeID)).UpdateSimple(nd.Status.Value("online"), nd.LuaAddon.Value(LuaAddon(hb.LuaAddon)), nd.CPUPercent.Value(hb.CpuPercent),
-			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
+			nd.MemUsedBytes.Value(hb.MemUsedBytes), nd.DiskUsedPercent.Value(hb.DiskUsedPercent), nd.DiskInodePercent.Value(hb.DiskInodePercent),
+			nd.ActiveConns.Value(hb.ActiveConnections), nd.RequestsTotal.Value(hb.RequestsTotal),
 			nd.TreeHash.Value(hb.TreeHash), nd.Drifted.Value(drifted), nd.LastSeenAt.Value(now), nd.RunningVersion.Value(RunningVersion(hb.RunningVersion)))
 		if !drifted {
 			_, _ = q.NodeDrift.WithContext(ctx).Where(q.NodeDrift.NodeID.Eq(nodeID)).Delete()
@@ -397,6 +411,24 @@ func (s *Server) onMessage(ctx context.Context, nodeID uint, sess *session, m *a
 		}
 	case *agentv1.AgentMessage_Drift:
 		s.saveDrift(ctx, nodeID, b.Drift)
+	case *agentv1.AgentMessage_Log:
+		if b.Log == nil || b.Log.TailId == "" {
+			return
+		}
+		sess.mu.Lock()
+		ch := sess.logSubs[b.Log.TailId]
+		if ch != nil {
+			if len(b.Log.Lines) == 0 {
+				delete(sess.logSubs, b.Log.TailId)
+				close(ch)
+			} else {
+				select {
+				case ch <- b.Log:
+				default:
+				}
+			}
+		}
+		sess.mu.Unlock()
 	case *agentv1.AgentMessage_Result:
 		sess.mu.Lock()
 		ch := sess.waiters[b.Result.CmdId]
@@ -554,6 +586,88 @@ func (s *Server) Disconnect(nodeID uint) {
 		close(sess.done)
 		delete(s.sessions, nodeID)
 	}
+}
+
+const (
+	defaultLogTailSeconds = 120
+	maxLogTailSeconds     = 300
+	maxLogSubsPerNode     = 4
+)
+
+// StartLogTail 向在线节点下发签名 TailLog 指令并返回实时日志块只读通道及停止函数。
+// 只允许跟踪受限枚举文件（ACCESS / ERROR），单次最长 300 秒；调用 stop 会立即通知 agent 停止。
+func (s *Server) StartLogTail(ctx context.Context, nodeID uint, file agentv1.TailLog_File, seconds int) (<-chan *agentv1.LogChunk, func(), error) {
+	if file != agentv1.TailLog_ACCESS && file != agentv1.TailLog_ERROR {
+		return nil, nil, errors.New("unsupported log file")
+	}
+	if seconds <= 0 {
+		seconds = defaultLogTailSeconds
+	}
+	if seconds > maxLogTailSeconds {
+		seconds = maxLogTailSeconds
+	}
+	s.mu.Lock()
+	sess := s.sessions[nodeID]
+	s.mu.Unlock()
+	if sess == nil {
+		return nil, nil, ErrOffline
+	}
+	idBytes := make([]byte, 12)
+	_, _ = rand.Read(idBytes)
+	tailID := hex.EncodeToString(idBytes)
+
+	ch := make(chan *agentv1.LogChunk, 64)
+	sess.mu.Lock()
+	if len(sess.logSubs) >= maxLogSubsPerNode {
+		sess.mu.Unlock()
+		return nil, nil, errors.New("该节点并发实时日志会话已达上限（最多 4 个），请稍后再试")
+	}
+	sess.logSubs[tailID] = ch
+	sess.mu.Unlock()
+
+	cleanupLocal := func() {
+		sess.mu.Lock()
+		if cur := sess.logSubs[tailID]; cur == ch {
+			delete(sess.logSubs, tailID)
+			close(ch)
+		}
+		sess.mu.Unlock()
+	}
+
+	res, err := s.Send(ctx, nodeID, &agentv1.ServerMessage{
+		Body: &agentv1.ServerMessage_Tail{
+			Tail: &agentv1.TailLog{TailId: tailID, File: file, Seconds: int32(seconds)},
+		},
+	}, 10*time.Second)
+	if err != nil {
+		cleanupLocal()
+		return nil, nil, err
+	}
+	if res.Status != agentv1.CommandResult_APPLIED {
+		cleanupLocal()
+		msg := strings.TrimSpace(res.Message)
+		if msg == "" {
+			msg = "节点拒绝启动实时日志跟踪"
+		}
+		return nil, nil, errors.New(msg)
+	}
+
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cleanupLocal()
+			go func() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_, _ = s.Send(stopCtx, nodeID, &agentv1.ServerMessage{
+					Body: &agentv1.ServerMessage_Tail{
+						Tail: &agentv1.TailLog{TailId: tailID, File: file, Seconds: 0},
+					},
+				}, 3*time.Second)
+			}()
+		})
+	}
+	return ch, stop, nil
 }
 
 // DriftFileView 是保存与展示用的漂移文件。

@@ -85,6 +85,8 @@ message Heartbeat {
   repeated SiteMinute site_minutes = 7;
   string lua_addon = 8;             // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
   string running_version = 9;       // 同 Hello.running_version
+  double disk_used_percent = 10;    // 节点日志/运行目录所在分区磁盘使用率（%）；旧版 agent 为 0
+  double disk_inode_percent = 11;   // 节点日志/运行目录所在分区 inode 使用率（%）；旧版 agent 为 0
 }
 
 message SiteMinute {

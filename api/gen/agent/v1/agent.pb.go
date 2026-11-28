@@ -805,8 +805,10 @@ type Heartbeat struct {
 	RequestsTotal     uint64                 `protobuf:"varint,5,opt,name=requests_total,json=requestsTotal,proto3" json:"requests_total,omitempty"`
 	TreeHash          string                 `protobuf:"bytes,6,opt,name=tree_hash,json=treeHash,proto3" json:"tree_hash,omitempty"` // current 目录哈希，用于漂移检测
 	SiteMinutes       []*SiteMinute          `protobuf:"bytes,7,rep,name=site_minutes,json=siteMinutes,proto3" json:"site_minutes,omitempty"`
-	LuaAddon          string                 `protobuf:"bytes,8,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                   // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
-	RunningVersion    string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"` // 同 Hello.running_version
+	LuaAddon          string                 `protobuf:"bytes,8,opt,name=lua_addon,json=luaAddon,proto3" json:"lua_addon,omitempty"`                              // 同 Hello.lua_addon：手工安装 / 卸载附加包后无需重连即可上报
+	RunningVersion    string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"`            // 同 Hello.running_version
+	DiskUsedPercent   float64                `protobuf:"fixed64,10,opt,name=disk_used_percent,json=diskUsedPercent,proto3" json:"disk_used_percent,omitempty"`    // 节点日志/运行目录所在分区磁盘使用率（%）；旧版 agent 为 0
+	DiskInodePercent  float64                `protobuf:"fixed64,11,opt,name=disk_inode_percent,json=diskInodePercent,proto3" json:"disk_inode_percent,omitempty"` // 节点日志/运行目录所在分区 inode 使用率（%）；旧版 agent 为 0
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -902,6 +904,20 @@ func (x *Heartbeat) GetRunningVersion() string {
 		return x.RunningVersion
 	}
 	return ""
+}
+
+func (x *Heartbeat) GetDiskUsedPercent() float64 {
+	if x != nil {
+		return x.DiskUsedPercent
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetDiskInodePercent() float64 {
+	if x != nil {
+		return x.DiskInodePercent
+	}
+	return 0
 }
 
 type SiteMinute struct {
@@ -2393,7 +2409,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x05brand\x18\b \x01(\tR\x05brand\x12'\n" +
 	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\x12\"\n" +
 	"\fcapabilities\x18\n" +
-	" \x03(\tR\fcapabilities\"\xe9\x02\n" +
+	" \x03(\tR\fcapabilities\"\xc3\x03\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -2404,7 +2420,10 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\ttree_hash\x18\x06 \x01(\tR\btreeHash\x12C\n" +
 	"\fsite_minutes\x18\a \x03(\v2 .edgetraffic.agent.v1.SiteMinuteR\vsiteMinutes\x12\x1b\n" +
 	"\tlua_addon\x18\b \x01(\tR\bluaAddon\x12'\n" +
-	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\"\xa6\x02\n" +
+	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\x12*\n" +
+	"\x11disk_used_percent\x18\n" +
+	" \x01(\x01R\x0fdiskUsedPercent\x12,\n" +
+	"\x12disk_inode_percent\x18\v \x01(\x01R\x10diskInodePercent\"\xa6\x02\n" +
 	"\n" +
 	"SiteMinute\x12\x12\n" +
 	"\x04site\x18\x01 \x01(\tR\x04site\x12\x1f\n" +

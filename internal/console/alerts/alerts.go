@@ -41,6 +41,7 @@ const (
 	KindDeployRollback = "deployment_rolled_back" // 近期发布失败或灰度自动回滚
 	KindBackupStale    = "backup_stale"           // 阈值：距上次成功备份的小时数
 	KindDiskUsage      = "disk_usage"             // 阈值：控制台数据目录磁盘或 inode 使用率（%）
+	KindNodeDiskUsage  = "node_disk_usage"        // 阈值：边缘节点磁盘或 inode 使用率（%）
 	KindHostVersionMix = "host_version_mixed"     // 同一主机上的实例运行着不同的数据面版本（设计 0001 第 5.6 节）
 )
 
@@ -53,6 +54,7 @@ var Defaults = map[string]float64{
 	KindDeployRollback: 0,
 	KindBackupStale:    24,
 	KindDiskUsage:      85,
+	KindNodeDiskUsage:  85,
 	KindHostVersionMix: 0,
 }
 
@@ -65,6 +67,7 @@ var KindName = map[string]string{
 	KindDeployRollback: "发布失败或自动回滚",
 	KindBackupStale:    "备份超期未执行",
 	KindDiskUsage:      "控制台磁盘空间不足",
+	KindNodeDiskUsage:  "边缘节点磁盘空间不足",
 	KindHostVersionMix: "同机实例版本不一致",
 }
 
@@ -758,6 +761,21 @@ func (s *Service) Evaluate() error {
 					} else if inodePct >= r.Threshold {
 						found = append(found, finding{r.Kind, "disk:console", fmt.Sprintf("控制台数据目录 inode 使用率 %.1f%% 超过阈值 %.1f%%", inodePct, r.Threshold)})
 					}
+				}
+			}
+		case KindNodeDiskUsage:
+			if r.Threshold <= 0 {
+				continue
+			}
+			nodes, err := q.Node.WithContext(bg).Where(q.Node.Status.Eq("online")).Find()
+			if err != nil {
+				return err
+			}
+			for _, n := range nodes {
+				if n.DiskUsedPercent > 0 && n.DiskUsedPercent >= r.Threshold {
+					found = append(found, finding{r.Kind, fmt.Sprintf("disk:node:%d", n.ID), fmt.Sprintf("节点 %s 磁盘使用率 %.1f%% 超过阈值 %.1f%%", n.Name, n.DiskUsedPercent, r.Threshold)})
+				} else if n.DiskInodePercent > 0 && n.DiskInodePercent >= r.Threshold {
+					found = append(found, finding{r.Kind, fmt.Sprintf("disk:node:%d", n.ID), fmt.Sprintf("节点 %s inode 使用率 %.1f%% 超过阈值 %.1f%%", n.Name, n.DiskInodePercent, r.Threshold)})
 				}
 			}
 		}
