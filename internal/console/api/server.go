@@ -119,6 +119,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.POST("/api-tokens", s.writable, s.feature(license.FeatureAPIToken), s.createToken)
 	a.DELETE("/api-tokens/:id", s.revokeToken)
 	a.GET("/dashboard", s.dashboard)
+	a.GET("/badges", s.badges)
 	a.GET("/metrics", s.metrics)
 
 	a.GET("/license", s.licenseGet)
@@ -237,6 +238,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	a.DELETE("/upstreams/:id", role(store.RoleOperator), s.writable, s.deleteUpstream)
 
 	a.GET("/revisions", s.listRevisions)
+	a.GET("/revisions/diff", s.diffRevisions)
+	a.GET("/revisions/:id/files", s.revisionFiles)
 	a.GET("/deployments", s.listDeployments)
 	a.GET("/deployments/:id", s.getDeployment)
 

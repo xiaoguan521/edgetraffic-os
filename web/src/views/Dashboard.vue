@@ -1,20 +1,41 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { api } from '../api/client'
 import TrafficChart from '../components/TrafficChart.vue'
 import { deployStatus, kindName } from '../components/status'
+import { useWorkspace } from '../stores/workspace'
 
+const router = useRouter()
+const ws = useWorkspace()
 const data = ref<any>(null)
 const nodes = ref<any[]>([])
 const groups = ref<any[]>([])
+const nodeFilter = ref<'all' | 'abnormal' | 'online' | 'offline'>('all')
+const showAllNodes = ref(false)
+const rangeMinutes = ref(30)
+const metricGroupId = ref(0)
+const series = ref<any[]>([])
+
+async function loadSeries() {
+  const r = await api.get('/metrics', { minutes: rangeMinutes.value, ...(metricGroupId.value ? { group_id: metricGroupId.value } : {}) })
+  series.value = r.series || []
+}
 
 async function load() {
   const [d, n, g] = await Promise.all([api.get('/dashboard'), api.get('/nodes'), api.get('/node-groups')])
   data.value = d
   nodes.value = n.filter((x: any) => x.status !== 'revoked')
   groups.value = g
+  if (rangeMinutes.value === 30 && !metricGroupId.value) {
+    series.value = d.series || []
+  } else {
+    await loadSeries()
+  }
 }
+
+watch([rangeMinutes, metricGroupId], loadSeries)
 
 let t: number | undefined
 onMounted(() => {
@@ -29,6 +50,24 @@ function groupName(id: number) {
 function currentRev(groupId: number) {
   return groups.value.find((g) => g.id === groupId)?.current_revision_id || ''
 }
+function isAbnormal(n: any) {
+  return n.drifted || n.status !== 'online' || (currentRev(n.group_id) && n.applied_revision !== currentRev(n.group_id))
+}
+const abnormalCount = computed(() => nodes.value.filter(isAbnormal).length)
+const filteredNodes = computed(() => {
+  let list = nodes.value
+  if (nodeFilter.value === 'abnormal') list = list.filter(isAbnormal)
+  else if (nodeFilter.value === 'online') list = list.filter((n) => n.status === 'online')
+  else if (nodeFilter.value === 'offline') list = list.filter((n) => n.status !== 'online')
+  return [...list].sort((a, b) => Number(isAbnormal(b)) - Number(isAbnormal(a)))
+})
+const visibleNodes = computed(() => (showAllNodes.value ? filteredNodes.value : filteredNodes.value.slice(0, 12)))
+
+function goNode(n: any) {
+  ws.setGroup(n.group_id)
+  router.push({ name: 'nodes', query: { group: n.group_id } })
+}
+
 function ago(t?: string) {
   if (!t) return '从未'
   const s = dayjs().diff(dayjs(t), 'second')
@@ -48,7 +87,20 @@ function ago(t?: string) {
           <span class="num">{{ data.error_rate_15m.toFixed(2) }}%</span>
         </p>
       </div>
-      <router-link to="/nodes"><a-button>添加节点</a-button></router-link>
+      <a-space>
+        <a-segmented
+          v-if="nodes.length > 0"
+          v-model:value="nodeFilter"
+          size="small"
+          :options="[
+            { label: `全部 (${nodes.length})`, value: 'all' },
+            { label: `异常 (${abnormalCount})`, value: 'abnormal' },
+            { label: '在线', value: 'online' },
+            { label: '离线', value: 'offline' },
+          ]"
+        />
+        <router-link to="/nodes"><a-button>添加节点</a-button></router-link>
+      </a-space>
     </div>
 
     <a-alert v-if="data && (data.certs_expired || data.certs_expiring)" :type="data.certs_expired ? 'error' : 'warning'" show-icon style="margin-bottom: 16px">
@@ -61,8 +113,14 @@ function ago(t?: string) {
     </a-alert>
 
     <section class="fleet" v-if="data">
-      <a-empty v-if="!nodes.length" description="还没有节点。在“节点”页生成注册命令，在边缘服务器上执行即可接入。" />
-      <article v-for="n in nodes" :key="n.id" class="node" :class="[n.status, { drift: n.drifted, behind: n.status === 'online' && currentRev(n.group_id) && n.applied_revision !== currentRev(n.group_id) }]">
+      <a-empty v-if="!filteredNodes.length" :description="nodes.length ? '当前筛选条件下没有节点' : '还没有节点。在“节点”页生成注册命令，在边缘服务器上执行即可接入。'" />
+      <article
+        v-for="n in visibleNodes"
+        :key="n.id"
+        class="node clickable"
+        :class="[n.status, { drift: n.drifted, behind: n.status === 'online' && currentRev(n.group_id) && n.applied_revision !== currentRev(n.group_id) }]"
+        @click="goNode(n)"
+      >
         <header>
           <span class="light" />
           <strong>{{ n.name }}</strong>
@@ -79,18 +137,44 @@ function ago(t?: string) {
         <div v-else-if="n.status === 'online' && currentRev(n.group_id) && n.applied_revision !== currentRev(n.group_id)" class="flag">落后于组版本 {{ currentRev(n.group_id) }}</div>
       </article>
     </section>
+    <div v-if="filteredNodes.length > 12" style="margin: -6px 0 14px; text-align: center">
+      <a-button type="link" size="small" @click="showAllNodes = !showAllNodes">
+        {{ showAllNodes ? '收起节点列表' : `展开全部 ${filteredNodes.length} 个节点` }}
+      </a-button>
+    </div>
 
     <div class="grid" v-if="data">
       <section class="panel">
-        <h2>全网流量（最近 30 分钟）</h2>
-        <TrafficChart :series="data.series" />
+        <div class="chart-head">
+          <h2>流量监控</h2>
+          <a-space size="small">
+            <a-select
+              v-model:value="metricGroupId"
+              size="small"
+              style="width: 140px"
+              :options="[{ value: 0, label: '全网节点组' }, ...groups.map((g) => ({ value: g.id, label: g.name }))]"
+            />
+            <a-segmented
+              v-model:value="rangeMinutes"
+              size="small"
+              :options="[
+                { label: '30分', value: 30 },
+                { label: '1小时', value: 60 },
+                { label: '6小时', value: 360 },
+                { label: '24小时', value: 1440 },
+                { label: '7天', value: 10080 },
+              ]"
+            />
+          </a-space>
+        </div>
+        <TrafficChart :series="series" />
       </section>
       <section class="panel">
         <h2>最近发布</h2>
         <a-empty v-if="!data.deployments.length" description="还没有发布记录" />
         <ul class="deps">
           <li v-for="d in data.deployments" :key="d.id">
-            <router-link :to="{ name: 'releases', query: { d: d.id } }" class="num">{{ d.revision_id }}</router-link>
+            <router-link :to="{ name: 'releases', query: { d: d.id, group: d.group_id } }" class="num">{{ d.revision_id }}</router-link>
             <span class="kind">{{ kindName[d.kind] || d.kind }}</span>
             <a-tag :color="deployStatus[d.status]?.color">{{ deployStatus[d.status]?.text || d.status }}</a-tag>
             <span class="note">{{ d.note }}</span>
@@ -116,6 +200,14 @@ function ago(t?: string) {
   border-left: 4px solid #2f9e5b;
   border-radius: 6px;
   padding: 12px 14px;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.node.clickable {
+  cursor: pointer;
+}
+.node.clickable:hover {
+  box-shadow: 0 3px 10px rgba(22, 50, 58, 0.08);
+  transform: translateY(-1px);
 }
 .node.offline {
   border-left-color: #b8c3c2;
@@ -168,6 +260,17 @@ function ago(t?: string) {
 }
 .behind .flag {
   color: #8a6510;
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.chart-head h2 {
+  margin: 0;
 }
 .grid {
   display: grid;

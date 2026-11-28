@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
@@ -7,11 +7,27 @@ import { useSession } from '../stores/session'
 
 const session = useSession()
 const rows = ref<any[]>([])
+const loading = ref(false)
 const verify = ref<any>(null)
+const filter = reactive({ q: '', username: '', action: '', result: '' })
 
 async function load() {
-  rows.value = await api.get('/audit', { limit: 300 })
-  if (session.can('admin')) verify.value = await api.get('/audit/verify')
+  loading.value = true
+  try {
+    const params: Record<string, any> = { limit: 500 }
+    if (filter.q.trim()) params.q = filter.q.trim()
+    if (filter.username.trim()) params.username = filter.username.trim()
+    if (filter.action) params.action = filter.action
+    if (filter.result) params.result = filter.result
+    rows.value = await api.get('/audit', params)
+    if (session.can('admin') && !verify.value) verify.value = await api.get('/audit/verify')
+  } finally {
+    loading.value = false
+  }
+}
+function resetFilter() {
+  Object.assign(filter, { q: '', username: '', action: '', result: '' })
+  load()
 }
 onMounted(load)
 
@@ -67,7 +83,29 @@ const resultColor: Record<string, string> = { success: 'green', applied: 'green'
       <a-button v-if="session.can('admin')" @click="exportCsv">导出 CSV</a-button>
     </div>
     <div class="panel">
-      <a-table :data-source="rows" row-key="id" size="middle" :pagination="{ pageSize: 20, showSizeChanger: false }" :columns="[{ title: '时间', key: 'ts', width: 170 }, { title: '操作人', key: 'user', width: 160 }, { title: '操作', key: 'action', width: 140 }, { title: '对象', key: 'obj', width: 160 }, { title: '结果', key: 'result', width: 100 }, { title: '详情', key: 'detail' }]">
+      <div class="toolbar">
+        <a-input v-model:value="filter.q" allow-clear placeholder="搜索关键词（对象/详情/动作）" style="width: 240px" @press-enter="load" />
+        <a-input v-model:value="filter.username" allow-clear placeholder="操作人" style="width: 140px" @press-enter="load" />
+        <a-select
+          v-model:value="filter.action"
+          allow-clear
+          placeholder="操作类型"
+          style="width: 160px"
+          :options="Object.entries(actionName).map(([value, label]) => ({ value, label }))"
+          @change="load"
+        />
+        <a-select
+          v-model:value="filter.result"
+          allow-clear
+          placeholder="结果"
+          style="width: 120px"
+          :options="['success', 'applied', 'failed', 'failure', 'partial'].map((v) => ({ value: v, label: v }))"
+          @change="load"
+        />
+        <a-button type="primary" :loading="loading" @click="load">查询</a-button>
+        <a-button @click="resetFilter">重置</a-button>
+      </div>
+      <a-table :data-source="rows" :loading="loading" row-key="id" size="middle" :pagination="{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'] }" :columns="[{ title: '时间', key: 'ts', width: 170 }, { title: '操作人', key: 'user', width: 160 }, { title: '操作', key: 'action', width: 140 }, { title: '对象', key: 'obj', width: 160 }, { title: '结果', key: 'result', width: 100 }, { title: '详情', key: 'detail' }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'ts'"><span class="num">{{ dayjs(record.ts).format('YYYY-MM-DD HH:mm:ss') }}</span></template>
           <template v-else-if="column.key === 'user'">
@@ -85,6 +123,12 @@ const resultColor: Record<string, string> = { success: 'green', applied: 'green'
 </template>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 .sub {
   font-size: 12px;
   color: #8a9a9d;

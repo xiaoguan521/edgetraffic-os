@@ -1,19 +1,28 @@
 <script setup lang="ts">
 import { brand } from '../brand'
 import { computed, reactive, ref, watch } from 'vue'
-import { message } from 'antdv-next'
+import { Modal, message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import RulesEditor, { type Rule as AccessRule } from './RulesEditor.vue'
 
 const props = defineProps<{ open: boolean; site: any | null; groupId: number; upstreams: any[]; focusRoute?: string; migration?: boolean }>()
-const emit = defineEmits<{ close: []; saved: [] }>()
+const emit = defineEmits<{ close: []; saved: []; upstreamCreated: [name: string] }>()
 
 interface Route {
   path: string
   match: 'prefix' | 'exact'
   mode: 'static' | 'proxy' | 'redirect' | 'deny'
-  static?: { index_html: string; bundle_id?: number }
-  proxy?: { upstream: string; websocket?: boolean }
+  static?: { index_html: string; bundle_id?: number; spa?: boolean }
+  proxy?: {
+    upstream: string
+    websocket?: boolean
+    https?: boolean
+    strip_prefix?: boolean
+    connect_timeout?: number
+    read_timeout?: number
+    send_timeout?: number
+    buffering?: boolean
+  }
   redirect?: { to: string; code: number }
 }
 
@@ -25,9 +34,11 @@ const blank = () => ({
   gm_cert_id: undefined as number | undefined,
   force_https: false,
   http2: false,
+  client_max_body_size: '',
+  gzip: false,
   enabled: true,
   version: 0,
-  routes: [{ path: '/', match: 'prefix', mode: 'static', static: { index_html: `<h1>Hello from ${brand.product}</h1>\n` } }] as Route[],
+  routes: [{ path: '/', match: 'prefix', mode: 'static', static: { index_html: `<h1>Hello from ${brand.product}</h1>\n`, spa: false } }] as Route[],
   rules: [] as AccessRule[],
 })
 const f = reactive(blank())
@@ -37,9 +48,50 @@ const isNew = computed(() => !props.site)
 const certs = ref<any[]>([])
 const bundles = ref<any[]>([])
 const ipSets = ref<any[]>([])
+const localUpstreams = ref<any[]>([])
 const routeSearch = ref('')
+
+// 快速新建上游
+const quickUpOpen = ref(false)
+const quickUpForm = reactive({ name: '', algorithm: 'least_conn', addr: '' })
+const quickUpSaving = ref(false)
+const quickUpTarget = ref<Route | null>(null)
+function openQuickUp(r: Route) {
+  quickUpTarget.value = r
+  Object.assign(quickUpForm, { name: '', algorithm: 'least_conn', addr: '' })
+  quickUpOpen.value = true
+}
+async function saveQuickUp() {
+  quickUpSaving.value = true
+  try {
+    const spec = { name: quickUpForm.name.trim(), algorithm: quickUpForm.algorithm, servers: [{ addr: quickUpForm.addr.trim(), weight: 0 }] }
+    await api.post('/upstreams', { group_id: props.groupId, spec })
+    localUpstreams.value = await api.get('/upstreams', { group_id: props.groupId })
+    if (quickUpTarget.value?.proxy) quickUpTarget.value.proxy.upstream = spec.name
+    quickUpOpen.value = false
+    message.success(`已新建上游 ${spec.name}`)
+    emit('upstreamCreated', spec.name)
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    quickUpSaving.value = false
+  }
+}
+
 async function loadBundles() {
   bundles.value = await api.get('/static-bundles', { group_id: props.groupId }).catch(() => [])
+}
+function confirmNoIndex(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: '资源包根目录缺少 index.html',
+      content: '如果这是网站，请检查是否多打包了一层目录；如果这是纯资源包（下载文件、图片、脚本等），点击“继续上传”，访问该路由根路径将返回 403。',
+      okText: '继续上传',
+      cancelText: '取消',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    })
+  })
 }
 function uploadBundle(r: Route) {
   const el = document.createElement('input')
@@ -61,9 +113,8 @@ function uploadBundle(r: Route) {
       try {
         b = (await send(false)).data
       } catch (e: any) {
-        // 缺少根目录 index.html：多半是打包多了一层目录；确认是纯资源包（下载目录、图片 / 脚本）后再上传
         if (e?.response?.data?.code !== 'STATIC_NO_INDEX') throw e
-        const ok = window.confirm('资源包根目录没有 index.html。\n\n如果这是网站，请检查是否多打包了一层目录；\n如果这是纯资源包（下载文件、图片、脚本等），点击“确定”继续上传，访问该路由的根路径将返回 403。')
+        const ok = await confirmNoIndex()
         if (!ok) return
         b = (await send(true)).data
       }
@@ -100,12 +151,25 @@ const gmWarn = computed(() => warnFor(f.gm_cert_id))
 const certOpt = (c: any) => ({ value: c.id, label: `${c.name}（${c.domains.join('、')}）` })
 const stdCerts = computed(() => certs.value.filter((c) => c.kind !== 'sm2').map(certOpt))
 const gmCerts = computed(() => certs.value.filter((c) => c.kind === 'sm2').map(certOpt))
+const allUpstreams = computed(() => (localUpstreams.value.length ? localUpstreams.value : props.upstreams))
+
+// 勾选 HTTPS 时，如果尚未选证书，自动匹配覆盖当前域名的有效证书
+watch(
+  () => f.https,
+  (on) => {
+    if (!on || f.cert_id || !f.domains.length) return
+    const ds = f.domains.map((d) => d.trim().toLowerCase()).filter(Boolean)
+    const hit = certs.value.find((c) => c.kind !== 'sm2' && c.status !== 'expired' && ds.every((d) => (c.domains || []).some((p: string) => covers(p, d))))
+    if (hit) f.cert_id = hit.id
+  },
+)
 
 watch(
   () => props.open,
   (o) => {
     if (!o) return
     error.value = ''
+    localUpstreams.value = [...props.upstreams]
     routeSearch.value = props.focusRoute || ''
     api.get('/certificates').then((c) => (certs.value = c)).catch(() => {})
     loadBundles()
@@ -121,9 +185,14 @@ watch(
         gm_cert_id: s.https?.gm_cert_id || undefined,
         force_https: s.force_https,
         http2: s.http2,
+        client_max_body_size: s.client_max_body_size || '',
+        gzip: !!s.gzip,
         enabled: props.site.enabled,
         version: props.site.version,
-        routes: JSON.parse(JSON.stringify(Array.isArray(s.routes) ? s.routes : [])),
+        routes: JSON.parse(JSON.stringify(Array.isArray(s.routes) ? s.routes : [])).map((r: Route) => {
+          if (r.mode === 'proxy' && r.proxy && r.proxy.buffering === undefined) r.proxy.buffering = true
+          return r
+        }),
         rules: JSON.parse(JSON.stringify(s.rules || [])).map((r: AccessRule) => ({ ...r, conditions: (r.conditions || []).map((c) => ({ ...c, negate: !!c.negate })) })),
       })
     }
@@ -136,8 +205,8 @@ function addRoute() {
 }
 function setMode(r: Route, m: Route['mode']) {
   r.mode = m
-  if (m === 'static' && !r.static) r.static = { index_html: '' }
-  if (m === 'proxy' && !r.proxy) r.proxy = { upstream: props.upstreams[0]?.name || '' }
+  if (m === 'static' && !r.static) r.static = { index_html: '', spa: false }
+  if (m === 'proxy' && !r.proxy) r.proxy = { upstream: allUpstreams.value[0]?.name || '', buffering: true }
   if (m === 'redirect' && !r.redirect) r.redirect = { to: 'https://', code: 301 }
 }
 
@@ -149,17 +218,34 @@ async function save() {
     domains: f.domains.map((d) => d.trim().toLowerCase()).filter(Boolean),
     force_https: f.https && f.force_https,
     http2: f.https && f.http2,
+    ...(f.client_max_body_size.trim() ? { client_max_body_size: f.client_max_body_size.trim() } : {}),
+    ...(f.gzip ? { gzip: true } : {}),
     routes: f.routes.map((r) => {
       const o: any = { path: r.path, match: r.match, mode: r.mode }
-      if (r.mode === 'static') o.static = r.static
-      if (r.mode === 'proxy') o.proxy = r.proxy
+      if (r.mode === 'static') {
+        o.static = {
+          index_html: r.static?.index_html || '',
+          ...(r.match === 'prefix' && r.static?.bundle_id ? { bundle_id: r.static.bundle_id } : {}),
+          ...(r.match === 'prefix' && r.static?.spa ? { spa: true } : {}),
+        }
+      }
+      if (r.mode === 'proxy') {
+        const p: any = { upstream: r.proxy!.upstream }
+        if (r.proxy?.websocket) p.websocket = true
+        if (r.proxy?.https) p.https = true
+        if (r.proxy?.strip_prefix && r.match === 'prefix' && r.path !== '/' && r.path.endsWith('/')) p.strip_prefix = true
+        if (r.proxy?.connect_timeout) p.connect_timeout = Number(r.proxy.connect_timeout)
+        if (r.proxy?.read_timeout) p.read_timeout = Number(r.proxy.read_timeout)
+        if (r.proxy?.send_timeout) p.send_timeout = Number(r.proxy.send_timeout)
+        if (r.proxy?.buffering === false) p.buffering = false
+        o.proxy = p
+      }
       if (r.mode === 'redirect') o.redirect = { to: r.redirect!.to, code: Number(r.redirect!.code) }
       return o
     }),
   }
   if (f.https) spec.https = { cert_id: f.cert_id, ...(f.gm_cert_id ? { gm_cert_id: f.gm_cert_id } : {}) }
   if (f.rules.length) {
-    // 密钥只写不读：留空表示沿用已保存的密钥；has_secret 是服务端的响应字段，不回传
     spec.rules = f.rules.map((r) => {
       const a = JSON.parse(JSON.stringify(r.action))
       if (a.jwt) {
@@ -172,7 +258,7 @@ async function save() {
   try {
     if (isNew.value) await api.post('/sites', { group_id: props.groupId, enabled: f.enabled, spec })
     else await api.put(`/sites/${props.site.id}`, { version: f.version, enabled: f.enabled, spec })
-    message.success('已保存。到“发布”页查看变更并发布到节点。')
+    message.success('已保存草稿。可点击页面顶部“去发布变更”查看差异并下发。')
     emit('saved')
   } catch (e) {
     error.value = errMsg(e)
@@ -190,7 +276,7 @@ const modes = [
 </script>
 
 <template>
-  <a-drawer :open="open" :title="isNew ? '新建站点' : `编辑站点 ${site?.name}`" width="760" @close="emit('close')">
+  <a-drawer :open="open" :title="isNew ? '新建站点' : `编辑站点 ${site?.name}`" width="780" @close="emit('close')">
     <a-form layout="vertical">
       <div class="row2">
         <a-form-item label="站点标识" extra="小写字母、数字、连字符，用于配置文件名，创建后不可修改">
@@ -204,11 +290,20 @@ const modes = [
         <a-select v-model:value="f.domains" mode="tags" :open="false" placeholder="shop.example.com" />
       </a-form-item>
 
+      <div class="row2">
+        <a-form-item label="请求体大小上限（可选）" extra="留空沿用全局 1m；如 10m、100m、0（不限）">
+          <a-input v-model:value="f.client_max_body_size" class="code" placeholder="1m" />
+        </a-form-item>
+        <a-form-item label="传输优化">
+          <a-checkbox v-model:checked="f.gzip">启用站点级 Gzip 压缩</a-checkbox>
+        </a-form-item>
+      </div>
+
       <a-form-item>
         <a-checkbox v-model:checked="f.https">启用 HTTPS</a-checkbox>
       </a-form-item>
       <template v-if="f.https">
-        <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期'">
+        <a-form-item label="证书" :extra="certWarn ? '' : '证书与私钥在“证书”页统一上传和续期；勾选 HTTPS 时会自动匹配覆盖域名的有效证书'">
           <a-select v-model:value="f.cert_id" placeholder="从证书库选择" :options="stdCerts">
             <template #notFoundContent>
               <span>证书库为空，<router-link to="/certificates">先去上传证书</router-link></span>
@@ -233,36 +328,53 @@ const modes = [
       <a-input v-if="f.routes.length > 5 || routeSearch" v-model:value="routeSearch" allow-clear placeholder="按路径查找路由" style="margin-bottom: 10px" />
       <a-alert v-if="migration && routeSearch && !f.routes.some((r) => r.path.toLowerCase().includes(routeSearch.toLowerCase()))" type="info" show-icon message="当前草稿没有匹配的路由，请核对原配置后添加；正则与特殊优先级不能直接转换为普通前缀路由。" style="margin-bottom: 10px" />
       <template v-for="(r, i) in f.routes" :key="i">
-      <div v-if="!routeSearch || r.path.toLowerCase().includes(routeSearch.toLowerCase())" class="route">
-        <div class="rline">
-          <a-select v-model:value="r.match" style="width: 104px" :options="[{ label: '前缀匹配', value: 'prefix' }, { label: '精确匹配', value: 'exact' }]" />
-          <a-input v-model:value="r.path" class="code" style="flex: 1" />
-          <a-select :value="r.mode" style="width: 120px" :options="modes" @change="(v: any) => setMode(r, v)" />
-          <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
-        </div>
-        <template v-if="r.mode === 'static'">
-          <div v-if="migration" class="sub">请上传实际静态资源包，并核对原配置的 root、alias 和 try_files 行为；不会自动读取节点上的目录。</div>
-          <div class="rline" v-if="r.match === 'prefix'">
-            <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
-              :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
-            <a-button @click="uploadBundle(r)">上传 zip / tar.gz</a-button>
+        <div v-if="!routeSearch || r.path.toLowerCase().includes(routeSearch.toLowerCase())" class="route">
+          <div class="rline">
+            <a-select v-model:value="r.match" style="width: 104px" :options="[{ label: '前缀匹配', value: 'prefix' }, { label: '精确匹配', value: 'exact' }]" />
+            <a-input v-model:value="r.path" class="code" style="flex: 1" />
+            <a-select :value="r.mode" style="width: 120px" :options="modes" @change="(v: any) => setMode(r, v)" />
+            <a-button type="text" danger :disabled="f.routes.length === 1" @click="f.routes.splice(i, 1)">删除</a-button>
           </div>
-          <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
-        </template>
-        <template v-else-if="r.mode === 'proxy'">
-          <a-select v-model:value="r.proxy!.upstream" style="width: 100%" placeholder="选择上游服务" :options="upstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
-          <a-checkbox v-model:checked="r.proxy!.websocket">启用 WebSocket 连接升级</a-checkbox>
-          <div v-if="migration" class="sub">请核对原配置的 Host、升级头和超时；勾选只启用标准连接升级，不保证与自定义头或 Lua 逻辑一致。</div>
-        </template>
-        <div v-else-if="r.mode === 'redirect'" class="rline">
-          <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />
-          <a-select v-model:value="r.redirect!.code" style="width: 100px" :options="[301, 302, 307, 308].map((c) => ({ label: String(c), value: c }))" />
+          <template v-if="r.mode === 'static'">
+            <div v-if="migration" class="sub">请上传实际静态资源包，并核对原配置的 root、alias 和 try_files 行为；不会自动读取节点上的目录。</div>
+            <div class="rline" v-if="r.match === 'prefix'">
+              <a-select v-model:value="r.static!.bundle_id" allow-clear style="flex: 1" placeholder="静态资源包（不选则使用下方内联页面）"
+                :options="bundles.map((b) => ({ value: b.id, label: `${b.name} · ${b.files} 个文件 · ${(b.size / 1048576).toFixed(1)} MiB · ${b.sha256.slice(0, 8)}` }))" />
+              <a-button @click="uploadBundle(r)">上传 zip / tar.gz</a-button>
+            </div>
+            <a-checkbox v-if="r.match === 'prefix'" v-model:checked="r.static!.spa">单页应用模式（SPA：未命中文件时回退到 index.html）</a-checkbox>
+            <a-textarea v-if="!r.static!.bundle_id" v-model:value="r.static!.index_html" :rows="3" class="code" placeholder="页面 HTML，随配置版本一起发布" />
+          </template>
+          <template v-else-if="r.mode === 'proxy'">
+            <div class="rline">
+              <a-select v-model:value="r.proxy!.upstream" style="flex: 1" placeholder="选择上游服务" :options="allUpstreams.map((u) => ({ label: `${u.name}（${u.spec.servers.map((s: any) => s.addr).join('，')}）`, value: u.name }))" />
+              <a-button size="small" @click="openQuickUp(r)">+ 新建上游</a-button>
+            </div>
+            <a-space wrap :size="14">
+              <a-checkbox v-model:checked="r.proxy!.websocket">WebSocket 升级</a-checkbox>
+              <a-checkbox v-model:checked="r.proxy!.https">HTTPS 回源</a-checkbox>
+              <a-checkbox v-if="r.match === 'prefix' && r.path !== '/' && r.path.endsWith('/')" v-model:checked="r.proxy!.strip_prefix">剥离路径前缀</a-checkbox>
+              <a-checkbox :checked="r.proxy!.buffering === false" @change="(e: any) => (r.proxy!.buffering = !e.target.checked)">关闭响应缓冲（SSE / 流式）</a-checkbox>
+            </a-space>
+            <details class="adv">
+              <summary>代理超时设置（可选，留空沿用全局 3s / 30s / 30s）</summary>
+              <a-space wrap style="margin-top: 6px">
+                <a-input-number v-model:value="r.proxy!.connect_timeout" :min="0" :max="60" placeholder="连接(s)" style="width: 120px" />
+                <a-input-number v-model:value="r.proxy!.read_timeout" :min="0" :max="3600" placeholder="读取(s)" style="width: 120px" />
+                <a-input-number v-model:value="r.proxy!.send_timeout" :min="0" :max="3600" placeholder="发送(s)" style="width: 120px" />
+              </a-space>
+            </details>
+            <div v-if="migration" class="sub">请核对原配置的 Host、升级头和超时；勾选只启用标准连接升级，不保证与自定义头或 Lua 逻辑一致。</div>
+          </template>
+          <div v-else-if="r.mode === 'redirect'" class="rline">
+            <a-input v-model:value="r.redirect!.to" class="code" style="flex: 1" placeholder="https://new.example.com/" />
+            <a-select v-model:value="r.redirect!.code" style="width: 100px" :options="[301, 302, 307, 308].map((c) => ({ label: String(c), value: c }))" />
+          </div>
+          <div v-else class="deny">返回 403</div>
         </div>
-        <div v-else class="deny">返回 403</div>
-      </div>
       </template>
 
-      <RulesEditor v-model="f.rules" :upstreams="upstreams" :ip-sets="ipSets" />
+      <RulesEditor v-model="f.rules" :upstreams="allUpstreams" :ip-sets="ipSets" />
 
       <a-alert v-if="error" type="error" :message="error" show-icon style="margin-top: 16px" />
     </a-form>
@@ -272,6 +384,18 @@ const modes = [
         <a-button type="primary" :loading="saving" @click="save">保存</a-button>
       </a-space>
     </template>
+
+    <a-modal v-model:open="quickUpOpen" title="快速新建上游" ok-text="创建并选用" :confirm-loading="quickUpSaving" @ok="saveQuickUp">
+      <a-form layout="vertical">
+        <a-form-item label="名称"><a-input v-model:value="quickUpForm.name" placeholder="order-api" /></a-form-item>
+        <a-form-item label="算法">
+          <a-radio-group v-model:value="quickUpForm.algorithm" :options="[{ label: '最少连接', value: 'least_conn' }, { label: '轮询', value: 'round_robin' }, { label: '源 IP 哈希', value: 'ip_hash' }]" />
+        </a-form-item>
+        <a-form-item label="后端地址（IP:端口）" extra="必须在节点组允许回源网段内；创建后可在“上游服务”页继续添加更多后端">
+          <a-input v-model:value="quickUpForm.addr" class="code" placeholder="10.0.1.11:8080" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </a-drawer>
 </template>
 
@@ -305,6 +429,13 @@ const modes = [
   display: flex;
   gap: 8px;
   align-items: center;
+}
+.adv {
+  font-size: 12px;
+  color: #6b7c80;
+}
+.adv summary {
+  cursor: pointer;
 }
 .deny {
   font-size: 12px;

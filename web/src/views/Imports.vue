@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { brand } from '../brand'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
-import { message } from 'antdv-next'
+import { Modal, message } from 'antdv-next'
 import { api, errMsg, http } from '../api/client'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 import SiteEditor from '../components/SiteEditor.vue'
 
 const session = useSession()
+const ws = useWorkspace()
 const route = useRoute()
-const groups = ref<any[]>([])
-const gid = ref(0)
+const router = useRouter()
+const groups = computed(() => ws.groups)
+const gid = computed(() => ws.groupId)
 const managementMode = ref<any>(null)
 const history = ref<any[]>([])
 const current = ref<any>(null) // { import, report, result, certs_pending }
@@ -28,10 +31,10 @@ const editorUpstreams = ref<any[]>([])
 const focusRoute = ref('')
 
 async function load() {
-  if (!groups.value.length) {
-    groups.value = await api.get('/node-groups')
-    if (!gid.value && groups.value.length) gid.value = groups.value.find((g) => g.id === Number(route.query.group))?.id || groups.value[0].id
+  if (!ws.groups.length) {
+    await ws.loadGroups(Number(route.query.group) || undefined)
   }
+  if (!gid.value) return
   managementMode.value = groups.value.find((g) => g.id === gid.value)?.management_mode === 'legacy'
     ? { mode: 'legacy', label: '兼容配置' }
     : groups.value.find((g) => g.id === gid.value)?.management_mode === 'observe'
@@ -45,6 +48,7 @@ watch(gid, () => {
   load()
 })
 onMounted(async () => {
+  if (route.query.group) ws.setGroup(Number(route.query.group))
   await load()
   const id = Number(route.query.import)
   if (id > 0) await open(id)
@@ -197,6 +201,24 @@ function compareRoutes(s: any) {
     return { key: k, path: `${(a || b).match === 'exact' ? '= ' : ''}${(a || b).path}`, original: routeText(a), draft: routeText(b), status: !a ? '新增' : !b ? '移除' : routeText(a) !== routeText(b) ? '变更' : '相同' }
   })
 }
+function handoffToManaged() {
+  Modal.confirm({
+    title: '切回“控制台托管”并前往首次发布？',
+    content: '切回后仍不会自动覆盖节点，进入发布页后请再次核对检查单与配置差异，然后显式点击发布。',
+    okText: '确认切回并前往发布',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await api.put(`/node-groups/${gid.value}/management-mode`, { mode: 'managed' })
+        await ws.loadGroups(gid.value)
+        message.success('已切回控制台托管，请核对后显式发布')
+        router.push({ path: '/releases', query: returnQuery.value })
+      } catch (e) {
+        message.error(errMsg(e))
+      }
+    },
+  })
+}
 const statusTag: Record<string, { t: string; c: string }> = {
   full: { t: '完全转换', c: 'green' },
   partial: { t: '部分转换', c: 'gold' },
@@ -212,7 +234,6 @@ const statusTag: Record<string, { t: string; c: string }> = {
         <p>选择一份 <span class="code">{{ brand.id }} -T</span> 输出、配置目录 tar.gz，或同时选择主配置与它引用的多个文件。支持的内容会转为草稿；请先核对报告中需要人工处理的路由、脚本、静态文件和证书，再预览、审批和发布。</p>
       </div>
       <a-space>
-        <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
         <a-button v-if="session.can('operator')" type="primary" :loading="uploading" :disabled="!session.writable" @click="pick">上传配置</a-button>
       </a-space>
     </div>
@@ -285,6 +306,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
           <router-link :to="{ path: '/sites', query: returnQuery }">查看站点</router-link>
           <router-link :to="{ path: '/snippets', query: returnQuery }">处理片段和 Lua</router-link>
           <router-link :to="{ path: '/releases', query: returnQuery }">预览草稿与线上版本</router-link>
+          <a-button v-if="managementMode?.mode === 'observe' && session.can('operator')" type="primary" size="small" :disabled="!session.writable" @click="handoffToManaged">已完成核对：切回托管并前往发布</a-button>
         </a-space>
       </section>
 

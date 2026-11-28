@@ -11,6 +11,18 @@ const session = useSession()
 const route = useRoute()
 const certs = ref<any[]>([])
 const loading = ref(false)
+const certSearch = ref('')
+const certFilter = ref<'all' | 'expiring' | 'expired' | 'sm2'>('all')
+const filteredCerts = computed(() => {
+  const q = certSearch.value.trim().toLowerCase()
+  return certs.value.filter((c) => {
+    if (certFilter.value === 'expiring' && c.status !== 'expiring') return false
+    if (certFilter.value === 'expired' && c.status !== 'expired') return false
+    if (certFilter.value === 'sm2' && c.kind !== 'sm2') return false
+    if (!q) return true
+    return c.name.toLowerCase().includes(q) || (c.domains || []).some((d: string) => d.toLowerCase().includes(q))
+  })
+})
 
 const acme = ref<any>({ settings: {}, orders: [] })
 const pending = computed(() => acme.value.orders.some((o: any) => o.status === 'pending'))
@@ -254,7 +266,20 @@ const columns = [
     </div>
 
     <div class="panel">
-      <a-table :columns="columns" :data-source="certs" row-key="id" :pagination="false" :loading="loading">
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center">
+        <a-input v-model:value="certSearch" allow-clear placeholder="按证书名或域名搜索" style="width: 240px" />
+        <a-segmented
+          v-model:value="certFilter"
+          size="small"
+          :options="[
+            { label: `全部 (${certs.length})`, value: 'all' },
+            { label: '即将到期', value: 'expiring' },
+            { label: '已过期', value: 'expired' },
+            { label: '国密 SM2', value: 'sm2' },
+          ]"
+        />
+      </div>
+      <a-table :columns="columns" :data-source="filteredCerts" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }" :loading="loading">
         <template #emptyText>
           <a-empty description="还没有证书。上传证书与私钥（PEM 格式）后，就能在站点中启用 HTTPS。" />
         </template>

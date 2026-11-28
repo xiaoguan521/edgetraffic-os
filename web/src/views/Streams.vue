@@ -3,18 +3,17 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 
 const session = useSession()
-const groups = ref<any[]>([])
-const gid = ref(0)
+const ws = useWorkspace()
+const gid = computed(() => ws.groupId)
 const rows = ref<any[]>([])
 const licensed = computed(() => !!session.license?.features?.includes('stream'))
 
 async function load() {
-  if (!groups.value.length) {
-    groups.value = await api.get('/node-groups')
-    if (!gid.value && groups.value.length) gid.value = groups.value[0].id
-  }
+  if (!ws.groups.length) await ws.loadGroups()
+  if (!gid.value) return
   rows.value = await api.get('/streams', { group_id: gid.value })
 }
 watch(gid, load)
@@ -22,31 +21,54 @@ onMounted(load)
 
 const open = ref(false)
 const editId = ref(0)
-const form = reactive<any>({ name: '', listen: 3306, protocol: 'tcp', algorithm: '', servers: '', proxy_protocol: false, connect_timeout: 5, idle_timeout: 600, sni: '' })
+const form = reactive({
+  name: '',
+  listen: 3306,
+  protocol: 'tcp',
+  algorithm: '',
+  servers: [{ addr: '', weight: 0 }] as { addr: string; weight: number }[],
+  sni_routes: [] as { domain: string; servers: string }[],
+  proxy_protocol: false,
+  connect_timeout: 5,
+  idle_timeout: 600,
+})
 const toList = (s: string) =>
-  s.split(/[\s,]+/).filter(Boolean).map((a) => {
-    const [addr, w] = a.split('*')
-    return { addr, weight: Number(w || 0) }
-  })
-const fromList = (l: any[]) => (l || []).map((x) => (x.weight ? `${x.addr}*${x.weight}` : x.addr)).join('\n')
+  s
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map((a) => {
+      const [addr, w] = a.split('*')
+      return { addr, weight: Number(w || 0) }
+    })
+const fromList = (l: any[]) => (l || []).map((x) => (x.weight ? `${x.addr}*${x.weight}` : x.addr)).join(', ')
+
 function edit(r?: any) {
   editId.value = r?.id || 0
   const sp = r?.spec || {}
   Object.assign(form, {
-    name: sp.name || '', listen: sp.listen || 3306, protocol: sp.protocol || 'tcp', algorithm: sp.algorithm || '', servers: fromList(sp.servers),
-    proxy_protocol: !!sp.proxy_protocol, connect_timeout: sp.connect_timeout || 5, idle_timeout: sp.idle_timeout || 600,
-    sni: (sp.sni_routes || []).map((x: any) => `${x.domain} = ${fromList(x.servers).replace(/\n/g, ',')}`).join('\n'),
+    name: sp.name || '',
+    listen: sp.listen || 3306,
+    protocol: sp.protocol || 'tcp',
+    algorithm: sp.algorithm || '',
+    servers: sp.servers?.length ? sp.servers.map((s: any) => ({ addr: s.addr, weight: s.weight || 0 })) : [{ addr: '', weight: 0 }],
+    sni_routes: (sp.sni_routes || []).map((x: any) => ({ domain: x.domain, servers: fromList(x.servers) })),
+    proxy_protocol: !!sp.proxy_protocol,
+    connect_timeout: sp.connect_timeout || 5,
+    idle_timeout: sp.idle_timeout || 600,
   })
   open.value = true
 }
 async function save() {
   const spec = {
-    name: form.name, listen: form.listen, protocol: form.protocol, algorithm: form.algorithm, servers: toList(form.servers), proxy_protocol: form.proxy_protocol,
-    connect_timeout: form.connect_timeout, idle_timeout: form.idle_timeout,
-    sni_routes: form.sni.split('\n').filter((l: string) => l.includes('=')).map((l: string) => {
-      const [d, s] = l.split('=')
-      return { domain: d.trim(), servers: toList(s) }
-    }),
+    name: form.name,
+    listen: form.listen,
+    protocol: form.protocol,
+    algorithm: form.algorithm,
+    servers: form.servers.filter((s) => s.addr.trim()).map((s) => ({ addr: s.addr.trim(), weight: Number(s.weight) || 0 })),
+    proxy_protocol: form.proxy_protocol,
+    connect_timeout: form.connect_timeout,
+    idle_timeout: form.idle_timeout,
+    sni_routes: form.sni_routes.filter((x) => x.domain.trim() && x.servers.trim()).map((x) => ({ domain: x.domain.trim(), servers: toList(x.servers) })),
   }
   try {
     if (editId.value) await api.put(`/streams/${editId.value}`, { spec })
@@ -80,13 +102,12 @@ async function del(r: any) {
         <p>TCP / UDP 端口转发，可按 TLS SNI 分流（不解密）。保存后进入待发布变更，发布后生效；节点启用了防火墙时需放行对应端口。</p>
       </div>
       <a-space>
-        <a-segmented v-if="groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" />
         <a-button v-if="session.can('operator')" type="primary" :disabled="!licensed || !session.writable" @click="edit()">新建</a-button>
       </a-space>
     </div>
     <a-alert v-if="!licensed" type="info" show-icon style="margin-bottom: 16px" message="当前授权不包含四层代理（专业版及以上）。" />
     <section class="panel">
-      <a-table :data-source="rows" row-key="id" :pagination="false" size="middle"
+      <a-table :data-source="rows" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }" size="middle"
         :columns="[{ title: '名称', key: 'name' }, { title: '监听', key: 'listen' }, { title: '后端', key: 'servers' }, { title: '状态', key: 'st', width: 90 }, { title: '', key: 'op', width: 200 }]">
         <template #emptyText><a-empty description="还没有四层代理服务" /></template>
         <template #bodyCell="{ column, record }">
@@ -104,16 +125,30 @@ async function del(r: any) {
         </template>
       </a-table>
     </section>
-    <a-modal v-model:open="open" :title="editId ? '编辑四层代理' : '新建四层代理'" :width="600" @ok="save">
+    <a-modal v-model:open="open" :title="editId ? '编辑四层代理' : '新建四层代理'" :width="640" @ok="save">
       <a-form layout="vertical">
         <a-form-item label="名称"><a-input v-model:value="form.name" :disabled="!!editId" placeholder="mysql" /></a-form-item>
-        <a-space>
+        <a-space wrap>
           <a-form-item label="协议"><a-select v-model:value="form.protocol" style="width: 100px" :options="[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]" /></a-form-item>
           <a-form-item label="监听端口"><a-input-number v-model:value="form.listen" :min="1" :max="65535" /></a-form-item>
-          <a-form-item label="负载算法"><a-select v-model:value="form.algorithm" style="width: 160px" :options="[{ value: '', label: '轮询' }, { value: 'least_conn', label: '最少连接' }, { value: 'hash', label: '按来源 IP 一致性哈希' }]" /></a-form-item>
+          <a-form-item label="负载算法"><a-select v-model:value="form.algorithm" style="width: 170px" :options="[{ value: '', label: '轮询' }, { value: 'least_conn', label: '最少连接' }, { value: 'hash', label: '按来源 IP 一致性哈希' }]" /></a-form-item>
         </a-space>
-        <a-form-item label="后端（IP:端口，每行一个，*数字 为权重）"><a-textarea v-model:value="form.servers" :rows="3" class="code" placeholder="10.0.1.21:3306&#10;10.0.1.22:3306*2" /></a-form-item>
-        <a-form-item v-if="form.protocol === 'tcp'" label="按 SNI 分流（可选，每行：域名 = 后端,后端）"><a-textarea v-model:value="form.sni" :rows="2" class="code" placeholder="a.example.com = 10.0.1.23:443" /></a-form-item>
+        <a-form-item label="后端服务器">
+          <div v-for="(s, i) in form.servers" :key="i" class="srow">
+            <a-input v-model:value="s.addr" class="code" placeholder="10.0.1.21:3306" style="flex: 1" />
+            <a-input-number v-model:value="s.weight" :min="0" :max="100" placeholder="权重" style="width: 90px" />
+            <a-button type="text" danger :disabled="form.servers.length === 1" @click="form.servers.splice(i, 1)">删除</a-button>
+          </div>
+          <a-button size="small" @click="form.servers.push({ addr: '', weight: 0 })">添加后端</a-button>
+        </a-form-item>
+        <a-form-item v-if="form.protocol === 'tcp'" label="按 SNI 分流（可选）">
+          <div v-for="(x, i) in form.sni_routes" :key="i" class="srow">
+            <a-input v-model:value="x.domain" class="code" placeholder="a.example.com" style="width: 190px" />
+            <a-input v-model:value="x.servers" class="code" placeholder="10.0.1.23:443, 10.0.1.24:443*2" style="flex: 1" />
+            <a-button type="text" danger @click="form.sni_routes.splice(i, 1)">删除</a-button>
+          </div>
+          <a-button size="small" @click="form.sni_routes.push({ domain: '', servers: '' })">添加 SNI 分流</a-button>
+        </a-form-item>
         <a-space>
           <a-form-item label="连接超时（秒）"><a-input-number v-model:value="form.connect_timeout" :min="1" :max="60" /></a-form-item>
           <a-form-item label="空闲超时（秒）"><a-input-number v-model:value="form.idle_timeout" :min="1" :max="86400" /></a-form-item>
@@ -123,3 +158,12 @@ async function del(r: any) {
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+.srow {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+</style>

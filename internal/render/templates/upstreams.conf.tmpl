@@ -8,8 +8,8 @@ upstream up_{{ .Name }} {
     ip_hash;
 {{- end }}
 {{- range .Servers }}
-    server {{ .Addr }}{{ if gt .Weight 0 }}  weight={{ .Weight }}{{ end }}  max_fails=3  fail_timeout=10s;
+    server {{ .Addr }}{{ if gt .Weight 0 }}  weight={{ .Weight }}{{ end }}  max_fails={{ if gt .MaxFails 0 }}{{ .MaxFails }}{{ else }}3{{ end }}  fail_timeout={{ if gt .FailTimeout 0 }}{{ .FailTimeout }}{{ else }}10{{ end }}s{{ if .Backup }}  backup{{ end }}{{ if .Down }}  down{{ end }};
 {{- end }}
-    keepalive 32;
+    keepalive {{ if gt .Keepalive 0 }}{{ .Keepalive }}{{ else }}32{{ end }};
 }
 {{- end }}

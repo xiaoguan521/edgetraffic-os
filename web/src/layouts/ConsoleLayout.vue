@@ -20,30 +20,68 @@ import {
   SafetyCertificateOutlined,
 } from '@antdv-next/icons'
 import { editionName, licenseStateName, useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
+const ws = useWorkspace()
 
-const items = [
-  { key: 'dashboard', icon: () => h(DashboardOutlined), label: '总览' },
-  { key: 'nodes', icon: () => h(ClusterOutlined), label: '节点' },
-  { key: 'sites', icon: () => h(GlobalOutlined), label: '站点与上游' },
-  { key: 'ip-sets', icon: () => h(EnvironmentOutlined), label: 'IP 集与地域库' },
-  { key: 'streams', icon: () => h(ApiOutlined), label: '四层代理' },
-  { key: 'certificates', icon: () => h(LockOutlined), label: '证书' },
-  { key: 'imports', icon: () => h(ImportOutlined), label: '配置导入' },
-  { key: 'snippets', icon: () => h(CodeOutlined), label: '自定义片段' },
-  { key: 'releases', icon: () => h(RocketOutlined), label: '发布' },
-  { key: 'dataplane', icon: () => h(CloudUploadOutlined), label: '数据面版本' },
-  { key: 'alerts', icon: () => h(AlertOutlined), label: '告警' },
-  { key: 'audit', icon: () => h(AuditOutlined), label: '审计' },
-  { key: 'system', icon: () => h(SafetyCertificateOutlined), label: '授权与系统' },
-]
+function labelWithBadge(text: string, count: number, tone: 'warn' | 'bad' = 'warn') {
+  if (!count) return text
+  return h('span', { class: 'nav-lbl' }, [
+    h('span', text),
+    h('span', { class: `nav-badge ${tone}` }, count > 99 ? '99+' : String(count)),
+  ])
+}
+
+const items = computed(() => {
+  const b = ws.badges
+  const nodeIssues = (b.drifted_nodes || 0) + (b.offline_nodes || 0)
+  return [
+    { key: 'dashboard', icon: () => h(DashboardOutlined), label: '总览' },
+    {
+      type: 'group',
+      label: '流量配置',
+      children: [
+        { key: 'sites', icon: () => h(GlobalOutlined), label: '站点与上游' },
+        { key: 'streams', icon: () => h(ApiOutlined), label: '四层代理' },
+        { key: 'ip-sets', icon: () => h(EnvironmentOutlined), label: 'IP 集与地域库' },
+        { key: 'certificates', icon: () => h(LockOutlined), label: '证书' },
+        { key: 'snippets', icon: () => h(CodeOutlined), label: labelWithBadge('自定义片段', b.pending_snippets) },
+        { key: 'imports', icon: () => h(ImportOutlined), label: '配置导入' },
+      ],
+    },
+    {
+      type: 'group',
+      label: '发布与运维',
+      children: [
+        { key: 'releases', icon: () => h(RocketOutlined), label: labelWithBadge('发布', b.pending_releases) },
+        { key: 'nodes', icon: () => h(ClusterOutlined), label: labelWithBadge('节点', nodeIssues, b.drifted_nodes ? 'bad' : 'warn') },
+        { key: 'dataplane', icon: () => h(CloudUploadOutlined), label: '数据面版本' },
+      ],
+    },
+    {
+      type: 'group',
+      label: '安全与治理',
+      children: [
+        { key: 'alerts', icon: () => h(AlertOutlined), label: labelWithBadge('告警', b.firing_alerts, 'bad') },
+        { key: 'audit', icon: () => h(AuditOutlined), label: '审计' },
+        { key: 'system', icon: () => h(SafetyCertificateOutlined), label: '授权与系统' },
+      ],
+    },
+  ]
+})
 
 const roleName: Record<string, string> = { admin: '管理员', operator: '运维', releaser: '发布员', viewer: '只读' }
+const modeTag: Record<string, { text: string; color: string }> = {
+  managed: { text: '托管', color: 'green' },
+  observe: { text: '观察', color: 'gold' },
+  legacy: { text: '兼容', color: 'purple' },
+}
 
 const selected = computed(() => [String(route.name || 'dashboard')])
+const showGroupPicker = computed(() => ws.groups.length > 0 && ['nodes', 'sites', 'streams', 'ip-sets', 'imports', 'snippets', 'releases', 'dataplane'].includes(String(route.name || '')))
 
 const lic = computed(() => session.license)
 const licTone = computed(() => {
@@ -68,11 +106,26 @@ const licText = computed(() => {
   return `授权${name}，控制台只读`
 })
 
-let timer: number | undefined
+let licTimer: number | undefined
+let badgeTimer: number | undefined
 onMounted(() => {
-  timer = window.setInterval(() => session.loadLicense().catch(() => {}), 60000)
+  ws.loadGroups(Number(route.query.group) || undefined).catch(() => {})
+  ws.loadBadges()
+  licTimer = window.setInterval(() => session.loadLicense().catch(() => {}), 60000)
+  badgeTimer = window.setInterval(() => ws.loadBadges(), 30000)
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  clearInterval(licTimer)
+  clearInterval(badgeTimer)
+})
+
+function onGroupChange(v: any) {
+  const id = Number(v)
+  ws.setGroup(id)
+  if (route.query.group) {
+    router.replace({ query: { ...route.query, group: String(id) } })
+  }
+}
 
 async function logout() {
   await session.logout()
@@ -82,7 +135,7 @@ async function logout() {
 
 <template>
   <a-layout class="shell">
-    <a-layout-sider :width="216" class="sider">
+    <a-layout-sider :width="224" class="sider">
       <div class="brand">
         <div class="mark" aria-hidden="true"><span /><span /><span /></div>
         <div>
@@ -90,12 +143,31 @@ async function logout() {
           <div class="sub">边缘流量操作系统</div>
         </div>
       </div>
-      <a-menu theme="dark" mode="inline" :selected-keys="selected" :items="items" @click="(e: any) => router.push({ name: e.key })" />
+      <div class="menu-wrap">
+        <a-menu theme="dark" mode="inline" :selected-keys="selected" :items="items" @click="(e: any) => router.push({ name: e.key })" />
+      </div>
       <div class="runtime">数据面 {{ brand.proc }}</div>
     </a-layout-sider>
     <a-layout>
       <a-layout-header class="topbar">
-        <div class="title">{{ route.meta.title }}</div>
+        <div class="left">
+          <div class="title">{{ route.meta.title }}</div>
+          <div v-if="showGroupPicker" class="grp-picker">
+            <span class="grp-lbl">节点组</span>
+            <a-select
+              :value="ws.groupId"
+              size="small"
+              show-search
+              option-filter-prop="label"
+              style="min-width: 170px"
+              :options="ws.groups.map((g) => ({ value: g.id, label: g.name }))"
+              @change="onGroupChange"
+            />
+            <a-tag v-if="ws.currentGroup?.management_mode" :color="modeTag[ws.currentGroup.management_mode]?.color" class="mtag">
+              {{ modeTag[ws.currentGroup.management_mode]?.text || ws.currentGroup.management_mode }}
+            </a-tag>
+          </div>
+        </div>
         <div class="right">
           <router-link v-if="lic" :to="{ name: 'system' }" class="lic" :class="licTone">
             <i class="dot" />{{ licText }}
@@ -125,14 +197,17 @@ async function logout() {
   display: flex;
   flex-direction: column;
 }
+.menu-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 20px 18px 18px;
+  padding: 20px 18px 14px;
   color: #fff;
 }
-/* 三条车道组成的标识：对应“流量”与“发布车道” */
 .mark {
   display: grid;
   gap: 3px;
@@ -164,9 +239,10 @@ async function logout() {
 }
 .runtime {
   margin-top: auto;
-  padding: 16px 20px;
+  padding: 12px 20px;
   font-size: 12px;
   color: #7f979b;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .topbar {
   display: flex;
@@ -177,10 +253,30 @@ async function logout() {
   height: 56px;
   line-height: 56px;
 }
+.left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
 .title {
   font-size: 15px;
   color: #16323a;
   font-weight: 600;
+}
+.grp-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 16px;
+  border-left: 1px solid #e1e7e6;
+  line-height: normal;
+}
+.grp-lbl {
+  font-size: 12px;
+  color: #6b7c80;
+}
+.mtag {
+  margin: 0;
 }
 .right {
   display: flex;
@@ -215,5 +311,31 @@ async function logout() {
 .lic.bad {
   color: #a3332d;
   background: #f8e3e1;
+}
+:deep(.nav-lbl) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+:deep(.nav-badge) {
+  display: inline-block;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  text-align: center;
+  font-weight: 600;
+}
+:deep(.nav-badge.warn) {
+  background: #d9a21b;
+  color: #16262a;
+}
+:deep(.nav-badge.bad) {
+  background: #c8423b;
+  color: #fff;
 }
 </style>

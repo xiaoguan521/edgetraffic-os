@@ -1,27 +1,49 @@
 <script setup lang="ts">
 import { brand } from '../brand'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
-import { message } from 'antdv-next'
+import { Modal, message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
+import { useWorkspace } from '../stores/workspace'
 import DiffView from '../components/DiffView.vue'
 
 const session = useSession()
-const groups = ref<any[]>([])
+const ws = useWorkspace()
+const route = useRoute()
+const router = useRouter()
+const groups = computed(() => ws.groups)
+const gid = computed(() => ws.groupId)
 const nodes = ref<any[]>([])
-const gid = ref<number>(0)
 const group = computed(() => groups.value.find((g) => g.id === gid.value))
 const profile = ref<any>(null)
 const managementMode = ref<any>(null)
 const view = ref<'group' | 'host'>('group')
 const hosts = ref<any[]>([])
+const nodeSearch = ref('')
+const nodeFilter = ref<'all' | 'online' | 'offline' | 'drifted'>('all')
+
+const filteredNodes = computed(() => {
+  const q = nodeSearch.value.trim().toLowerCase()
+  return nodes.value.filter((n) => {
+    if (nodeFilter.value === 'online' && n.status !== 'online') return false
+    if (nodeFilter.value === 'offline' && n.status === 'online') return false
+    if (nodeFilter.value === 'drifted' && !n.drifted) return false
+    if (!q) return true
+    return n.name.toLowerCase().includes(q) || (n.remote_addr || '').toLowerCase().includes(q) || (n.applied_revision || '').toLowerCase().includes(q)
+  })
+})
 
 async function load() {
-  groups.value = await api.get('/node-groups')
-  // 当前组被删除（或首次进入）时切到第一个组
-  if (groups.value.length && !groups.value.some((g) => g.id === gid.value)) gid.value = groups.value[0].id
-  const [n, p, h, m] = await Promise.all([api.get('/nodes', { group_id: gid.value }), api.get(`/node-groups/${gid.value}/profile`), api.get('/hosts'), api.get(`/node-groups/${gid.value}/management-mode`)] )
+  await ws.loadGroups(Number(route.query.group) || undefined)
+  if (!gid.value) return
+  const [n, p, h, m] = await Promise.all([
+    api.get('/nodes', { group_id: gid.value }),
+    api.get(`/node-groups/${gid.value}/profile`),
+    api.get('/hosts'),
+    api.get(`/node-groups/${gid.value}/management-mode`),
+  ])
   nodes.value = n.filter((x: any) => x.status !== 'revoked')
   profile.value = p
   managementMode.value = m
@@ -38,19 +60,42 @@ const instanceLabel = computed(() => {
 function dataplaneVersion(n: any) {
   return (n.syapp_version || '').replace(brand.proc + ' version: ', '')
 }
+watch(gid, () => {
+  if (gid.value) load()
+})
 let t: number | undefined
 onMounted(() => {
+  if (route.query.group) ws.setGroup(Number(route.query.group))
   load()
   t = window.setInterval(load, 5000)
 })
 onUnmounted(() => clearInterval(t))
 
-// 添加节点
+// 添加节点（分场景 Tab + 宿主机/Docker 切换 + 危险防呆 + 实时检测上线）
 const enroll = ref<any>(null)
+const enrollTab = ref<'new' | 'existing'>('new')
+const runtimeEnv = ref<'host' | 'docker'>('host')
+const dockerService = ref(brand.id)
+const enrollBaselineIds = ref<number[]>([])
 const enrolling = ref(false)
-async function addNode() {
+const switchingMode = ref(false)
+const newlyJoinedNodes = computed(() => {
+  if (!enroll.value) return []
+  const base = new Set(enrollBaselineIds.value)
+  return nodes.value.filter((n) => !base.has(n.id))
+})
+function dockerEnrollCmd(en: any, replaceLocal: boolean) {
+  if (!en) return ''
+  const svc = dockerService.value.trim() || brand.id
+  const inst = en.instance ? ` -instance ${en.instance}` : ''
+  const rep = replaceLocal ? ' -replace-local-config' : ''
+  return `docker compose exec ${svc} ${brand.agent} enroll${inst} -server ${en.server} -token ${en.token} -ca-fingerprint ${en.ca_fingerprint}${rep}`
+}
+async function addNode(defaultTab: 'new' | 'existing' = 'new') {
   enrolling.value = true
   try {
+    enrollBaselineIds.value = nodes.value.map((n) => n.id)
+    enrollTab.value = defaultTab
     enroll.value = await api.post(`/node-groups/${gid.value}/enroll`)
   } catch (e) {
     message.error(errMsg(e))
@@ -58,17 +103,81 @@ async function addNode() {
     enrolling.value = false
   }
 }
+async function quickSwitchMode(mode: 'observe' | 'legacy' | 'managed') {
+  switchingMode.value = true
+  try {
+    await api.put(`/node-groups/${gid.value}/management-mode`, { mode })
+    message.success(mode === 'observe' ? '已切换为“观察接入”，节点上线不会覆盖本地配置' : mode === 'legacy' ? '已切换为“兼容配置（原生 Lua）”' : '已切换为“控制台托管”，请前往发布页预览并显式发布')
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    switchingMode.value = false
+  }
+}
 function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => message.success('已复制'))
 }
 
-// 节点组设置（含实例档案：同机多实例与 user 模式，设计 0001 第 3.4、5.2 节）
+// 独立节点接管向导（4 步串起 观察/兼容 → 自检与注册 → 导出导入 → 切管发布）
+const takeoverOpen = ref(false)
+const takeoverStep = ref(0)
+const takeoverGoal = ref<'observe' | 'legacy'>('observe')
+const takeoverEnroll = ref<any>(null)
+const takeoverBaseIds = ref<number[]>([])
+const takeoverJoined = computed(() => {
+  const base = new Set(takeoverBaseIds.value)
+  return nodes.value.filter((n) => !base.has(n.id))
+})
+function openTakeover() {
+  takeoverStep.value = 0
+  takeoverGoal.value = managementMode.value?.mode === 'legacy' ? 'legacy' : 'observe'
+  takeoverEnroll.value = null
+  takeoverBaseIds.value = nodes.value.map((n) => n.id)
+  takeoverOpen.value = true
+}
+async function takeoverApplyModeAndNext() {
+  if (managementMode.value?.mode !== takeoverGoal.value) {
+    await quickSwitchMode(takeoverGoal.value)
+  }
+  takeoverBaseIds.value = nodes.value.map((n) => n.id)
+  try {
+    takeoverEnroll.value = await api.post(`/node-groups/${gid.value}/enroll`)
+    takeoverStep.value = 1
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+const preflightCmd = computed(() => {
+  const p = profile.value || {}
+  if (runtimeEnv.value === 'docker') {
+    const svc = dockerService.value.trim() || brand.id
+    return `docker compose exec ${svc} ${brand.agent} preflight${p.instance ? ` -instance ${p.instance}` : ''}`
+  }
+  if (p.mode === 'user' && p.root) return `${p.root}/bin/${brand.agent} preflight -root ${p.root}${p.instance ? ` -instance ${p.instance}` : ''}`
+  return `sudo ${brand.agent} preflight${p.instance ? ` -instance ${p.instance}` : ''}`
+})
+const exportCmd = computed(() => {
+  const p = profile.value || {}
+  const inst = p.instance ? ` -instance ${p.instance}` : ''
+  const outName = `/tmp/${brand.id}-${p.instance || 'default'}-export.tar.gz`
+  if (runtimeEnv.value === 'docker') {
+    const svc = dockerService.value.trim() || brand.id
+    return `docker compose exec ${svc} ${brand.agent} export-config${inst} --output ${outName} && docker compose cp ${svc}:${outName} ./${brand.id}-export.tar.gz`
+  }
+  if (p.mode === 'user' && p.root) return `${p.root}/bin/${brand.agent} export-config -root ${p.root}${inst} --output ${outName}`
+  return `sudo ${brand.agent} export-config${inst} --output ${outName}`
+})
+
+// 节点组设置（含实例档案）
 const editing = ref(false)
 const gform = reactive({ name: '', description: '', allowed_cidrs: '', real_ip_from: '' })
 const modeForm = ref('managed')
 const pform = reactive({ instance: '', mode: 'system', root: '', resource_mode: 'shared', http_port: 80, https_port: 443, status_port: 8081, nofile: 0 })
-const locked = computed(() => nodes.value.length > 0) // 组内已有节点：实例名、模式、根目录不可改
-watch(() => pform.instance, (name) => { if (!name && !locked.value) pform.resource_mode = 'shared' })
+const locked = computed(() => nodes.value.length > 0)
+watch(() => pform.instance, (name) => {
+  if (!name && !locked.value) pform.resource_mode = 'shared'
+})
 function openGroup() {
   Object.assign(gform, { name: group.value.name, description: group.value.description, allowed_cidrs: group.value.allowed_cidrs, real_ip_from: group.value.real_ip_from })
   const p = profile.value || {}
@@ -80,35 +189,66 @@ function openGroup() {
 function profileChanged() {
   const p = profile.value || {}
   const e = p.effective || {}
-  return pform.instance !== (p.instance || '') || pform.mode !== (p.mode || 'system') || pform.root !== (p.root || '') || pform.resource_mode !== (p.resource_mode || 'shared') ||
-    pform.http_port !== e.http_port || pform.https_port !== e.https_port || pform.status_port !== e.status_port || pform.nofile !== (p.nofile || 0)
+  return (
+    pform.instance !== (p.instance || '') ||
+    pform.mode !== (p.mode || 'system') ||
+    pform.root !== (p.root || '') ||
+    pform.resource_mode !== (p.resource_mode || 'shared') ||
+    pform.http_port !== e.http_port ||
+    pform.https_port !== e.https_port ||
+    pform.status_port !== e.status_port ||
+    pform.nofile !== (p.nofile || 0)
+  )
 }
-// 新建节点组（仅管理员）：沿用当前组的回源网段，建好后打开“节点组设置”填写实例档案
+// 新建节点组（支持一步展开填写接管方式与实例档案）
 const creating = ref(false)
-const cform = reactive({ name: '', description: '' })
+const cform = reactive({ name: '', description: '', management_mode: 'managed', instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081 })
 function openCreate() {
-  Object.assign(cform, { name: '', description: '' })
+  Object.assign(cform, { name: '', description: '', management_mode: 'managed', instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081 })
   creating.value = true
 }
 async function createGroup() {
   try {
     const base = group.value || {}
     const g = await api.post('/node-groups', { name: cform.name.trim(), description: cform.description, allowed_cidrs: base.allowed_cidrs || '', real_ip_from: base.real_ip_from || '' })
+    if (cform.instance || cform.mode === 'user' || cform.root || cform.http_port !== 80 || cform.https_port !== 443 || cform.status_port !== 8081) {
+      const body: any = { instance: cform.instance, http_port: cform.http_port, https_port: cform.https_port, status_port: cform.status_port }
+      if (cform.mode === 'user' || cform.root) Object.assign(body, { mode: cform.mode, root: cform.root })
+      await api.put(`/node-groups/${g.id}/profile`, body)
+    }
+    if (cform.management_mode !== 'managed') {
+      await api.put(`/node-groups/${g.id}/management-mode`, { mode: cform.management_mode })
+    }
     creating.value = false
-    gid.value = g.id
+    ws.setGroup(g.id)
     view.value = 'group'
     await load()
-    message.success(`已创建节点组 ${g.name}，请设置实例档案`)
-    openGroup()
+    message.success(`已创建节点组 ${g.name}`)
   } catch (e) {
     message.error(errMsg(e))
   }
 }
 
+function confirmSwitchManaged(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: '确认切回“控制台托管”？',
+      content: '切回后仍不会自动发布，但之后的显式发布会覆盖节点本地配置。请确认已完成导入核对并保留了备份。',
+      okText: '确认切回',
+      cancelText: '取消',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    })
+  })
+}
+
 const nameRe = /^[a-z0-9][a-z0-9-]{1,62}$/
 async function saveGroup() {
   const changingMode = modeForm.value !== (managementMode.value?.mode || group.value?.management_mode || 'managed')
-  if (changingMode && modeForm.value === 'managed' && !window.confirm('切回“控制台托管”后仍不会自动发布，但之后的显式发布会覆盖节点本地配置。请确认已完成导入核对并保留了备份。')) return
+  if (changingMode && modeForm.value === 'managed') {
+    const ok = await confirmSwitchManaged()
+    if (!ok) return
+  }
   try {
     await api.put(`/node-groups/${gid.value}`, { ...gform, name: gform.name.trim() })
     if (profileChanged()) {
@@ -127,15 +267,23 @@ async function saveGroup() {
   }
 }
 
-// 删除节点组（仅管理员）：先查看占用，组内节点须已全部吊销，输入组名确认
+// 删除节点组
 const removing = ref<any>(null)
 const confirmName = ref('')
 const usageItems = computed(() => {
   const u = removing.value
   if (!u) return []
   return [
-    ['站点', u.sites], ['上游', u.upstreams], ['四层服务', u.streams], ['自定义片段', u.snippets], ['IP 集', u.ip_sets],
-    ['静态资源包', u.static_bundles], ['配置导入记录', u.imports], ['配置版本', u.revisions], ['发布记录', u.deployments], ['已吊销的节点记录', u.revoked_nodes],
+    ['站点', u.sites],
+    ['上游', u.upstreams],
+    ['四层服务', u.streams],
+    ['自定义片段', u.snippets],
+    ['IP 集', u.ip_sets],
+    ['静态资源包', u.static_bundles],
+    ['配置导入记录', u.imports],
+    ['配置版本', u.revisions],
+    ['发布记录', u.deployments],
+    ['已吊销的节点记录', u.revoked_nodes],
   ].filter(([, n]) => n > 0) as [string, number][]
 })
 const blocker = computed(() => {
@@ -161,7 +309,7 @@ async function deleteGroup() {
     removing.value = null
     editing.value = false
     message.success(`已删除节点组 ${name}`)
-    load()
+    await load()
   } catch (e) {
     message.error(errMsg(e))
   }
@@ -177,7 +325,7 @@ async function restore(n: any) {
   }
 }
 
-// 漂移详情与采纳（规格书 12.7 路径 B）
+// 漂移详情与采纳
 const drift = ref<any>(null)
 const driftNode = ref<any>(null)
 const adoptRes = ref<any>(null)
@@ -194,6 +342,7 @@ async function adopt() {
   try {
     adoptRes.value = await api.post(`/nodes/${driftNode.value.id}/drift/adopt`, {})
     message.success(`已提交 ${adoptRes.value.snippets.length} 个片段，等待另一人审批后随下一次发布生效`, 5)
+    ws.loadBadges()
   } catch (e) {
     message.error(errMsg(e))
   }
@@ -203,6 +352,7 @@ async function revoke(n: any) {
   await api.post(`/nodes/${n.id}/revoke`)
   message.success(`已吊销 ${n.name}，其证书立即失效。如需重新接入：点“添加节点”，在该机器上执行新生成的命令`, 6)
   load()
+  ws.loadBadges()
 }
 
 const columns = [
@@ -231,11 +381,12 @@ function mb(b: number) {
         <h1>节点</h1>
         <p>节点上的 {{ brand.agent }} 只向控制台发起连接，节点不需要开放任何管理端口。</p>
       </div>
-      <a-space>
+      <a-space wrap>
         <a-segmented v-model:value="view" :options="[{ label: '按节点组', value: 'group' }, { label: '按主机', value: 'host' }]" />
         <a-button v-if="session.can('admin')" :disabled="!session.writable" @click="openCreate">新建节点组</a-button>
         <a-button v-if="session.can('operator')" @click="openGroup">节点组设置</a-button>
-        <a-button v-if="session.can('operator')" type="primary" :loading="enrolling" :disabled="!session.writable" @click="addNode">添加节点</a-button>
+        <a-button v-if="session.can('operator')" :disabled="!session.writable" @click="openTakeover">接管独立节点</a-button>
+        <a-button v-if="session.can('operator')" type="primary" :loading="enrolling" :disabled="!session.writable" @click="addNode('new')">添加节点</a-button>
       </a-space>
     </div>
 
@@ -259,8 +410,6 @@ function mb(b: number) {
       </div>
     </div>
 
-    <a-segmented v-if="view === 'group' && groups.length > 1" v-model:value="gid" :options="groups.map((g) => ({ label: g.name, value: g.id }))" style="margin-bottom: 16px" @change="load" />
-
     <div class="panel" v-if="view === 'group'">
       <div class="gsum" v-if="group">
         <span>节点组 <b>{{ group.name }}</b></span>
@@ -272,9 +421,17 @@ function mb(b: number) {
       <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon message="观察接入：节点上线和心跳不会触发配置下发；导入内容只会进入控制台草稿。确认配置后，请在节点组设置切回“控制台托管”，再手动预览、审批和发布。" style="margin-bottom: 14px" />
       <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：原生配置包由管理员提交，经另一位管理员审批后才会下发；控制台不会自动发布站点草稿。" style="margin-bottom: 14px" />
       <a-alert v-if="managementMode?.mode === 'managed' && managementMode?.handoff_pending" type="warning" show-icon message="等待首次接管发布：节点重连不会自动对齐。核对并备份现网配置后，请显式发布。" style="margin-bottom: 14px" />
-      <a-table :columns="columns" :data-source="nodes" row-key="id" :pagination="false">
+      <div class="toolbar">
+        <a-input v-model:value="nodeSearch" allow-clear placeholder="按节点名、IP 或版本搜索" style="width: 240px" />
+        <a-segmented
+          v-model:value="nodeFilter"
+          size="small"
+          :options="[{ label: `全部 (${nodes.length})`, value: 'all' }, { label: '在线', value: 'online' }, { label: '离线', value: 'offline' }, { label: '配置漂移', value: 'drifted' }]"
+        />
+      </div>
+      <a-table :columns="columns" :data-source="filteredNodes" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }">
         <template #emptyText>
-          <a-empty description="这个节点组还没有节点。点击“添加节点”生成一次性注册命令。" />
+          <a-empty :description="nodes.length ? '没有匹配的节点' : '这个节点组还没有节点。点击“添加节点”或“接管独立节点”接入。'" />
         </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
@@ -316,37 +473,157 @@ function mb(b: number) {
       </a-table>
     </div>
 
-    <a-modal :open="!!enroll" title="添加节点" :footer="null" width="720px" @cancel="enroll = null">
+    <a-modal :open="!!enroll" title="添加节点" :footer="null" width="740px" @cancel="enroll = null">
       <template v-if="enroll">
-        <p v-if="enroll.mode === 'user'">在边缘服务器上以安装用户（不需要 root，也不需要 sudo）执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。
-          新服务器请先解压 user 模式节点包，用 <span class="code">./install-user.sh {{ enroll.root }} --http {{ enroll.http_port }} --https {{ enroll.https_port }} --status {{ enroll.status_port }} --console {{ enroll.server }} --token &lt;令牌&gt; --ca-fingerprint &lt;指纹&gt;</span> 一步安装并注册。</p>
-        <p v-else-if="enroll.instance">在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令：按节点组的实例档案创建实例 <b>{{ enroll.instance }}</b>（HTTP {{ enroll.http_port }} / HTTPS {{ enroll.https_port }}）并注册。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
-        <p v-else>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
-        <p class="sub">新建节点或实例：</p>
-        <pre class="cmd code">{{ enroll.command }}</pre>
-        <a-button @click="copy(enroll.command)">复制新建命令</a-button>
-        <p class="sub" style="margin-top: 16px">实例已经存在且有独立配置：</p>
-        <pre class="cmd code">{{ enroll.existing_command }}</pre>
-        <a-button type="primary" @click="copy(enroll.existing_command)">复制已有实例注册命令</a-button>
-        <a-descriptions :column="1" size="small" style="margin-top: 20px">
+        <a-alert
+          v-if="newlyJoinedNodes.length"
+          type="success"
+          show-icon
+          style="margin-bottom: 12px"
+          :message="`检测到新节点已上线：${newlyJoinedNodes.map((n) => n.name).join('、')}`"
+        />
+        <div class="env-bar">
+          <a-segmented v-model:value="runtimeEnv" size="small" :options="[{ label: '宿主机（systemd / user）', value: 'host' }, { label: 'Docker 容器', value: 'docker' }]" />
+          <a-input v-if="runtimeEnv === 'docker'" v-model:value="dockerService" size="small" class="code" style="width: 150px" placeholder="Compose 服务名" />
+        </div>
+        <a-alert v-if="runtimeEnv === 'docker'" type="info" show-icon style="margin-bottom: 12px"
+          message="Docker 容器接入提示：请确保 docker-compose.yml 已挂载 ./agent:<前缀>/agent 卷（持久化节点证书与 machine-id，重建容器不掉线），注册后容器入口会自动拉起 agent，无需执行 systemctl。" />
+        <a-tabs v-model:active-key="enrollTab" :items="[{ key: 'new', label: '全新节点 / 新建实例' }, { key: 'existing', label: '已有独立实例接入' }]" />
+        <template v-if="enrollTab === 'new'">
+          <p v-if="runtimeEnv === 'docker'">在宿主机 Compose 目录执行下面的命令（容器需已启动且镜像含 {{ brand.agent }}）。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+          <p v-else-if="enroll.mode === 'user'">在边缘服务器上以安装用户（不需要 root，也不需要 sudo）执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。
+            新服务器请先解压 user 模式节点包，用 <span class="code">./install-user.sh {{ enroll.root }} --http {{ enroll.http_port }} --https {{ enroll.https_port }} --status {{ enroll.status_port }} --console {{ enroll.server }} --token &lt;令牌&gt; --ca-fingerprint &lt;指纹&gt;</span> 一步安装并注册。</p>
+          <p v-else-if="enroll.instance">在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令：按节点组的实例档案创建实例 <b>{{ enroll.instance }}</b>（HTTP {{ enroll.http_port }} / HTTPS {{ enroll.https_port }}）并注册。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+          <p v-else>在边缘服务器上（已安装 {{ brand.id }} 与 {{ brand.agent }} 软件包）以 root 执行下面的命令。令牌只能使用一次，<b>{{ dayjs(enroll.expires_at).format('HH:mm') }}</b> 前有效。</p>
+          <pre class="cmd code">{{ runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, false) : enroll.command }}</pre>
+          <a-button type="primary" @click="copy(runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, false) : enroll.command)">复制新建命令</a-button>
+        </template>
+        <template v-else>
+          <a-alert
+            v-if="managementMode?.mode === 'managed' && group?.current_revision_id"
+            type="error"
+            show-icon
+            style="margin-bottom: 12px"
+            message="注意：当前节点组是“控制台托管”且已有线上版本"
+            description="独立节点直接加入后，上线时会自动对齐组内版本，可能覆盖节点本地配置！建议先将本组切换为“观察接入”，完成导入核对后再显式切回托管。"
+          >
+            <template #action>
+              <a-button size="small" type="primary" :loading="switchingMode" @click="quickSwitchMode('observe')">切换为观察接入</a-button>
+            </template>
+          </a-alert>
+          <p class="sub">① 建议先执行自检，核对控制台实例档案（特别是 Docker 镜像的编译前缀目录）与是否有原生 Lua：</p>
+          <pre class="cmd code">{{ preflightCmd }}</pre>
+          <a-button size="small" @click="copy(preflightCmd)">复制自检命令</a-button>
+          <p class="sub" style="margin-top: 14px">② 执行注册命令（检测到本地改动会自动备份当前版本目录）：</p>
+          <pre class="cmd code">{{ runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, true) : enroll.existing_command }}</pre>
+          <a-button type="primary" @click="copy(runtimeEnv === 'docker' ? dockerEnrollCmd(enroll, true) : enroll.existing_command)">复制已有实例注册命令</a-button>
+        </template>
+        <a-descriptions :column="1" size="small" style="margin-top: 18px">
           <a-descriptions-item label="控制台地址"><span class="code">{{ enroll.server }}</span></a-descriptions-item>
           <a-descriptions-item label="控制台 CA 指纹"><span class="code">{{ enroll.ca_fingerprint }}</span></a-descriptions-item>
         </a-descriptions>
-        <p class="sub">节点首次连接时用 CA 指纹确认控制台身份，之后使用双向证书认证。已有实例注册时，检测到改动的当前版本目录会被备份；实际主配置、目录外的 include、证书和 Lua 依赖可用 agent 的 backup-config 命令另行备份。<template v-if="managementMode?.mode === 'managed'">节点上线后可能自动同步节点组当前版本，请先确认接入方式。</template><template v-else>当前是“{{ managementMode?.label }}”，节点上线不会自动同步配置。</template></p>
       </template>
     </a-modal>
 
-    <a-modal v-model:open="creating" title="新建节点组" ok-text="创建" :ok-button-props="{ disabled: !/^[a-z0-9][a-z0-9-]{1,62}$/.test(cform.name.trim()) }" @ok="createGroup">
-      <p class="sub" style="margin-top: 0">一个节点组对应一套配置。同一台服务器上运行多套 {{ brand.id }}（同机多实例）时，每套属于不同的节点组；创建后在“节点组设置”里填写实例名与端口。</p>
+    <a-drawer v-model:open="takeoverOpen" width="760" title="接管独立部署的数据面节点">
+      <div class="env-bar">
+        <a-segmented v-model:value="runtimeEnv" size="small" :options="[{ label: '宿主机（systemd / user）', value: 'host' }, { label: 'Docker 容器', value: 'docker' }]" />
+        <a-input v-if="runtimeEnv === 'docker'" v-model:value="dockerService" size="small" class="code" style="width: 150px" placeholder="Compose 服务名" />
+      </div>
+      <a-alert v-if="runtimeEnv === 'docker'" type="info" show-icon style="margin-bottom: 14px"
+        message="Docker 独立部署请先在 docker-compose.yml 中挂载 ./agent:<前缀>/agent 卷（保存节点证书与 machine-id），重建容器不掉线。" />
+      <a-steps :current="takeoverStep" size="small" style="margin-bottom: 20px" :items="[{ title: '选择保护模式' }, { title: '自检与注册' }, { title: '导出与导入' }, { title: '切回托管发布' }]" />
+      <template v-if="takeoverStep === 0">
+        <a-alert type="info" show-icon style="margin-bottom: 14px" message="先在“观察接入”或“兼容配置”模式下接入节点，可确保控制台绝不覆盖节点现网流量配置。" />
+        <a-form layout="vertical">
+          <a-form-item label="目标接管方式">
+            <a-radio-group v-model:value="takeoverGoal">
+              <div style="display: grid; gap: 10px">
+                <a-radio value="observe"><b>观察接入 → 平滑迁移为可视化托管</b>（推荐：先导入原配置并核对草稿，确认无误后再切回托管并显式发布）</a-radio>
+                <a-radio value="legacy"><b>兼容配置（原生 Lua）</b>（原配置含复杂原生 Lua / 第三方库，保留完整配置包由双管理员审批发布）</a-radio>
+              </div>
+            </a-radio-group>
+          </a-form-item>
+        </a-form>
+        <a-button type="primary" :loading="switchingMode" @click="takeoverApplyModeAndNext">应用模式并生成注册命令</a-button>
+      </template>
+      <template v-else-if="takeoverStep === 1">
+        <a-alert
+          v-if="takeoverJoined.length"
+          type="success"
+          show-icon
+          style="margin-bottom: 12px"
+          :message="`节点已成功接入：${takeoverJoined.map((n) => n.name).join('、')}`"
+        />
+        <p class="sub">1. 在节点执行自检，确认安装目录、端口与 Lua 情况：</p>
+        <pre class="cmd code">{{ preflightCmd }}</pre>
+        <a-button size="small" @click="copy(preflightCmd)">复制自检命令</a-button>
+        <p class="sub" style="margin-top: 14px">2. 执行已有实例注册命令上线（不会下发配置）：</p>
+        <pre v-if="takeoverEnroll" class="cmd code">{{ runtimeEnv === 'docker' ? dockerEnrollCmd(takeoverEnroll, true) : takeoverEnroll.existing_command }}</pre>
+        <a-space>
+          <a-button v-if="takeoverEnroll" @click="copy(runtimeEnv === 'docker' ? dockerEnrollCmd(takeoverEnroll, true) : takeoverEnroll.existing_command)">复制注册命令</a-button>
+          <a-button type="primary" @click="takeoverStep = 2">下一步：导出与导入配置</a-button>
+        </a-space>
+      </template>
+      <template v-else-if="takeoverStep === 2">
+        <p>在节点执行一键扫描导出命令（自动识别 include、证书与 Lua 引用并生成规范压缩包）：</p>
+        <pre class="cmd code">{{ exportCmd }}</pre>
+        <a-space style="margin-bottom: 16px">
+          <a-button @click="copy(exportCmd)">复制导出命令</a-button>
+        </a-space>
+        <p class="sub">将导出的 tar.gz（或 <span class="code">sudo {{ brand.id }} -T</span> 输出）下载到本地后，前往控制台上传：</p>
+        <a-space>
+          <a-button v-if="takeoverGoal === 'observe'" type="primary" @click="takeoverOpen = false; router.push({ name: 'imports', query: { group: gid } })">前往“配置导入”</a-button>
+          <a-button v-else type="primary" @click="takeoverOpen = false; router.push({ name: 'releases', query: { group: gid } })">前往“发布”提交兼容包</a-button>
+          <a-button v-if="takeoverGoal === 'observe'" @click="takeoverStep = 3">已导入并核对完毕，下一步</a-button>
+        </a-space>
+      </template>
+      <template v-else>
+        <a-alert type="warning" show-icon style="margin-bottom: 14px" message="切回“控制台托管”后仍不会自动覆盖节点，直到你在发布页确认接管检查单并显式发布。" />
+        <a-space>
+          <a-button type="primary" :loading="switchingMode" @click="quickSwitchMode('managed').then(() => { takeoverOpen = false; router.push({ name: 'releases', query: { group: gid } }) })">切回托管并前往首次发布</a-button>
+          <a-button @click="takeoverOpen = false">稍后再切</a-button>
+        </a-space>
+      </template>
+    </a-drawer>
+
+    <a-modal v-model:open="creating" title="新建节点组" ok-text="创建" width="600px" :ok-button-props="{ disabled: !/^[a-z0-9][a-z0-9-]{1,62}$/.test(cform.name.trim()) }" @ok="createGroup">
+      <p class="sub" style="margin-top: 0">一个节点组对应一套配置。若要接管已有独立数据面，建议直接把接入方式设为“观察接入”或“兼容配置”。</p>
       <a-form layout="vertical">
-        <a-form-item label="名称" extra="小写字母、数字和短横线，2–63 个字符，例如 edge-blue。之后可在“节点组设置”中改名。">
+        <a-form-item label="名称" extra="小写字母、数字和短横线，2–63 个字符，例如 edge-blue。">
           <a-input v-model:value="cform.name" placeholder="edge-blue" />
         </a-form-item>
         <a-form-item label="说明（可选）">
           <a-input v-model:value="cform.description" />
         </a-form-item>
+        <a-form-item label="配置接管方式">
+          <a-radio-group v-model:value="cform.management_mode">
+            <a-radio value="managed">控制台托管</a-radio>
+            <a-radio value="observe">观察接入（保护现网）</a-radio>
+            <a-radio value="legacy">兼容配置（原生 Lua）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <details class="adv">
+          <summary>实例档案设置（同机多实例 / user 模式 / 自定义端口时展开）</summary>
+          <div style="margin-top: 10px">
+            <a-form-item label="实例名（留空为默认实例）"><a-input v-model:value="cform.instance" class="code" placeholder="默认实例" /></a-form-item>
+            <a-form-item label="运行方式">
+              <a-radio-group v-model:value="cform.mode">
+                <a-radio value="system">system</a-radio>
+                <a-radio value="user">user（非 root）</a-radio>
+              </a-radio-group>
+            </a-form-item>
+            <a-form-item label="安装根目录（可选）"><a-input v-model:value="cform.root" class="code" :placeholder="cform.mode === 'user' ? '/home/ops/edge' : `/opt/${brand.id}`" /></a-form-item>
+            <a-space wrap>
+              <a-form-item label="HTTP"><a-input-number v-model:value="cform.http_port" :min="1" :max="65535" /></a-form-item>
+              <a-form-item label="HTTPS"><a-input-number v-model:value="cform.https_port" :min="1" :max="65535" /></a-form-item>
+              <a-form-item label="状态页"><a-input-number v-model:value="cform.status_port" :min="1" :max="65535" /></a-form-item>
+            </a-space>
+          </div>
+        </details>
       </a-form>
     </a-modal>
+
     <a-modal v-model:open="editing" title="节点组设置" ok-text="保存" :ok-button-props="{ disabled: !nameRe.test(gform.name.trim()) }" @ok="saveGroup">
       <a-form layout="vertical">
         <a-form-item label="名称" extra="改名只影响显示，已注册的节点、站点与已发布的版本不受影响。">
@@ -445,6 +722,28 @@ function mb(b: number) {
 </template>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.env-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.adv {
+  font-size: 13px;
+  color: #445a5f;
+}
+.adv summary {
+  cursor: pointer;
+  color: #0e6971;
+}
 .hostcard {
   margin-bottom: 18px;
 }
