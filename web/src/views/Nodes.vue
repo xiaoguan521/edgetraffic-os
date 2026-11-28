@@ -63,9 +63,17 @@ function dataplaneVersion(n: any) {
 watch(gid, () => {
   if (gid.value) load()
 })
+watch(
+  () => route.query,
+  (q) => {
+    if (q.group) ws.setGroup(Number(q.group))
+    if (typeof q.q === 'string') nodeSearch.value = q.q
+  },
+)
 let t: number | undefined
 onMounted(() => {
   if (route.query.group) ws.setGroup(Number(route.query.group))
+  if (route.query.q) nodeSearch.value = String(route.query.q)
   load()
   t = window.setInterval(load, 5000)
 })
@@ -200,16 +208,46 @@ function profileChanged() {
     pform.nofile !== (p.nofile || 0)
   )
 }
-// 新建节点组（支持一步展开填写接管方式与实例档案）
+// 新建节点组（支持一步展开填写接管方式、实例档案，以及从已有组克隆配置）
 const creating = ref(false)
-const cform = reactive({ name: '', description: '', management_mode: 'managed', instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081 })
+const cform = reactive({
+  name: '',
+  description: '',
+  management_mode: 'managed',
+  instance: '',
+  mode: 'system',
+  root: '',
+  http_port: 80,
+  https_port: 443,
+  status_port: 8081,
+  clone_from: 0,
+  clone_upstreams: true,
+  clone_sites: true,
+  clone_ip_sets: true,
+  clone_streams: false,
+})
 function openCreate() {
-  Object.assign(cform, { name: '', description: '', management_mode: 'managed', instance: '', mode: 'system', root: '', http_port: 80, https_port: 443, status_port: 8081 })
+  Object.assign(cform, {
+    name: '',
+    description: '',
+    management_mode: 'managed',
+    instance: '',
+    mode: 'system',
+    root: '',
+    http_port: 80,
+    https_port: 443,
+    status_port: 8081,
+    clone_from: 0,
+    clone_upstreams: true,
+    clone_sites: true,
+    clone_ip_sets: true,
+    clone_streams: false,
+  })
   creating.value = true
 }
 async function createGroup() {
   try {
-    const base = group.value || {}
+    const base = groups.value.find((x) => x.id === cform.clone_from) || group.value || {}
     const g = await api.post('/node-groups', { name: cform.name.trim(), description: cform.description, allowed_cidrs: base.allowed_cidrs || '', real_ip_from: base.real_ip_from || '' })
     if (cform.instance || cform.mode === 'user' || cform.root || cform.http_port !== 80 || cform.https_port !== 443 || cform.status_port !== 8081) {
       const body: any = { instance: cform.instance, http_port: cform.http_port, https_port: cform.https_port, status_port: cform.status_port }
@@ -219,13 +257,51 @@ async function createGroup() {
     if (cform.management_mode !== 'managed') {
       await api.put(`/node-groups/${g.id}/management-mode`, { mode: cform.management_mode })
     }
+    if (cform.clone_from) {
+      const r = await api.post(`/node-groups/${g.id}/copy-from`, {
+        source_group_id: cform.clone_from,
+        include_upstreams: cform.clone_upstreams,
+        include_sites: cform.clone_sites,
+        include_ip_sets: cform.clone_ip_sets,
+        include_streams: cform.clone_streams,
+        overwrite: false,
+      })
+      const msg = `已克隆：站点 ${r.sites.created}、上游 ${r.upstreams.created}、IP 集 ${r.ip_sets.created}` + (r.streams.created ? `、四层 ${r.streams.created}` : '')
+      message.success(`已创建节点组 ${g.name}（${msg}）`, 6)
+      ;(r.warnings || []).forEach((w: string) => message.warning(w, 6))
+    } else {
+      message.success(`已创建节点组 ${g.name}`)
+    }
     creating.value = false
     ws.setGroup(g.id)
     view.value = 'group'
     await load()
-    message.success(`已创建节点组 ${g.name}`)
   } catch (e) {
     message.error(errMsg(e))
+  }
+}
+
+// 跨组复制配置到当前节点组
+const copyOpen = ref(false)
+const copying = ref(false)
+const copyRes = ref<any>(null)
+const copyForm = reactive({ source_group_id: 0, include_upstreams: true, include_sites: true, include_ip_sets: true, include_streams: false, overwrite: false })
+function openCopyModal() {
+  const other = groups.value.find((g) => g.id !== gid.value)
+  Object.assign(copyForm, { source_group_id: other?.id || 0, include_upstreams: true, include_sites: true, include_ip_sets: true, include_streams: false, overwrite: false })
+  copyRes.value = null
+  copyOpen.value = true
+}
+async function runCopyGroup() {
+  copying.value = true
+  try {
+    copyRes.value = await api.post(`/node-groups/${gid.value}/copy-from`, copyForm)
+    ws.markDraftDirty()
+    message.success('配置已复制到当前节点组草稿，可按本组差异微调后发布')
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    copying.value = false
   }
 }
 
@@ -325,6 +401,56 @@ async function restore(n: any) {
   }
 }
 
+// 批量恢复当前组内所有漂移节点
+const driftedNodes = computed(() => nodes.value.filter((n) => n.drifted && n.status === 'online'))
+async function restoreAllDrifted() {
+  let ok = 0
+  for (const n of driftedNodes.value) {
+    try {
+      await api.post(`/nodes/${n.id}/restore`)
+      ok++
+    } catch (e) {
+      message.warning(`${n.name}：${errMsg(e)}`)
+    }
+  }
+  if (ok) message.success(`已向 ${ok} 台漂移节点下发恢复任务`)
+  load()
+}
+
+// 手动对齐落后节点到组当前版本
+async function syncNode(n: any) {
+  try {
+    const d = await api.post(`/nodes/${n.id}/sync`)
+    message.success(`正在把 ${n.name} 对齐到 ${d.revision_id}，可在“发布”页查看进度`, 5)
+    load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
+
+// 编辑节点（改显示名 / 同档案跨组迁移）
+const nodeEditOpen = ref(false)
+const nodeEditSaving = ref(false)
+const nodeEditForm = reactive({ id: 0, name: '', group_id: 0, old_group_id: 0 })
+function openNodeEdit(n: any) {
+  Object.assign(nodeEditForm, { id: n.id, name: n.name, group_id: n.group_id, old_group_id: n.group_id })
+  nodeEditOpen.value = true
+}
+async function saveNodeEdit() {
+  nodeEditSaving.value = true
+  try {
+    await api.patch(`/nodes/${nodeEditForm.id}`, { name: nodeEditForm.name.trim(), group_id: nodeEditForm.group_id })
+    const moved = nodeEditForm.group_id !== nodeEditForm.old_group_id
+    nodeEditOpen.value = false
+    message.success(moved ? '已更新节点并迁移到目标节点组；可在目标组按需点击“立即对齐”' : '节点名称已更新', 5)
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    nodeEditSaving.value = false
+  }
+}
+
 // 漂移详情与采纳
 const drift = ref<any>(null)
 const driftNode = ref<any>(null)
@@ -362,7 +488,7 @@ const columns = [
   { title: '数据面', key: 'dataplane' },
   { title: '负载', key: 'load', width: 210 },
   { title: '最后心跳', key: 'seen', width: 120 },
-  { title: '', key: 'ops', width: 80 },
+  { title: '', key: 'ops', width: 140 },
 ]
 function ago(t?: string) {
   if (!t) return '—'
@@ -382,12 +508,25 @@ function mb(b: number) {
         <p>节点上的 {{ brand.agent }} 只向控制台发起连接，节点不需要开放任何管理端口。</p>
       </div>
       <a-space wrap>
-        <a-segmented v-model:value="view" :options="[{ label: '按节点组', value: 'group' }, { label: '按主机', value: 'host' }]" />
-        <a-button v-if="session.can('admin')" :disabled="!session.writable" @click="openCreate">新建节点组</a-button>
+        <a-dropdown v-if="session.can('admin') || (session.can('operator') && groups.length > 1)">
+          <a-button :disabled="!session.writable">更多 ▾</a-button>
+          <template #overlay>
+            <a-menu @click="(e: any) => (e.key === 'create' ? openCreate() : openCopyModal())">
+              <a-menu-item v-if="session.can('admin')" key="create">新建节点组</a-menu-item>
+              <a-menu-item v-if="session.can('operator') && groups.length > 1" key="copy">从其他组复制配置</a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
         <a-button v-if="session.can('operator')" @click="openGroup">节点组设置</a-button>
         <a-button v-if="session.can('operator')" :disabled="!session.writable" @click="openTakeover">接管独立节点</a-button>
         <a-button v-if="session.can('operator')" type="primary" :loading="enrolling" :disabled="!session.writable" @click="addNode('new')">添加节点</a-button>
       </a-space>
+    </div>
+
+    <div class="viewbar">
+      <a-segmented v-model:value="view" :options="[{ label: '按节点组', value: 'group' }, { label: '按主机', value: 'host' }]" />
+      <span v-if="view === 'group' && group" class="sub">当前查看节点组：<b>{{ group.name }}</b></span>
+      <span v-else class="sub">按宿主机机器标识聚合全部节点组的实例</span>
     </div>
 
     <div v-if="view === 'host'" class="panel">
@@ -398,7 +537,7 @@ function mb(b: number) {
           <b>{{ h.name || h.host }}</b> <span class="sub code">{{ h.host }}</span>
           <a-tag v-if="h.mixed" color="gold" style="margin-left: 8px">实例版本不一致：{{ h.versions.join('、') }}</a-tag>
         </div>
-        <a-table :data-source="h.nodes" row-key="id" :pagination="false" size="small"
+        <a-table :data-source="h.nodes" row-key="id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
           :columns="[{ title: '节点', dataIndex: 'name', width: '26%' }, { title: '节点组', dataIndex: 'group_name', width: '16%' }, { title: '实例', key: 'inst', width: '14%' }, { title: 'HTTP / HTTPS', key: 'ports', width: '18%' }, { title: '运行版本', key: 'ver', width: '14%' }, { title: '状态', key: 'st' }]" table-layout="fixed">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'inst'">{{ record.instance || '默认' }}<a-tag v-if="record.mode === 'user'" style="margin-left: 6px">user</a-tag></template>
@@ -411,12 +550,26 @@ function mb(b: number) {
     </div>
 
     <div class="panel" v-if="view === 'group'">
-      <div class="gsum" v-if="group">
-        <span>节点组 <b>{{ group.name }}</b></span>
-        <span>组版本 <b class="num">{{ group.current_revision_id || '未发布' }}</b></span>
-        <span>允许回源网段 <b class="code">{{ group.allowed_cidrs || '未设置' }}</b></span>
-        <span v-if="profile">实例档案 <b>{{ instanceLabel }}</b></span>
-        <span v-if="managementMode">接入方式 <a-tag :color="managementMode.mode === 'managed' ? 'green' : managementMode.mode === 'legacy' ? 'purple' : 'gold'">{{ managementMode.label }}</a-tag></span>
+      <div class="gsum-grid" v-if="group">
+        <div class="gsum-cell">
+          <div class="gsum-k">当前线上版本</div>
+          <div class="gsum-v num">{{ group.current_revision_id || '未发布' }}</div>
+        </div>
+        <div class="gsum-cell">
+          <div class="gsum-k">接入方式</div>
+          <div class="gsum-v">
+            <a-tag v-if="managementMode" :color="managementMode.mode === 'managed' ? 'green' : managementMode.mode === 'legacy' ? 'purple' : 'gold'" style="margin: 0">{{ managementMode.label }}</a-tag>
+            <span v-else>—</span>
+          </div>
+        </div>
+        <div class="gsum-cell gsum-wide">
+          <div class="gsum-k">实例档案</div>
+          <div class="gsum-v">{{ instanceLabel || '默认实例' }}</div>
+        </div>
+        <div class="gsum-cell">
+          <div class="gsum-k">允许回源网段</div>
+          <div class="gsum-v code">{{ group.allowed_cidrs || '未设置' }}</div>
+        </div>
       </div>
       <a-alert v-if="managementMode?.mode === 'observe'" type="warning" show-icon message="观察接入：节点上线和心跳不会触发配置下发；导入内容只会进入控制台草稿。确认配置后，请在节点组设置切回“控制台托管”，再手动预览、审批和发布。" style="margin-bottom: 14px" />
       <a-alert v-else-if="managementMode?.mode === 'legacy'" type="info" show-icon message="兼容配置：原生配置包由管理员提交，经另一位管理员审批后才会下发；控制台不会自动发布站点草稿。" style="margin-bottom: 14px" />
@@ -428,8 +581,16 @@ function mb(b: number) {
           size="small"
           :options="[{ label: `全部 (${nodes.length})`, value: 'all' }, { label: '在线', value: 'online' }, { label: '离线', value: 'offline' }, { label: '配置漂移', value: 'drifted' }]"
         />
+        <a-popconfirm
+          v-if="session.can('releaser') && driftedNodes.length"
+          :title="`恢复当前组内全部 ${driftedNodes.length} 台漂移节点到控制台版本？`"
+          ok-text="全部恢复"
+          @confirm="restoreAllDrifted"
+        >
+          <a-button size="small" danger>恢复全部漂移（{{ driftedNodes.length }}）</a-button>
+        </a-popconfirm>
       </div>
-      <a-table :columns="columns" :data-source="filteredNodes" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }">
+      <a-table :columns="columns" :data-source="filteredNodes" row-key="id" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 20, hideOnSinglePage: true }">
         <template #emptyText>
           <a-empty :description="nodes.length ? '没有匹配的节点' : '这个节点组还没有节点。点击“添加节点”或“接管独立节点”接入。'" />
         </template>
@@ -450,7 +611,17 @@ function mb(b: number) {
           </template>
           <template v-else-if="column.key === 'rev'">
             <span class="num">{{ record.applied_revision || '—' }}</span>
-            <a-tag v-if="group?.current_revision_id && record.applied_revision !== group.current_revision_id && record.status === 'online'" color="gold" style="margin-left: 6px">落后</a-tag>
+            <template v-if="group?.current_revision_id && record.applied_revision !== group.current_revision_id && record.status === 'online'">
+              <a-tag color="gold" style="margin-left: 6px">落后</a-tag>
+              <a-popconfirm
+                v-if="session.writable && (managementMode?.mode === 'legacy' ? session.can('admin') : managementMode?.mode === 'managed' && session.can('releaser'))"
+                :title="`立即将 ${record.name} 对齐到 ${group.current_revision_id}？`"
+                ok-text="立即对齐"
+                @confirm="syncNode(record)"
+              >
+                <a class="restore">立即对齐</a>
+              </a-popconfirm>
+            </template>
           </template>
           <template v-else-if="column.key === 'dataplane'">
             <div>{{ dataplaneVersion(record) || '—' }}<a-tooltip v-if="record.running_version && dataplaneVersion(record) && !dataplaneVersion(record).includes(record.running_version)" :title="`本实例仍在运行 ${record.running_version}：同机其他实例已升级了共用的二进制`"><a-tag color="gold" class="gm">运行 {{ record.running_version }}</a-tag></a-tooltip><a-tag v-if="record.tls_lib === 'tongsuo'" color="red" class="gm">国密</a-tag><a-tooltip v-if="record.lua_addon" :title="`${brand.lua} ${record.lua_addon}`"><a-tag color="purple" class="gm">Lua</a-tag></a-tooltip></div>
@@ -465,9 +636,12 @@ function mb(b: number) {
           </template>
           <template v-else-if="column.key === 'seen'">{{ ago(record.last_seen_at) }}</template>
           <template v-else-if="column.key === 'ops'">
-            <a-popconfirm v-if="session.can('admin')" title="吊销后该节点证书立即失效，需重新注册。确定吊销？" ok-text="吊销" @confirm="revoke(record)">
-              <a-button type="link" danger size="small">吊销</a-button>
-            </a-popconfirm>
+            <a-space :size="0">
+              <a-button v-if="session.can('operator')" type="link" size="small" :disabled="!session.writable" @click="openNodeEdit(record)">编辑</a-button>
+              <a-popconfirm v-if="session.can('admin')" title="吊销后该节点证书立即失效，需重新注册。确定吊销？" ok-text="吊销" @confirm="revoke(record)">
+                <a-button type="link" danger size="small">吊销</a-button>
+              </a-popconfirm>
+            </a-space>
           </template>
         </template>
       </a-table>
@@ -603,6 +777,18 @@ function mb(b: number) {
             <a-radio value="legacy">兼容配置（原生 Lua）</a-radio>
           </a-radio-group>
         </a-form-item>
+        <a-form-item v-if="groups.length" label="从已有节点组克隆配置（可选）" extra="多组大部分配置相同时，可一键克隆站点、上游与 IP 集，建好后只需修改差异项">
+          <a-select
+            v-model:value="cform.clone_from"
+            :options="[{ value: 0, label: '不克隆（空白节点组）' }, ...groups.map((g) => ({ value: g.id, label: g.name }))]"
+          />
+          <a-space v-if="cform.clone_from" wrap style="margin-top: 8px">
+            <a-checkbox v-model:checked="cform.clone_upstreams">上游服务</a-checkbox>
+            <a-checkbox v-model:checked="cform.clone_sites">站点</a-checkbox>
+            <a-checkbox v-model:checked="cform.clone_ip_sets">组内 IP 集</a-checkbox>
+            <a-checkbox v-model:checked="cform.clone_streams">四层代理</a-checkbox>
+          </a-space>
+        </a-form-item>
         <details class="adv">
           <summary>实例档案设置（同机多实例 / user 模式 / 自定义端口时展开）</summary>
           <div style="margin-top: 10px">
@@ -621,6 +807,46 @@ function mb(b: number) {
             </a-space>
           </div>
         </details>
+      </a-form>
+    </a-modal>
+
+    <a-modal v-model:open="copyOpen" :title="`复制配置到节点组 ${group?.name || ''}`" ok-text="开始复制" :confirm-loading="copying" :ok-button-props="{ disabled: !copyForm.source_group_id }" width="580px" @ok="runCopyGroup">
+      <p class="sub" style="margin-top: 0">将源节点组的配置复制到当前组草稿（不含需双人审批的自定义片段与 Lua 脚本；全局 IP 集与证书库天然跨组共享，无需复制）。</p>
+      <a-form layout="vertical">
+        <a-form-item label="源节点组">
+          <a-select v-model:value="copyForm.source_group_id" :options="groups.filter((g) => g.id !== gid).map((g) => ({ value: g.id, label: g.name }))" />
+        </a-form-item>
+        <a-form-item label="复制内容">
+          <a-space wrap>
+            <a-checkbox v-model:checked="copyForm.include_upstreams">上游服务</a-checkbox>
+            <a-checkbox v-model:checked="copyForm.include_sites">站点（含静态资源包）</a-checkbox>
+            <a-checkbox v-model:checked="copyForm.include_ip_sets">组内私有 IP 集</a-checkbox>
+            <a-checkbox v-model:checked="copyForm.include_streams">四层代理</a-checkbox>
+          </a-space>
+        </a-form-item>
+        <a-form-item>
+          <a-checkbox v-model:checked="copyForm.overwrite">覆盖目标组中同名的站点 / 上游 / IP 集 / 四层（不勾选则保留目标组现有项）</a-checkbox>
+        </a-form-item>
+      </a-form>
+      <template v-if="copyRes">
+        <a-alert
+          type="success"
+          show-icon
+          style="margin-bottom: 8px"
+          :message="`复制完成：上游 +${copyRes.upstreams.created}/${copyRes.upstreams.updated}更新，站点 +${copyRes.sites.created}/${copyRes.sites.updated}更新，IP 集 +${copyRes.ip_sets.created}，四层 +${copyRes.streams.created}`"
+        />
+        <a-alert v-for="(w, i) in copyRes.warnings || []" :key="i" type="warning" show-icon :message="w" style="margin-top: 6px" />
+      </template>
+    </a-modal>
+
+    <a-modal v-model:open="nodeEditOpen" title="编辑节点" ok-text="保存" :confirm-loading="nodeEditSaving" :ok-button-props="{ disabled: !nodeEditForm.name.trim() }" @ok="saveNodeEdit">
+      <a-form layout="vertical">
+        <a-form-item label="显示名称" extra="仅用于控制台识别展示，不影响节点证书身份">
+          <a-input v-model:value="nodeEditForm.name" :maxlength="64" />
+        </a-form-item>
+        <a-form-item v-if="groups.length > 1" label="所属节点组" extra="仅允许迁移到实例档案（运行模式、实例名、根目录与端口）一致的节点组；迁移后不会立即覆盖配置，可在目标组点击“立即对齐”">
+          <a-select v-model:value="nodeEditForm.group_id" :options="groups.map((g) => ({ value: g.id, label: g.name }))" />
+        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -755,18 +981,43 @@ function mb(b: number) {
   font-size: 11px;
   line-height: 16px;
 }
-.gsum {
+.viewbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 28px;
-  margin-bottom: 14px;
-  font-size: 13px;
-  color: #6b7c80;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
-.gsum b {
-  color: #16323a;
+.gsum-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.85fr) minmax(130px, 0.75fr) minmax(240px, 1.8fr) minmax(160px, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.gsum-cell {
+  background: #f8fbfb;
+  border: 1px solid #e6eceb;
+  border-radius: 6px;
+  padding: 10px 14px;
+  min-width: 0;
+}
+.gsum-k {
+  font-size: 11.5px;
+  color: #6b7c80;
+  margin-bottom: 4px;
+}
+.gsum-v {
+  font-size: 13px;
   font-weight: 600;
-  margin-left: 6px;
+  color: #16323a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 960px) {
+  .gsum-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .nm {
   font-weight: 600;

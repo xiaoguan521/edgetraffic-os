@@ -112,6 +112,7 @@ async function apply() {
   applying.value = true
   try {
     const r = await api.post(`/imports/${current.value.import.id}/apply`, {})
+    ws.markDraftDirty()
     message.success(`已导入 ${r.sites.length} 个站点（草稿），${r.snippets.length} 个片段待审批`)
     await open(current.value.import.id)
     await load()
@@ -179,6 +180,7 @@ async function editSite(s: any, issue?: any) {
 }
 async function savedSite() {
   editorOpen.value = false
+  ws.markDraftDirty()
   await checkReview()
 }
 function routeText(r: any) {
@@ -224,6 +226,25 @@ const statusTag: Record<string, { t: string; c: string }> = {
   partial: { t: '部分转换', c: 'gold' },
   failed: { t: '无法转换', c: 'red' },
 }
+const siteStatusFilter = ref<'all' | 'failed' | 'partial' | 'full'>('all')
+const openSites = ref<string[]>([])
+const filteredReportSites = computed(() => {
+  const list = rep.value?.sites || []
+  if (siteStatusFilter.value === 'all') return list
+  return list.filter((s: any) => s.status === siteStatusFilter.value)
+})
+watch(
+  () => rep.value,
+  (r) => {
+    siteStatusFilter.value = 'all'
+    if (!r?.sites?.length) {
+      openSites.value = []
+      return
+    }
+    const problem = r.sites.filter((s: any) => s.status !== 'full').map((s: any) => s.name)
+    openSites.value = problem.length ? problem.slice(0, 6) : r.sites.slice(0, 3).map((s: any) => s.name)
+  },
+)
 </script>
 
 <template>
@@ -310,37 +331,70 @@ const statusTag: Record<string, { t: string; c: string }> = {
         </a-space>
       </section>
 
-      <section class="panel" v-for="s in rep.sites" :key="s.name">
+      <section class="panel" v-if="rep.sites?.length">
         <div class="phead">
-          <h2>{{ s.name }} <a-tag :color="statusTag[s.status].c">{{ statusTag[s.status].t }}</a-tag></h2>
-          <a-space><span class="sub code">{{ s.file }}:{{ s.line }}</span><a-button v-if="reviewedSite(s)?.site && session.can('operator')" size="small" :disabled="!session.writable" @click="editSite(s)">编辑站点草稿</a-button></a-space>
+          <h2>站点转换明细 <span class="sub">共 {{ rep.sites.length }} 个</span></h2>
+          <a-space wrap size="small">
+            <a-segmented
+              v-model:value="siteStatusFilter"
+              size="small"
+              :options="[
+                { label: `全部 (${rep.sites.length})`, value: 'all' },
+                { label: `无法转换 (${rep.summary.failed})`, value: 'failed' },
+                { label: `部分转换 (${rep.summary.partial})`, value: 'partial' },
+                { label: `完全转换 (${rep.summary.full})`, value: 'full' },
+              ]"
+            />
+            <a-button size="small" @click="openSites = openSites.length ? [] : filteredReportSites.map((s: any) => s.name)">
+              {{ openSites.length ? '全部折叠' : '全部展开' }}
+            </a-button>
+          </a-space>
         </div>
-        <a-alert v-if="current.import.applied_at && s.status === 'failed'" type="warning" show-icon message="该站点无法自动创建草稿，请参考原配置在站点页手工创建并核对。" style="margin-bottom: 10px" />
-        <div class="sub">{{ (s.spec.domains || []).join('、') }}<template v-if="s.spec.https"> · HTTPS{{ s.spec.force_https ? '（强制跳转）' : '' }}{{ s.cert_found ? ' · 证书已找到' : '' }}</template></div>
-        <details>
-          <summary>导入时识别的路由（{{ (s.spec.routes || []).length }}）</summary>
-          <ul class="routes">
-            <li v-for="r in s.spec.routes" :key="r.match + r.path"><span class="code">{{ r.match === 'exact' ? '= ' : '' }}{{ r.path }}</span> → {{ routeText(r) }}<a-tag v-if="s.location_snippets?.[r.path]" style="margin-left: 6px">片段</a-tag></li>
-          </ul>
-        </details>
-        <details v-if="reviewedSite(s)?.site" class="comparison">
-          <summary>已识别路由与当前草稿对照（{{ compareRoutes(s).filter((r: any) => r.status !== '相同').length }} 项摘要差异）</summary>
-          <p class="sub">只对比路径、匹配类型、路由模式、上游及 WebSocket 开关等摘要，不包含静态文件内容和配置全文；未转换的指令及实际业务行为仍需对照原配置。发布页可对比当前启用草稿与线上版本。</p>
-          <a-table :data-source="compareRoutes(s)" :pagination="{ pageSize: 10 }" row-key="key" size="small" :columns="[{ title: '路由', dataIndex: 'path' }, { title: '导入时识别', dataIndex: 'original' }, { title: '当前草稿', dataIndex: 'draft' }, { title: '状态', dataIndex: 'status', width: 80 }]" />
-        </details>
-        <template v-if="s.server_snippet">
-          <div class="sub">转为 server 片段（应用后需另一人审批）：</div>
-          <pre class="snip">{{ s.server_snippet }}</pre>
-        </template>
-        <div v-if="s.issues.length" class="sub">{{ s.issues.length }} 项说明，其中 {{ s.issues.filter((i: any) => i.blocking).length }} 项需人工处理</div>
-        <a-table v-if="s.issues.length" :data-source="filtered(s.issues)" :pagination="{ pageSize: 20 }" size="small" :row-key="(r: any) => r.file + r.line + r.directive + r.reason"
-          :columns="[{ title: '位置', key: 'loc', width: 260 }, { title: '指令', dataIndex: 'directive', width: 160 }, { title: '原因', key: 'reason' }, { title: '处理', key: 'action', width: 140 }]">
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'loc'"><span class="code">{{ record.file }}:{{ record.line }}</span><div v-if="record.location" class="sub code">{{ record.location }}</div></template>
-            <template v-else-if="column.key === 'reason'"><a-tag v-if="record.blocking" color="red">需人工处理</a-tag>{{ record.reason }}</template>
-            <template v-else-if="column.key === 'action'"><a v-if="reviewedSite(s)?.site" @click="editSite(s, record)">编辑站点草稿</a><span v-else class="sub">{{ current.import.applied_at ? '到站点页处理' : '应用后处理' }}</span></template>
-          </template>
-        </a-table>
+        <a-empty v-if="!filteredReportSites.length" description="当前筛选条件下没有站点" />
+        <a-collapse v-else v-model:active-key="openSites" :bordered="false" class="site-collapse">
+          <a-collapse-panel v-for="s in filteredReportSites" :key="s.name">
+            <template #header>
+              <div class="site-hdr">
+                <a-space wrap :size="6">
+                  <b>{{ s.name }}</b>
+                  <a-tag :color="statusTag[s.status].c" style="margin: 0">{{ statusTag[s.status].t }}</a-tag>
+                  <span class="sub">{{ (s.spec.domains || []).slice(0, 3).join('、') }}<template v-if="(s.spec.domains || []).length > 3"> 等 {{ s.spec.domains.length }} 个</template></span>
+                  <a-tag v-if="s.issues?.length" color="orange" style="margin: 0">{{ s.issues.length }} 项说明</a-tag>
+                </a-space>
+                <span class="sub code">{{ s.file }}:{{ s.line }}</span>
+              </div>
+            </template>
+            <template #extra>
+              <a-button v-if="reviewedSite(s)?.site && session.can('operator')" size="small" :disabled="!session.writable" @click.stop="editSite(s)">编辑站点草稿</a-button>
+            </template>
+            <a-alert v-if="current.import.applied_at && s.status === 'failed'" type="warning" show-icon message="该站点无法自动创建草稿，请参考原配置在站点页手工创建并核对。" style="margin-bottom: 10px" />
+            <div class="sub">{{ (s.spec.domains || []).join('、') }}<template v-if="s.spec.https"> · HTTPS{{ s.spec.force_https ? '（强制跳转）' : '' }}{{ s.cert_found ? ' · 证书已找到' : '' }}</template></div>
+            <details>
+              <summary>导入时识别的路由（{{ (s.spec.routes || []).length }}）</summary>
+              <ul class="routes">
+                <li v-for="r in s.spec.routes" :key="r.match + r.path"><span class="code">{{ r.match === 'exact' ? '= ' : '' }}{{ r.path }}</span> → {{ routeText(r) }}<a-tag v-if="s.location_snippets?.[r.path]" style="margin-left: 6px">片段</a-tag></li>
+              </ul>
+            </details>
+            <details v-if="reviewedSite(s)?.site" class="comparison">
+              <summary>已识别路由与当前草稿对照（{{ compareRoutes(s).filter((r: any) => r.status !== '相同').length }} 项摘要差异）</summary>
+              <p class="sub">只对比路径、匹配类型、路由模式、上游及 WebSocket 开关等摘要，不包含静态文件内容和配置全文；未转换的指令及实际业务行为仍需对照原配置。发布页可对比当前启用草稿与线上版本。</p>
+              <a-table :data-source="compareRoutes(s)" :pagination="{ pageSize: 10 }" row-key="key" size="small" :scroll="{ x: 'max-content' }" :columns="[{ title: '路由', dataIndex: 'path' }, { title: '导入时识别', dataIndex: 'original' }, { title: '当前草稿', dataIndex: 'draft' }, { title: '状态', dataIndex: 'status', width: 80 }]" />
+            </details>
+            <template v-if="s.server_snippet">
+              <div class="sub">转为 server 片段（应用后需另一人审批）：</div>
+              <pre class="snip">{{ s.server_snippet }}</pre>
+            </template>
+            <div v-if="s.issues.length" class="sub">{{ s.issues.length }} 项说明，其中 {{ s.issues.filter((i: any) => i.blocking).length }} 项需人工处理</div>
+            <a-table v-if="s.issues.length" :data-source="filtered(s.issues)" :pagination="{ pageSize: 20 }" size="small" :scroll="{ x: 'max-content' }" :row-key="(r: any) => r.file + r.line + r.directive + r.reason"
+              :columns="[{ title: '位置', key: 'loc', width: 260 }, { title: '指令', dataIndex: 'directive', width: 160 }, { title: '原因', key: 'reason' }, { title: '处理', key: 'action', width: 140 }]">
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'loc'"><span class="code">{{ record.file }}:{{ record.line }}</span><div v-if="record.location" class="sub code">{{ record.location }}</div></template>
+                <template v-else-if="column.key === 'reason'"><a-tag v-if="record.blocking" color="red">需人工处理</a-tag>{{ record.reason }}</template>
+                <template v-else-if="column.key === 'action'"><a v-if="reviewedSite(s)?.site" @click="editSite(s, record)">编辑站点草稿</a><span v-else class="sub">{{ current.import.applied_at ? '到站点页处理' : '应用后处理' }}</span></template>
+              </template>
+            </a-table>
+          </a-collapse-panel>
+        </a-collapse>
       </section>
 
       <section class="panel" v-if="rep.global.length || rep.http_snippet">
@@ -349,7 +403,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
           <div class="sub">http 层白名单内的指令转为片段（应用后需审批）：</div>
           <pre class="snip">{{ rep.http_snippet }}</pre>
         </template>
-        <a-table :data-source="filtered(rep.global, false)" :pagination="{ pageSize: 20 }" size="small" :row-key="(r: any) => r.file + r.line + r.directive + r.reason"
+        <a-table :data-source="filtered(rep.global, false)" :pagination="{ pageSize: 20 }" size="small" :scroll="{ x: 'max-content' }" :row-key="(r: any) => r.file + r.line + r.directive + r.reason"
           :columns="[{ title: '位置', key: 'loc', width: 260 }, { title: '指令', dataIndex: 'directive', width: 160 }, { title: '说明', dataIndex: 'reason' }]">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'loc'"><span class="code">{{ record.file }}:{{ record.line }}</span></template>
@@ -369,7 +423,7 @@ const statusTag: Record<string, { t: string; c: string }> = {
 
     <section class="panel">
       <h2>导入记录</h2>
-      <a-table :data-source="history" row-key="id" :pagination="false" size="middle"
+      <a-table :data-source="history" row-key="id" :pagination="false" size="middle" :scroll="{ x: 'max-content' }"
         :columns="[{ title: '#', dataIndex: 'id', width: 60 }, { title: '文件', dataIndex: 'file_name' }, { title: '结果', key: 'sum' }, { title: '上传', key: 'by', width: 170 }, { title: '状态', key: 'st', width: 110 }, { title: '', key: 'op', width: 80 }]">
         <template #emptyText><a-empty description="还没有导入过配置" /></template>
         <template #bodyCell="{ column, record }">
@@ -430,5 +484,16 @@ summary { cursor: pointer; color: #0e6971; margin: 8px 0; }
   font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
   font-size: 12px;
   white-space: pre-wrap;
+}
+.site-collapse :deep(.ant-collapse-item) {
+  border-bottom: 1px solid #eef2f1;
+}
+.site-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 </style>

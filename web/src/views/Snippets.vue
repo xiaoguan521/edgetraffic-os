@@ -157,6 +157,7 @@ async function act(r: any, action: 'approve' | 'reject' | 'withdraw' | 'delete',
   try {
     await api.post(`/snippets/${r.id}/${action}`, {})
     message.success(ok)
+    if (action === 'approve') ws.markDraftDirty()
     await load()
     ws.loadBadges()
   } catch (e) {

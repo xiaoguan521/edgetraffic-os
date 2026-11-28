@@ -41,5 +41,6 @@ export const api = {
   get: <T = any>(url: string, params?: any) => http.get<T>(url, { params }).then((r) => r.data),
   post: <T = any>(url: string, body?: any) => http.post<T>(url, body).then((r) => r.data),
   put: <T = any>(url: string, body?: any) => http.put<T>(url, body).then((r) => r.data),
+  patch: <T = any>(url: string, body?: any) => http.patch<T>(url, body).then((r) => r.data),
   del: <T = any>(url: string, body?: any) => http.delete<T>(url, body === undefined ? undefined : { data: body }).then((r) => r.data),
 }

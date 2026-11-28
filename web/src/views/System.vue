@@ -118,7 +118,26 @@ async function confirmResetPw() {
   resetPassword.value = ''
   message.success('临时口令已重置，对方首次登录须修改')
 }
+const activeSec = ref('sec-lic')
+const navItems = computed(() => {
+  const list: { id: string; label: string }[] = [
+    { id: 'sec-lic', label: '授权管理' },
+    { id: 'sec-api', label: '开放 API 令牌' },
+  ]
+  if (session.can('admin')) {
+    list.push(
+      { id: 'sec-approval', label: '发布审批' },
+      { id: 'sec-users', label: '用户管理' },
+      { id: 'sec-pol', label: '账号安全策略' },
+      { id: 'sec-sso', label: 'OIDC 单点登录' },
+      { id: 'sec-ldap', label: 'LDAP / AD' },
+    )
+  }
+  list.push({ id: 'sec-about', label: '关于' })
+  return list
+})
 function scrollToSection(id: string) {
+  activeSec.value = id
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 async function delUser(u: any) {
@@ -181,17 +200,23 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
         <h1>授权与系统</h1>
         <p>授权过期只限制控制台的新增变更，从不停止或干扰节点上的 {{ brand.id }} 流量。</p>
       </div>
-      <a-space wrap size="small">
-        <a-button size="small" @click="scrollToSection('sec-lic')">授权</a-button>
-        <a-button size="small" @click="scrollToSection('sec-api')">API 令牌</a-button>
-        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-users')">用户</a-button>
-        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-pol')">安全策略</a-button>
-        <a-button v-if="session.can('admin')" size="small" @click="scrollToSection('sec-sso')">单点登录</a-button>
-        <a-button size="small" @click="scrollToSection('sec-about')">关于</a-button>
-      </a-space>
     </div>
 
-    <div id="sec-lic" class="cols">
+    <div class="sys-layout">
+      <nav class="sys-nav" aria-label="系统设置目录">
+        <button
+          v-for="item in navItems"
+          :key="item.id"
+          type="button"
+          class="sys-nav-item"
+          :class="{ active: activeSec === item.id }"
+          @click="scrollToSection(item.id)"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <div class="sys-content">
+        <div id="sec-lic" class="cols sec-anchor">
       <section class="panel lic" :class="tone" v-if="lic">
         <div class="state">
           <span class="badge">{{ licenseStateName[lic.state] }}</span>
@@ -240,7 +265,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </section>
     </div>
 
-    <section id="sec-api" class="panel">
+    <section id="sec-api" class="panel sec-anchor">
       <div class="uhead">
         <h2>开放 API 令牌</h2>
         <a-button size="small" :disabled="!apiLicensed || !session.writable" @click="tkOpen = true">新建令牌</a-button>
@@ -252,7 +277,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       <a-alert v-if="newToken" type="success" show-icon closable style="margin: 8px 0" @close="newToken = ''">
         <template #message>令牌只显示这一次，请立即保存：<span class="code">{{ newToken }}</span></template>
       </a-alert>
-      <a-table v-if="tokens.length" :data-source="tokens" row-key="id" :pagination="false" size="small"
+      <a-table v-if="tokens.length" :data-source="tokens" row-key="id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
         :columns="[{ title: '名称', dataIndex: 'name' }, { title: '前缀', key: 'prefix' }, { title: '用户 / 角色', key: 'who' }, { title: '到期', key: 'exp' }, { title: '最近使用', key: 'used' }, { title: '', key: 'op', width: 80 }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'prefix'"><span class="code">{{ record.prefix }}…</span></template>
@@ -276,7 +301,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </a-modal>
     </section>
 
-    <section class="panel" v-if="session.can('admin')">
+    <section id="sec-approval" class="panel sec-anchor" v-if="session.can('admin')">
       <div class="uhead">
         <h2>发布审批</h2>
         <a-switch :checked="approval.enabled" :disabled="!approval.enabled && (!approval.licensed || !session.writable)" @change="(v: any) => setApproval(!!v)" />
@@ -287,12 +312,12 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </p>
     </section>
 
-    <section id="sec-users" class="panel" v-if="session.can('admin')">
+    <section id="sec-users" class="panel sec-anchor" v-if="session.can('admin')">
       <div class="uhead">
         <h2>用户</h2>
         <a-button size="small" :disabled="!session.writable" @click="uOpen = true">新建用户</a-button>
       </div>
-      <a-table :data-source="users" row-key="id" :pagination="false" size="middle" :columns="[{ title: '用户名', key: 'name' }, { title: '角色', key: 'role', width: 130 }, { title: '状态', key: 'st' }, { title: '最近登录', key: 'login' }, { title: '', key: 'op', width: 200 }]">
+      <a-table :data-source="users" row-key="id" :pagination="false" size="middle" :scroll="{ x: 'max-content' }" :columns="[{ title: '用户名', key: 'name' }, { title: '角色', key: 'role', width: 130 }, { title: '状态', key: 'st' }, { title: '最近登录', key: 'login' }, { title: '', key: 'op', width: 200 }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">{{ record.username }}<a-tag v-if="record.source && record.source !== 'local'" style="margin-left: 6px">{{ record.source.toUpperCase() }}</a-tag></template>
           <template v-else-if="column.key === 'role'">
@@ -318,7 +343,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </a-table>
     </section>
 
-    <section id="sec-pol" class="panel" v-if="session.can('admin') && pol">
+    <section id="sec-pol" class="panel sec-anchor" v-if="session.can('admin') && pol">
       <div class="uhead">
         <h2>账号安全策略</h2>
         <a-button size="small" :disabled="!session.writable" @click="savePolicy">保存</a-button>
@@ -336,7 +361,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </div>
     </section>
 
-    <section id="sec-sso" class="panel" v-if="session.can('admin') && oidcCfg">
+    <section id="sec-sso" class="panel sec-anchor" v-if="session.can('admin') && oidcCfg">
       <div class="uhead">
         <h2>OIDC 单点登录</h2>
         <a-button size="small" type="primary" :disabled="!session.writable" @click="saveOIDC">保存</a-button>
@@ -361,7 +386,7 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       <a @click="(oidcCfg.config.role_map ||= []).push({ group: '', role: 'viewer' })">添加映射</a>
     </section>
 
-    <section class="panel" v-if="session.can('admin') && ldap">
+    <section id="sec-ldap" class="panel sec-anchor" v-if="session.can('admin') && ldap">
       <div class="uhead">
         <h2>LDAP / AD 登录</h2>
         <a-space>
@@ -395,11 +420,13 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
       </a-modal>
     </section>
 
-    <section id="sec-about" class="panel about">
+    <section id="sec-about" class="panel about sec-anchor">
       <h2>关于</h2>
       <p>{{ brand.product }}（{{ brand.fullname }}），数据面 {{ brand.proc }}。</p>
       <p class="sub">The {{ brand.proc }} data plane is based on NGINX Open Source (BSD-2-Clause). 完整的第三方许可声明见安装目录 /opt/{{ brand.id }}/share/doc/NOTICE。</p>
     </section>
+      </div>
+    </div>
 
     <a-modal v-model:open="resetOpen" :title="`重置 ${resetTarget?.username || ''} 的口令`" ok-text="确认重置" :ok-button-props="{ disabled: !resetPassword }" @ok="confirmResetPw">
       <a-form layout="vertical">
@@ -422,6 +449,50 @@ const roleName: Record<string, string> = { admin: '管理员', operator: '运维
 </template>
 
 <style scoped>
+.sys-layout {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.sys-nav {
+  position: sticky;
+  top: 72px;
+  background: #fff;
+  border: 1px solid #e6eceb;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 1px 2px rgba(22, 50, 58, 0.03);
+}
+.sys-nav-item {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #445a5f;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.sys-nav-item:hover {
+  background: #f4f8f8;
+  color: #16323a;
+}
+.sys-nav-item.active {
+  background: #e9f5f6;
+  color: #0e6971;
+  font-weight: 600;
+}
+.sys-content {
+  min-width: 0;
+}
+.sec-anchor {
+  scroll-margin-top: 76px;
+}
 .cols {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
@@ -542,6 +613,15 @@ h3 {
   margin: 0 0 4px;
 }
 @media (max-width: 980px) {
+  .sys-layout {
+    grid-template-columns: 1fr;
+  }
+  .sys-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
   .cols {
     grid-template-columns: 1fr;
   }

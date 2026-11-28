@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
-import { message } from 'antdv-next'
+import { Modal, message } from 'antdv-next'
 import { api, errMsg } from '../api/client'
 import { useSession } from '../stores/session'
 import { useWorkspace } from '../stores/workspace'
@@ -11,13 +11,69 @@ import SiteEditor from '../components/SiteEditor.vue'
 const session = useSession()
 const ws = useWorkspace()
 const route = useRoute()
-const router = useRouter()
 const tab = ref('sites')
 const sites = ref<any[]>([])
 const ups = ref<any[]>([])
 const search = ref('')
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
-const dirtyNotice = ref(false)
+const togglingSiteId = ref(0)
+const selectedSiteIds = ref<number[]>([])
+const expandedRoutes = ref<Record<number, boolean>>({})
+function confirmDeleteSite(s: any) {
+  Modal.confirm({
+    title: `删除站点 ${s.name}？`,
+    content: '发布后将从本节点组的所有节点移除。',
+    okText: '删除',
+    okButtonProps: { danger: true },
+    cancelText: '取消',
+    onOk: () => removeSite(s),
+  })
+}
+function onSiteMenu(record: any, key: string) {
+  if (key === 'dup') openDuplicate(record)
+  else if (key === 'copy') openCopySites([record.id])
+  else if (key === 'del') confirmDeleteSite(record)
+}
+
+// 跨组复制站点（自动携带站点引用的上游、组内 IP 集与静态包）
+const copySitesOpen = ref(false)
+const copySiteIds = ref<number[]>([])
+const copyTargetGroups = ref<number[]>([])
+const copyOverwrite = ref(false)
+const copyingSites = ref(false)
+function openCopySites(ids: number[]) {
+  copySiteIds.value = ids
+  copyTargetGroups.value = ws.groups.filter((g) => g.id !== gid.value).slice(0, 1).map((g) => g.id)
+  copyOverwrite.value = false
+  copySitesOpen.value = true
+}
+async function runCopySites() {
+  copyingSites.value = true
+  try {
+    let createdTotal = 0
+    let updatedTotal = 0
+    const allWarnings: string[] = []
+    for (const targetId of copyTargetGroups.value) {
+      const r = await api.post(`/node-groups/${targetId}/copy-from`, {
+        source_group_id: gid.value,
+        site_ids: copySiteIds.value,
+        overwrite: copyOverwrite.value,
+      })
+      createdTotal += r.sites.created
+      updatedTotal += r.sites.updated
+      const gname = ws.groups.find((g) => g.id === targetId)?.name || targetId
+      for (const w of r.warnings || []) allWarnings.push(`[${gname}] ${w}`)
+    }
+    copySitesOpen.value = false
+    selectedSiteIds.value = []
+    message.success(`已复制到 ${copyTargetGroups.value.length} 个节点组（新增 ${createdTotal}、更新 ${updatedTotal}），连同依赖上游与静态包一并复制`, 6)
+    allWarnings.forEach((w) => message.warning(w, 6))
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    copyingSites.value = false
+  }
+}
 
 const gid = computed(() => ws.groupId)
 
@@ -27,14 +83,99 @@ async function load() {
   ;[sites.value, ups.value] = await Promise.all([api.get('/sites', { group_id: gid.value }), api.get('/upstreams', { group_id: gid.value })])
 }
 watch(gid, () => {
-  dirtyNotice.value = false
+  selectedSiteIds.value = []
   load()
 })
-onMounted(async () => {
+function syncRouteQuery() {
   if (route.query.tab === 'ups') tab.value = 'ups'
+  else if (route.query.tab === 'sites') tab.value = 'sites'
   if (route.query.group) ws.setGroup(Number(route.query.group))
+  if (typeof route.query.q === 'string') search.value = route.query.q
+}
+watch(() => route.query, syncRouteQuery)
+onMounted(async () => {
+  syncRouteQuery()
   await load()
 })
+
+// 行内一键启停站点
+async function toggleSite(s: any) {
+  togglingSiteId.value = s.id
+  try {
+    await api.put(`/sites/${s.id}`, { version: s.version, enabled: !s.enabled, spec: s.spec })
+    ws.markDraftDirty()
+    message.success(`站点 ${s.name} 已${s.enabled ? '停用' : '启用'}（草稿，发布后生效）`)
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    togglingSiteId.value = 0
+  }
+}
+
+// 批量启停已选站点
+async function batchToggleSites(enable: boolean) {
+  const targets = sites.value.filter((s) => selectedSiteIds.value.includes(s.id) && s.enabled !== enable)
+  let ok = 0
+  for (const s of targets) {
+    try {
+      await api.put(`/sites/${s.id}`, { version: s.version, enabled: enable, spec: s.spec })
+      ok++
+    } catch (e) {
+      message.warning(`${s.name}：${errMsg(e)}`)
+    }
+  }
+  if (ok) {
+    ws.markDraftDirty()
+    message.success(`已批量${enable ? '启用' : '停用'} ${ok} 个站点（发布后生效）`)
+  }
+  selectedSiteIds.value = []
+  await load()
+}
+
+// 同组克隆站点
+const dupOpen = ref(false)
+const dupSaving = ref(false)
+const dupSource = ref<any>(null)
+const dupForm = reactive({ name: '', domains: [] as string[] })
+function openDuplicate(s: any) {
+  dupSource.value = s
+  dupForm.name = `${s.name}-copy`
+  dupForm.domains = (s.spec?.domains || []).map((d: string) => `copy-${d}`)
+  dupOpen.value = true
+}
+async function saveDuplicate() {
+  if (!dupSource.value) return
+  dupSaving.value = true
+  try {
+    const spec = JSON.parse(JSON.stringify(dupSource.value.spec))
+    spec.name = dupForm.name.trim()
+    spec.domains = dupForm.domains.map((d) => d.trim().toLowerCase()).filter(Boolean)
+    await api.post('/sites', { group_id: gid.value, enabled: dupSource.value.enabled, spec })
+    dupOpen.value = false
+    ws.markDraftDirty()
+    message.success(`已克隆站点 ${spec.name}`)
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  } finally {
+    dupSaving.value = false
+  }
+}
+
+// 上游单后端一键摘流 / 恢复
+async function toggleServerDown(u: any, idx: number) {
+  const spec = JSON.parse(JSON.stringify(u.spec))
+  spec.servers[idx].down = !spec.servers[idx].down
+  try {
+    await api.put(`/upstreams/${u.id}`, { group_id: gid.value, spec })
+    ws.markDraftDirty()
+    message.success(`${spec.servers[idx].addr} 已${spec.servers[idx].down ? '标记摘流' : '恢复流量'}（发布后生效）`)
+    await load()
+  } catch (e) {
+    message.error(errMsg(e))
+  }
+}
 
 const filteredSites = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -63,13 +204,17 @@ function edit(s: any | null) {
 }
 function onSiteSaved() {
   editorOpen.value = false
-  dirtyNotice.value = true
+  ws.markDraftDirty()
+  load()
+}
+function onUpstreamCreated() {
+  ws.markDraftDirty()
   load()
 }
 async function removeSite(s: any) {
   try {
     await api.del(`/sites/${s.id}`)
-    dirtyNotice.value = true
+    ws.markDraftDirty()
     message.success(`已删除 ${s.name}，发布后从节点移除`)
     load()
   } catch (e) {
@@ -82,7 +227,7 @@ const siteCols = [
   { title: '站点', key: 'name' },
   { title: '路由', key: 'routes' },
   { title: 'HTTPS', key: 'https', width: 110 },
-  { title: '状态', key: 'enabled', width: 80 },
+  { title: '状态', key: 'enabled', width: 96 },
   { title: '最后修改', key: 'updated', width: 150 },
   { title: '', key: 'ops', width: 120 },
 ]
@@ -160,7 +305,7 @@ async function saveUp() {
     if (upForm.id) await api.put(`/upstreams/${upForm.id}`, { group_id: gid.value, spec })
     else await api.post('/upstreams', { group_id: gid.value, spec })
     upOpen.value = false
-    dirtyNotice.value = true
+    ws.markDraftDirty()
     message.success('已保存')
     load()
   } catch (e) {
@@ -170,7 +315,7 @@ async function saveUp() {
 async function removeUp(u: any) {
   try {
     await api.del(`/upstreams/${u.id}`)
-    dirtyNotice.value = true
+    ws.markDraftDirty()
     load()
   } catch (e) {
     message.error(errMsg(e))
@@ -187,12 +332,9 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
         <p>这里的修改先保存为草稿，到“发布”页确认差异后再下发到节点。</p>
         <router-link v-if="route.query.import" :to="{ path: '/imports', query: { group: gid, import: route.query.import } }">返回导入报告</router-link>
       </div>
-      <a-space>
-        <a-button v-if="dirtyNotice && session.can('releaser')" @click="router.push({ name: 'releases' })">去发布变更</a-button>
-        <template v-if="session.can('operator')">
-          <a-button v-if="tab === 'ups'" type="primary" :disabled="!session.writable" @click="editUp(null)">新建上游</a-button>
-          <a-button v-else type="primary" :disabled="!session.writable" @click="edit(null)">新建站点</a-button>
-        </template>
+      <a-space v-if="session.can('operator')">
+        <a-button v-if="tab === 'ups'" type="primary" :disabled="!session.writable" @click="editUp(null)">新建上游</a-button>
+        <a-button v-else type="primary" :disabled="!session.writable" @click="edit(null)">新建站点</a-button>
       </a-space>
     </div>
 
@@ -206,8 +348,27 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
           size="small"
           :options="[{ label: '全部', value: 'all' }, { label: '启用', value: 'enabled' }, { label: '停用', value: 'disabled' }]"
         />
+        <template v-if="session.can('operator') && selectedSiteIds.length">
+          <a-button size="small" :disabled="!session.writable" @click="batchToggleSites(true)">批量启用</a-button>
+          <a-button size="small" :disabled="!session.writable" @click="batchToggleSites(false)">批量停用</a-button>
+          <a-button
+            v-if="ws.groups.length > 1"
+            size="small"
+            :disabled="!session.writable"
+            @click="openCopySites(selectedSiteIds)"
+          >
+            复制已选 {{ selectedSiteIds.length }} 个站点到其他组
+          </a-button>
+        </template>
       </div>
-      <a-table :columns="siteCols" :data-source="filteredSites" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }">
+      <a-table
+        :columns="siteCols"
+        :data-source="filteredSites"
+        row-key="id"
+        :scroll="{ x: 'max-content' }"
+        :row-selection="session.can('operator') ? { selectedRowKeys: selectedSiteIds, onChange: (keys: any[]) => (selectedSiteIds = keys.map(Number)) } : undefined"
+        :pagination="{ pageSize: 20, hideOnSinglePage: true }"
+      >
         <template #emptyText><a-empty :description="sites.length ? '没有匹配的站点' : '还没有站点。新建一个站点，填写域名和路由即可。'" /></template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
@@ -215,30 +376,53 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
             <div class="sub">{{ record.spec.domains.join('，') }}</div>
           </template>
           <template v-else-if="column.key === 'routes'">
-            <div v-for="r in record.spec.routes" :key="r.match + r.path" class="rt">
+            <div v-for="r in expandedRoutes[record.id] ? record.spec.routes : record.spec.routes.slice(0, 3)" :key="r.match + r.path" class="rt">
               <span class="code">{{ r.match === 'exact' ? '= ' : '' }}{{ r.path }}</span>
               <span class="mode" :class="r.mode">{{ modeText[r.mode] }}</span>
               <span v-if="r.mode === 'proxy'" class="sub">{{ r.proxy.https ? 'https://' : '' }}{{ r.proxy.upstream }}{{ r.proxy.strip_prefix ? '（剥离前缀）' : '' }}</span>
               <span v-if="r.mode === 'redirect'" class="sub">{{ r.redirect.code }} {{ r.redirect.to }}</span>
             </div>
+            <a v-if="record.spec.routes.length > 3" class="sub" style="color: #0e7c86" @click="expandedRoutes[record.id] = !expandedRoutes[record.id]">
+              {{ expandedRoutes[record.id] ? '收起路由' : `+ 展开其余 ${record.spec.routes.length - 3} 条路由` }}
+            </a>
           </template>
           <template v-else-if="column.key === 'https'">
             <span v-if="record.spec.https">{{ record.spec.force_https ? '强制' : '启用' }}{{ record.spec.http2 ? '，HTTP/2' : '' }}</span>
             <span v-else class="sub">未启用</span>
           </template>
           <template v-else-if="column.key === 'enabled'">
-            <a-badge :status="record.enabled ? 'success' : 'default'" :text="record.enabled ? '启用' : '停用'" />
+            <a-switch
+              v-if="session.can('operator')"
+              size="small"
+              :checked="record.enabled"
+              :loading="togglingSiteId === record.id"
+              :disabled="!session.writable || (togglingSiteId !== 0 && togglingSiteId !== record.id)"
+              checked-children="启用"
+              un-checked-children="停用"
+              @change="toggleSite(record)"
+            />
+            <a-badge v-else :status="record.enabled ? 'success' : 'default'" :text="record.enabled ? '启用' : '停用'" />
           </template>
           <template v-else-if="column.key === 'updated'">
             <div>{{ dayjs(record.updated_at).format('MM-DD HH:mm') }}</div>
             <div class="sub">{{ record.updated_by }}，第 {{ record.version }} 版</div>
           </template>
           <template v-else-if="column.key === 'ops'">
-            <a-space v-if="session.can('operator')">
+            <a-space v-if="session.can('operator')" :size="0">
               <a-button type="link" size="small" @click="edit(record)">编辑</a-button>
-              <a-popconfirm title="删除站点？发布后从所有节点移除。" ok-text="删除" @confirm="removeSite(record)">
-                <a-button type="link" size="small" danger>删除</a-button>
-              </a-popconfirm>
+              <a-dropdown
+                :menu="{
+                  items: [
+                    { key: 'dup', label: '同组克隆', disabled: !session.writable },
+                    ...(ws.groups.length > 1 ? [{ key: 'copy', label: '复制到其他组', disabled: !session.writable }] : []),
+                    { type: 'divider' },
+                    { key: 'del', label: '删除站点', danger: true, disabled: !session.writable },
+                  ],
+                  onClick: (e: any) => onSiteMenu(record, String(e.key)),
+                }"
+              >
+                <a-button type="link" size="small">更多 ▾</a-button>
+              </a-dropdown>
             </a-space>
           </template>
         </template>
@@ -249,16 +433,24 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
       <div class="toolbar">
         <a-input v-model:value="search" allow-clear placeholder="按上游名或后端地址搜索" style="width: 260px" />
       </div>
-      <a-table :data-source="filteredUps" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }" :columns="[{ title: '名称', key: 'name' }, { title: '负载均衡', key: 'algo', width: 140 }, { title: '服务器', key: 'servers' }, { title: '', key: 'ops', width: 120 }]">
+      <a-table :data-source="filteredUps" row-key="id" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 20, hideOnSinglePage: true }" :columns="[{ title: '名称', key: 'name' }, { title: '负载均衡', key: 'algo', width: 140 }, { title: '服务器', key: 'servers' }, { title: '', key: 'ops', width: 120 }]">
         <template #emptyText><a-empty :description="ups.length ? '没有匹配的上游' : '还没有上游服务。站点的“反向代理”路由需要先定义上游。'" /></template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'"><span class="nm">{{ record.name }}</span></template>
           <template v-else-if="column.key === 'algo'">{{ algoText[record.spec.algorithm] || '轮询' }}</template>
           <template v-else-if="column.key === 'servers'">
-            <span v-for="s in record.spec.servers" :key="s.addr" class="srv code">
-              {{ s.addr }}<template v-if="s.weight"> ×{{ s.weight }}</template>
+            <span v-for="(s, idx) in record.spec.servers" :key="s.addr + idx" class="srv code">
+              <span :style="s.down ? 'text-decoration: line-through; color: #9aa8aa' : ''">{{ s.addr }}<template v-if="s.weight"> ×{{ s.weight }}</template></span>
               <a-tag v-if="s.backup" size="small" style="margin-left: 4px">备</a-tag>
-              <a-tag v-if="s.down" color="red" size="small" style="margin-left: 4px">摘流</a-tag>
+              <a-popconfirm
+                v-if="session.can('operator') && session.writable"
+                :title="s.down ? `恢复 ${s.addr} 的流量？` : `临时摘流 ${s.addr}（发布后不转发流量到此后端）？`"
+                :ok-text="s.down ? '恢复' : '摘流'"
+                @confirm="toggleServerDown(record, idx)"
+              >
+                <a-tag :color="s.down ? 'red' : 'default'" style="margin-left: 4px; cursor: pointer">{{ s.down ? '已摘流·点此恢复' : '摘流' }}</a-tag>
+              </a-popconfirm>
+              <a-tag v-else-if="s.down" color="red" size="small" style="margin-left: 4px">摘流</a-tag>
             </span>
           </template>
           <template v-else-if="column.key === 'ops'">
@@ -273,7 +465,26 @@ const algoText: Record<string, string> = { round_robin: '轮询', least_conn: '�
       </a-table>
     </div>
 
-    <SiteEditor :open="editorOpen" :site="editing" :group-id="gid" :upstreams="ups" @close="editorOpen = false" @saved="onSiteSaved" @upstream-created="load" />
+    <SiteEditor :open="editorOpen" :site="editing" :group-id="gid" :upstreams="ups" @close="editorOpen = false" @saved="onSiteSaved" @upstream-created="onUpstreamCreated" />
+
+    <a-modal v-model:open="dupOpen" :title="`克隆站点 ${dupSource?.name || ''}`" ok-text="创建副本" :confirm-loading="dupSaving" :ok-button-props="{ disabled: !dupForm.name.trim() || !dupForm.domains.length }" @ok="saveDuplicate">
+      <a-form layout="vertical">
+        <a-form-item label="新站点标识" extra="小写字母、数字、连字符"><a-input v-model:value="dupForm.name" class="code" /></a-form-item>
+        <a-form-item label="新域名" extra="同节点组内不能与原站点域名冲突；回车添加"><a-select v-model:value="dupForm.domains" mode="tags" :open="false" /></a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal v-model:open="copySitesOpen" title="复制站点到其他节点组" ok-text="开始复制" :confirm-loading="copyingSites" :ok-button-props="{ disabled: !copyTargetGroups.length }" @ok="runCopySites">
+      <p class="sub" style="margin-top: 0">将选中的 {{ copySiteIds.length }} 个站点及其引用的上游服务、组内 IP 集与静态资源包一并复制到目标节点组草稿。</p>
+      <a-form layout="vertical">
+        <a-form-item label="目标节点组">
+          <a-checkbox-group v-model:value="copyTargetGroups" :options="ws.groups.filter((g) => g.id !== gid).map((g) => ({ value: g.id, label: g.name }))" />
+        </a-form-item>
+        <a-form-item>
+          <a-checkbox v-model:checked="copyOverwrite">覆盖目标组中同名站点与上游（不勾选则跳过已有项）</a-checkbox>
+        </a-form-item>
+      </a-form>
+    </a-modal>
 
     <a-modal v-model:open="upOpen" :title="upForm.id ? `编辑上游 ${upForm.name}` : '新建上游'" width="680px" ok-text="保存" @ok="saveUp">
       <a-form layout="vertical">

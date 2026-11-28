@@ -18,6 +18,7 @@ const hosts = ref<any[]>([])
 const ver = ref<string>()
 const variant = ref('standard')
 const starting = ref(false)
+const openUpgrades = ref<number[]>([])
 
 async function load() {
   if (!ws.groups.length) await ws.loadGroups()
@@ -27,6 +28,10 @@ async function load() {
   packages.value = p
   upgrades.value = u
   hosts.value = h
+  if (!openUpgrades.value.length && u.length) {
+    const activeIds = u.filter((x: any) => x.status === 'running' || x.status === 'partial').map((x: any) => x.id)
+    openUpgrades.value = activeIds.length ? activeIds : [u[0].id]
+  }
 }
 let timer: number | undefined
 onMounted(async () => {
@@ -36,7 +41,10 @@ onMounted(async () => {
   }, 1500)
 })
 onUnmounted(() => clearInterval(timer))
-watch(gid, load)
+watch(gid, () => {
+  openUpgrades.value = []
+  load()
+})
 
 const agentVer = ref<string>()
 const agentVersions = computed(() => [...new Set(packages.value.filter((p) => p.name === brand.agent).map((p) => p.version))])
@@ -164,7 +172,7 @@ async function rollbackHosts(u: any) {
 
     <section class="panel">
       <h2>节点版本</h2>
-      <a-table :data-source="nodes" row-key="id" :pagination="false" size="small"
+      <a-table :data-source="nodes" row-key="id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
         :columns="[{ title: '节点', dataIndex: 'name' }, { title: '架构', dataIndex: 'arch' }, { title: brand.proc, key: 'v' }, { title: '实际运行', key: 'run' }, { title: 'agent', dataIndex: 'agent_version' }, { title: '状态', key: 'st' }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'v'">{{ dataplaneVersion(record) || '—' }}</template>
@@ -196,39 +204,48 @@ async function rollbackHosts(u: any) {
       </div>
     </section>
 
-    <section class="panel" v-for="u in upgrades.slice(0, 5)" :key="u.id">
+    <section class="panel" v-if="upgrades.length">
       <div class="phead">
-        <h2>{{ u.variant === 'agent' ? 'agent 升级' : '升级' }} #{{ u.id }} → {{ u.version }} <span class="sub">{{ variantName[u.variant] }}</span></h2>
-        <span class="sub">
-          <a-tag :color="upStatus[u.status]?.c">{{ upStatus[u.status]?.t }}</a-tag>
-          {{ u.created_by }} · {{ dayjs(u.created_at).format('MM-DD HH:mm') }}
-        </span>
+        <h2>升级记录 <span class="sub">最近 {{ Math.min(upgrades.length, 5) }} 次</span></h2>
       </div>
-      <div v-if="u.variant !== 'agent' && (u.hosts || []).length > 1" class="hosts">
-        <span v-for="h in u.hosts" :key="h.host" class="host">
-          主机 <b>{{ h.name || h.host }}</b> <a-tag :color="hostStatus[h.status]?.c">{{ hostStatus[h.status]?.t }}</a-tag>
-        </span>
-      </div>
-      <a-table :data-source="u.nodes" row-key="node_id" :pagination="false" size="small"
-        :columns="[{ title: '批次', dataIndex: 'batch', width: 70 }, { title: '主机', key: 'host', width: 160 }, { title: '节点', key: 'name' }, { title: '结果', key: 'st', width: 130 }, { title: '说明', dataIndex: 'message' }]">
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'host'"><span class="sub">{{ record.host_name || record.host || '—' }}</span></template>
-          <template v-else-if="column.key === 'name'">{{ record.name }}<a-tag v-if="record.sibling" style="margin-left: 6px">同机实例</a-tag></template>
-          <template v-else-if="column.key === 'st'"><a-tag :color="nodeStatus[record.status]?.c">{{ nodeStatus[record.status]?.t }}</a-tag></template>
-        </template>
-      </a-table>
-      <div class="up" v-if="u.variant !== 'agent' && (u.status === 'partial' || u.status === 'failed') && session.can('operator')">
-        <a-popconfirm title="对未完成的实例（失败、回退、未开始、离线）以同一版本重新执行？已升级的实例不受影响。" @confirm="retry(u)">
-          <a-button :disabled="running || !session.writable">重试未完成的实例</a-button>
-        </a-popconfirm>
-        <template v-if="u.status === 'partial'">
-          <span class="gap" />
-          <a-select v-model:value="rollbackVer[u.id]" style="width: 200px" placeholder="回退到版本" :options="rollbackVersions(u).map((v) => ({ value: v, label: v }))" />
-          <a-popconfirm :title="`把部分升级主机上已升级的实例热切回 ${rollbackVer[u.id]}？连接不中断，任何实例都不会停止。`" @confirm="rollbackHosts(u)">
-            <a-button :disabled="!rollbackVer[u.id] || running || !session.writable">主机整体回退</a-button>
-          </a-popconfirm>
-        </template>
-      </div>
+      <a-collapse v-model:active-key="openUpgrades" :bordered="false" class="up-collapse">
+        <a-collapse-panel v-for="u in upgrades.slice(0, 5)" :key="u.id">
+          <template #header>
+            <div class="up-hdr">
+              <span><b>{{ u.variant === 'agent' ? 'agent 升级' : '升级' }} #{{ u.id }} → {{ u.version }}</b> <span class="sub">{{ variantName[u.variant] }}</span></span>
+              <span class="sub">
+                <a-tag :color="upStatus[u.status]?.c">{{ upStatus[u.status]?.t }}</a-tag>
+                {{ u.created_by }} · {{ dayjs(u.created_at).format('MM-DD HH:mm') }}
+              </span>
+            </div>
+          </template>
+          <div v-if="u.variant !== 'agent' && (u.hosts || []).length > 1" class="hosts">
+            <span v-for="h in u.hosts" :key="h.host" class="host">
+              主机 <b>{{ h.name || h.host }}</b> <a-tag :color="hostStatus[h.status]?.c">{{ hostStatus[h.status]?.t }}</a-tag>
+            </span>
+          </div>
+          <a-table :data-source="u.nodes" row-key="node_id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
+            :columns="[{ title: '批次', dataIndex: 'batch', width: 70 }, { title: '主机', key: 'host', width: 160 }, { title: '节点', key: 'name' }, { title: '结果', key: 'st', width: 130 }, { title: '说明', dataIndex: 'message' }]">
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'host'"><span class="sub">{{ record.host_name || record.host || '—' }}</span></template>
+              <template v-else-if="column.key === 'name'">{{ record.name }}<a-tag v-if="record.sibling" style="margin-left: 6px">同机实例</a-tag></template>
+              <template v-else-if="column.key === 'st'"><a-tag :color="nodeStatus[record.status]?.c">{{ nodeStatus[record.status]?.t }}</a-tag></template>
+            </template>
+          </a-table>
+          <div class="up" v-if="u.variant !== 'agent' && (u.status === 'partial' || u.status === 'failed') && session.can('operator')">
+            <a-popconfirm title="对未完成的实例（失败、回退、未开始、离线）以同一版本重新执行？已升级的实例不受影响。" @confirm="retry(u)">
+              <a-button :disabled="running || !session.writable">重试未完成的实例</a-button>
+            </a-popconfirm>
+            <template v-if="u.status === 'partial'">
+              <span class="gap" />
+              <a-select v-model:value="rollbackVer[u.id]" style="width: 200px" placeholder="回退到版本" :options="rollbackVersions(u).map((v) => ({ value: v, label: v }))" />
+              <a-popconfirm :title="`把部分升级主机上已升级的实例热切回 ${rollbackVer[u.id]}？连接不中断，任何实例都不会停止。`" @confirm="rollbackHosts(u)">
+                <a-button :disabled="!rollbackVer[u.id] || running || !session.writable">主机整体回退</a-button>
+              </a-popconfirm>
+            </template>
+          </div>
+        </a-collapse-panel>
+      </a-collapse>
     </section>
 
     <section class="panel" v-if="session.can('operator')">
@@ -236,7 +253,7 @@ async function rollbackHosts(u: any) {
         <h2>版本库</h2>
         <a-button v-if="session.can('admin')" size="small" :disabled="!session.writable" @click="pickFiles">导入升级包</a-button>
       </div>
-      <a-table :data-source="packages" row-key="id" :pagination="false" size="small"
+      <a-table :data-source="packages" row-key="id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
         :columns="[{ title: '包', key: 'n' }, { title: '架构', dataIndex: 'arch' }, { title: '变体', key: 'var' }, { title: 'SHA-256', key: 'sha' }, { title: '签名密钥', dataIndex: 'kid' }, { title: '导入', key: 'by' }]">
         <template #emptyText><a-empty :description="`版本库为空：导入厂商发布的 ${brand.id}-<版本>-<架构>.tar.gz 与 .sig`" /></template>
         <template #bodyCell="{ column, record }">
@@ -281,5 +298,16 @@ async function rollbackHosts(u: any) {
 .sub {
   font-size: 12px;
   color: #6b7c80;
+}
+.up-collapse :deep(.ant-collapse-item) {
+  border-bottom: 1px solid #eef2f1;
+}
+.up-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { brand } from '../brand'
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { message } from 'antdv-next'
@@ -13,6 +13,12 @@ const certs = ref<any[]>([])
 const loading = ref(false)
 const certSearch = ref('')
 const certFilter = ref<'all' | 'expiring' | 'expired' | 'sm2'>('all')
+const expandedDomains = ref<Record<number, boolean>>({})
+const certCounts = computed(() => ({
+  expiring: certs.value.filter((c) => c.status === 'expiring').length,
+  expired: certs.value.filter((c) => c.status === 'expired').length,
+  sm2: certs.value.filter((c) => c.kind === 'sm2').length,
+}))
 const filteredCerts = computed(() => {
   const q = certSearch.value.trim().toLowerCase()
   return certs.value.filter((c) => {
@@ -37,7 +43,14 @@ async function load() {
 }
 // 有签发进行中时每 3 秒刷新进度
 let timer: number | undefined
+watch(
+  () => route.query.q,
+  (q) => {
+    if (typeof q === 'string') certSearch.value = q
+  },
+)
 onMounted(() => {
+  if (route.query.q) certSearch.value = String(route.query.q)
   load()
   timer = window.setInterval(() => pending.value && load(), 3000)
 })
@@ -273,13 +286,13 @@ const columns = [
           size="small"
           :options="[
             { label: `全部 (${certs.length})`, value: 'all' },
-            { label: '即将到期', value: 'expiring' },
-            { label: '已过期', value: 'expired' },
-            { label: '国密 SM2', value: 'sm2' },
+            { label: `即将到期 (${certCounts.expiring})`, value: 'expiring' },
+            { label: `已过期 (${certCounts.expired})`, value: 'expired' },
+            { label: `国密 SM2 (${certCounts.sm2})`, value: 'sm2' },
           ]"
         />
       </div>
-      <a-table :columns="columns" :data-source="filteredCerts" row-key="id" :pagination="{ pageSize: 20, hideOnSinglePage: true }" :loading="loading">
+      <a-table :columns="columns" :data-source="filteredCerts" row-key="id" :scroll="{ x: 'max-content' }" :pagination="{ pageSize: 20, hideOnSinglePage: true }" :loading="loading">
         <template #emptyText>
           <a-empty description="还没有证书。上传证书与私钥（PEM 格式）后，就能在站点中启用 HTTPS。" />
         </template>
@@ -291,7 +304,10 @@ const columns = [
             <a-tag v-if="record.kind === 'sm2'" color="red" class="src">国密 SM2 · 签名 + 加密</a-tag>
           </template>
           <template v-else-if="column.key === 'domains'">
-            <span v-for="d in record.domains" :key="d" class="dm code">{{ d }}</span>
+            <span v-for="d in expandedDomains[record.id] ? record.domains : (record.domains || []).slice(0, 3)" :key="d" class="dm code">{{ d }}</span>
+            <a v-if="(record.domains || []).length > 3" class="more-link" @click="expandedDomains[record.id] = !expandedDomains[record.id]">
+              {{ expandedDomains[record.id] ? '收起' : `+${record.domains.length - 3} 个域名` }}
+            </a>
           </template>
           <template v-else-if="column.key === 'expiry'">
             <a-tag :color="statusTag[record.status].color">{{ statusTag[record.status].text }}</a-tag>
@@ -323,7 +339,7 @@ const columns = [
         <a-button v-if="session.can('admin')" size="small" @click="openSettings">设置</a-button>
       </div>
       <a-empty v-if="!acme.orders.length" description="还没有签发记录。自动申请需要控制台能访问 CA，并且域名已有发布到节点的站点（CA 会通过 80 端口访问节点验证）。到期前 30 天自动续期。" />
-      <a-table v-else :data-source="acme.orders" row-key="id" :pagination="false" size="small"
+      <a-table v-else :data-source="acme.orders" row-key="id" :pagination="false" size="small" :scroll="{ x: 'max-content' }"
         :columns="[{ title: '证书', key: 'name' }, { title: '域名', key: 'domains' }, { title: '状态', key: 'status', width: 300 }, { title: '时间', key: 'time', width: 150 }]">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">{{ record.name }}<span class="sub"> · {{ record.cert_id && record.created_by.startsWith('system') ? '自动续期' : record.created_by }}</span></template>
@@ -428,5 +444,9 @@ const columns = [
   display: inline-block;
   margin: 0 8px 4px 0;
   font-size: 12.5px;
+}
+.more-link {
+  font-size: 12px;
+  white-space: nowrap;
 }
 </style>

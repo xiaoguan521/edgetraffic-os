@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/xiaoguan521/edgetraffic-os/internal/brand"
@@ -95,20 +96,29 @@ func RedactRules(s *render.Site) {
 	}
 }
 
-// IPSets 返回节点组的 IP 集（渲染用）。
+// IPSets 返回节点组的 IP 集（渲染用）：合并跨组全局 IP 集（group_id=0）与节点组内 IP 集，同名时组内覆盖全局。
 func (d *Service) IPSets(groupID uint) ([]render.IPSet, error) {
 	t := d.q().IPSet
-	rows, err := t.WithContext(bg).Where(t.GroupID.Eq(groupID)).Order(t.Name).Find()
+	rows, err := t.WithContext(bg).Where(t.GroupID.In(0, groupID)).Order(t.GroupID.Asc(), t.Name.Asc()).Find()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]render.IPSet, 0, len(rows))
+	byName := make(map[string]render.IPSet, len(rows))
+	names := make([]string, 0, len(rows))
 	for _, r := range rows {
 		var cidrs []string
 		if err := json.Unmarshal([]byte(r.CIDRs), &cidrs); err != nil {
 			return nil, fmt.Errorf("ip set %s: %w", r.Name, err)
 		}
-		out = append(out, render.IPSet{Name: r.Name, CIDRs: cidrs})
+		if _, exists := byName[r.Name]; !exists {
+			names = append(names, r.Name)
+		}
+		byName[r.Name] = render.IPSet{Name: r.Name, CIDRs: cidrs}
+	}
+	sort.Strings(names)
+	out := make([]render.IPSet, 0, len(names))
+	for _, n := range names {
+		out = append(out, byName[n])
 	}
 	return out, nil
 }
