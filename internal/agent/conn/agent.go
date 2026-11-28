@@ -469,7 +469,11 @@ func (a *Agent) heartbeat(ctx context.Context, send func(*agentv1.AgentMessage))
 			return
 		case now := <-t.C:
 			cpu, mem := host.Sample()
-			hb := &agentv1.Heartbeat{TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem, LuaAddon: a.luaAddon(), RunningVersion: a.runningVersion(ctx)}
+			hb := &agentv1.Heartbeat{
+				TsUnix: now.Unix(), CpuPercent: cpu, MemUsedBytes: mem,
+				LuaAddon: a.luaAddon(), RunningVersion: a.runningVersion(ctx),
+				LocalIps: collect.LocalIPs(),
+			}
 			if dir := a.diskDir(); dir != "" {
 				if used, inode, err := collect.DiskUsage(dir); err == nil {
 					hb.DiskUsedPercent, hb.DiskInodePercent = used, inode

@@ -273,7 +273,8 @@ func lockGroups(nodes []*store.Node) (func(), error) {
 
 // hostPlan 按主机编排：主机按先 1 台、再约 10%、其余全量分批；同一主机上的实例在同一批内依次升级，
 // 本组的实例在前，同机其他组的实例在后（设计 0001 第 5.6 节）。
-func hostPlan(nodes []*store.Node, groupID uint) []UpgradeNode {
+// 若传入入口 VIP 集合，未持有 VIP 的主机（备机）优先排在前批，持有 VIP 的主机（主节点）排在最后。
+func hostPlan(nodes []*store.Node, groupID uint, vips map[string]bool) []UpgradeNode {
 	sorted := append([]*store.Node(nil), nodes...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := sorted[i].GroupID == groupID, sorted[j].GroupID == groupID
@@ -284,12 +285,25 @@ func hostPlan(nodes []*store.Node, groupID uint) []UpgradeNode {
 	})
 	var order []string
 	members := map[string][]*store.Node{}
+	hostHasVIP := map[string]bool{}
 	for _, n := range sorted {
 		k := hostKey(n)
 		if _, ok := members[k]; !ok {
 			order = append(order, k)
 		}
 		members[k] = append(members[k], n)
+		if nodeHoldsVIP(n, vips) {
+			hostHasVIP[k] = true
+		}
+	}
+	if len(vips) > 0 && len(order) > 1 {
+		sort.SliceStable(order, func(i, j int) bool {
+			vi, vj := hostHasVIP[order[i]], hostHasVIP[order[j]]
+			if vi != vj {
+				return !vi // 备机主机在前、持有 VIP 的主机在后
+			}
+			return false
+		})
 	}
 	idx := make([]uint, len(order)) // planBatches 只看数量
 	var plan []UpgradeNode
@@ -326,7 +340,12 @@ func (d *Service) StartUpgrade(groupID uint, version, variant, user, ip string) 
 	if err := d.checkUpgradable(nodes, version, variant); err != nil {
 		return nil, err
 	}
-	return d.launchUpgrade(groupID, version, variant, hostPlan(nodes, groupID), nodes, user, ip, "dataplane.upgrade_start", 0)
+	gids := make([]uint, 0, len(nodes)+1)
+	gids = append(gids, groupID)
+	for _, n := range nodes {
+		gids = append(gids, n.GroupID)
+	}
+	return d.launchUpgrade(groupID, version, variant, hostPlan(nodes, groupID, d.groupVIPSet(gids...)), nodes, user, ip, "dataplane.upgrade_start", 0)
 }
 
 // RetryUpgrade 对一次已结束的升级中未完成的实例（失败、回退、跳过、离线）以同一版本重新执行，
@@ -388,7 +407,12 @@ func (d *Service) restart(prev *UpgradeView, ids []uint, version, user, ip, acti
 	if err := d.checkUpgradable(nodes, version, prev.Variant); err != nil {
 		return nil, err
 	}
-	return d.launchUpgrade(prev.GroupID, version, prev.Variant, hostPlan(nodes, prev.GroupID), nodes, user, ip, action, prev.ID)
+	gids := make([]uint, 0, len(nodes)+1)
+	gids = append(gids, prev.GroupID)
+	for _, n := range nodes {
+		gids = append(gids, n.GroupID)
+	}
+	return d.launchUpgrade(prev.GroupID, version, prev.Variant, hostPlan(nodes, prev.GroupID, d.groupVIPSet(gids...)), nodes, user, ip, action, prev.ID)
 }
 
 func (d *Service) launchUpgrade(groupID uint, version, variant string, plan []UpgradeNode, nodes []*store.Node, user, ip, action string, from uint) (*store.DataplaneUpgrade, error) {
@@ -722,6 +746,7 @@ func (d *Service) StartAgentUpgrade(groupID uint, version, user, ip string) (*st
 	if !lk.TryLock() {
 		return nil, ErrUpgradeRunning
 	}
+	nodes = orderBackupFirst(nodes, d.groupVIPSet(groupID))
 	ids := make([]uint, len(nodes))
 	names := map[uint]string{}
 	for i, n := range nodes {

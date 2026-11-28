@@ -809,6 +809,7 @@ type Heartbeat struct {
 	RunningVersion    string                 `protobuf:"bytes,9,opt,name=running_version,json=runningVersion,proto3" json:"running_version,omitempty"`            // 同 Hello.running_version
 	DiskUsedPercent   float64                `protobuf:"fixed64,10,opt,name=disk_used_percent,json=diskUsedPercent,proto3" json:"disk_used_percent,omitempty"`    // 节点日志/运行目录所在分区磁盘使用率（%）；旧版 agent 为 0
 	DiskInodePercent  float64                `protobuf:"fixed64,11,opt,name=disk_inode_percent,json=diskInodePercent,proto3" json:"disk_inode_percent,omitempty"` // 节点日志/运行目录所在分区 inode 使用率（%）；旧版 agent 为 0
+	LocalIps          []string               `protobuf:"bytes,12,rep,name=local_ips,json=localIps,proto3" json:"local_ips,omitempty"`                             // 节点网卡当前绑定的非回环 IP（含 Keepalived VIP，只读采集，无需 root）
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -918,6 +919,13 @@ func (x *Heartbeat) GetDiskInodePercent() float64 {
 		return x.DiskInodePercent
 	}
 	return 0
+}
+
+func (x *Heartbeat) GetLocalIps() []string {
+	if x != nil {
+		return x.LocalIps
+	}
+	return nil
 }
 
 type SiteMinute struct {
@@ -2409,7 +2417,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x05brand\x18\b \x01(\tR\x05brand\x12'\n" +
 	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\x12\"\n" +
 	"\fcapabilities\x18\n" +
-	" \x03(\tR\fcapabilities\"\xc3\x03\n" +
+	" \x03(\tR\fcapabilities\"\xe0\x03\n" +
 	"\tHeartbeat\x12\x17\n" +
 	"\ats_unix\x18\x01 \x01(\x03R\x06tsUnix\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -2423,7 +2431,8 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x0frunning_version\x18\t \x01(\tR\x0erunningVersion\x12*\n" +
 	"\x11disk_used_percent\x18\n" +
 	" \x01(\x01R\x0fdiskUsedPercent\x12,\n" +
-	"\x12disk_inode_percent\x18\v \x01(\x01R\x10diskInodePercent\"\xa6\x02\n" +
+	"\x12disk_inode_percent\x18\v \x01(\x01R\x10diskInodePercent\x12\x1b\n" +
+	"\tlocal_ips\x18\f \x03(\tR\blocalIps\"\xa6\x02\n" +
 	"\n" +
 	"SiteMinute\x12\x12\n" +
 	"\x04site\x18\x01 \x01(\tR\x04site\x12\x1f\n" +

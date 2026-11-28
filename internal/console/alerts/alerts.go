@@ -42,6 +42,7 @@ const (
 	KindBackupStale    = "backup_stale"           // 阈值：距上次成功备份的小时数
 	KindDiskUsage      = "disk_usage"             // 阈值：控制台数据目录磁盘或 inode 使用率（%）
 	KindNodeDiskUsage  = "node_disk_usage"        // 阈值：边缘节点磁盘或 inode 使用率（%）
+	KindVIPFailover    = "vip_failover"           // 入口 VIP 发生主备漂移、无主或脑裂
 	KindHostVersionMix = "host_version_mixed"     // 同一主机上的实例运行着不同的数据面版本（设计 0001 第 5.6 节）
 )
 
@@ -55,6 +56,7 @@ var Defaults = map[string]float64{
 	KindBackupStale:    24,
 	KindDiskUsage:      85,
 	KindNodeDiskUsage:  85,
+	KindVIPFailover:    0,
 	KindHostVersionMix: 0,
 }
 
@@ -68,6 +70,7 @@ var KindName = map[string]string{
 	KindBackupStale:    "备份超期未执行",
 	KindDiskUsage:      "控制台磁盘空间不足",
 	KindNodeDiskUsage:  "边缘节点磁盘空间不足",
+	KindVIPFailover:    "入口 VIP 漂移或异常",
 	KindHostVersionMix: "同机实例版本不一致",
 }
 
@@ -776,6 +779,64 @@ func (s *Service) Evaluate() error {
 					found = append(found, finding{r.Kind, fmt.Sprintf("disk:node:%d", n.ID), fmt.Sprintf("节点 %s 磁盘使用率 %.1f%% 超过阈值 %.1f%%", n.Name, n.DiskUsedPercent, r.Threshold)})
 				} else if n.DiskInodePercent > 0 && n.DiskInodePercent >= r.Threshold {
 					found = append(found, finding{r.Kind, fmt.Sprintf("disk:node:%d", n.ID), fmt.Sprintf("节点 %s inode 使用率 %.1f%% 超过阈值 %.1f%%", n.Name, n.DiskInodePercent, r.Threshold)})
+				}
+			}
+		case KindVIPFailover:
+			groups, err := q.NodeGroup.WithContext(bg).Find()
+			if err != nil {
+				return err
+			}
+			for _, g := range groups {
+				if strings.TrimSpace(g.VIPs) == "" {
+					continue
+				}
+				nodes, err := q.Node.WithContext(bg).Where(q.Node.GroupID.Eq(g.ID), q.Node.Status.Eq("online")).Find()
+				if err != nil {
+					return err
+				}
+				for _, rawVIP := range strings.Split(g.VIPs, ",") {
+					vip := strings.TrimSpace(rawVIP)
+					if vip == "" {
+						continue
+					}
+					var holders []string
+					for _, n := range nodes {
+						for _, ip := range strings.Split(n.LocalIPs, ",") {
+							if strings.TrimSpace(ip) == vip {
+								holders = append(holders, n.Name)
+								break
+							}
+						}
+					}
+					sort.Strings(holders)
+					ownerKey := fmt.Sprintf("vip.owner.%d.%s", g.ID, vip)
+					failoverKey := fmt.Sprintf("vip.failover.%d.%s", g.ID, vip)
+					switch len(holders) {
+					case 0:
+						found = append(found, finding{r.Kind, fmt.Sprintf("vip:%d:%s:absent", g.ID, vip),
+							fmt.Sprintf("节点组 %s 的入口 VIP %s 当前无在线节点持有（可能已失联）", g.Name, vip)})
+					case 1:
+						curOwner := holders[0]
+						prevOwner, _ := s.Store.GetKV(ownerKey)
+						if prevOwner == "" {
+							_ = s.Store.SetKV(ownerKey, curOwner)
+						} else if prevOwner != curOwner {
+							_ = s.Store.SetKV(ownerKey, curOwner)
+							_ = s.Store.SetKV(failoverKey, fmt.Sprintf("%d|%s|%s", now.Unix(), prevOwner, curOwner))
+						}
+						if rawFO, err := s.Store.GetKV(failoverKey); err == nil && rawFO != "" {
+							parts := strings.SplitN(rawFO, "|", 3)
+							if len(parts) == 3 {
+								if ts, err := strconv.ParseInt(parts[0], 10, 64); err == nil && now.Sub(time.Unix(ts, 0)) < 10*time.Minute {
+									found = append(found, finding{r.Kind, fmt.Sprintf("vip:%d:%s:failover:%d", g.ID, vip, ts),
+										fmt.Sprintf("节点组 %s 的入口 VIP %s 发生主备漂移：%s → %s", g.Name, vip, parts[1], parts[2])})
+								}
+							}
+						}
+					default:
+						found = append(found, finding{r.Kind, fmt.Sprintf("vip:%d:%s:split", g.ID, vip),
+							fmt.Sprintf("节点组 %s 的入口 VIP %s 同时被多台节点持有（%s），疑似 Keepalived 脑裂", g.Name, vip, strings.Join(holders, "、"))})
+					}
 				}
 			}
 		}
