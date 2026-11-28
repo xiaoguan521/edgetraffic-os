@@ -13,7 +13,8 @@ import (
 type agentOptions struct {
 	instance, root, server, stateDir, confRoot, wrapper string
 	token, caFP                                         string
-	replaceLocal, configSpecified                       bool
+	replaceLocal, importConfig, importCerts             bool
+	configSpecified                                     bool
 }
 
 // 支持 run -c 文件以及 -c 文件 run，配置不适用于防火墙和构建专用子命令。
@@ -66,6 +67,8 @@ func parseAgentOptionsTo(cmd string, args []string, out io.Writer) (agentOptions
 	fs.StringVar(&o.token, "token", "", "一次性注册令牌（enroll）")
 	fs.StringVar(&o.caFP, "ca-fingerprint", "", "控制台 CA 指纹（enroll）")
 	fs.BoolVar(&o.replaceLocal, "replace-local-config", false, "备份独立配置并由控制台接管（enroll）")
+	fs.BoolVar(&o.importConfig, "import-config", false, "注册后自动将本机当前配置上报控制台生成草稿（enroll，默认不含私钥）")
+	fs.BoolVar(&o.importCerts, "import-certs", false, "随 mTLS 加密通道一并上报配置目录内引用的证书与私钥（enroll / push-config）")
 	if err := fs.Parse(args); err != nil {
 		return agentOptions{}, err
 	}

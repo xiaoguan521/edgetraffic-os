@@ -180,6 +180,56 @@ func (a *Agent) Enroll(ctx context.Context, token, caFingerprint string) error {
 	return nil
 }
 
+// PushConfigSnapshot 使用已注册的 mTLS 身份将本机受限配置快照（tar.gz）主动上报给控制台。
+func (a *Agent) PushConfigSnapshot(ctx context.Context, archive []byte) (*agentv1.ConfigSnapshotResponse, error) {
+	if len(archive) == 0 {
+		return nil, errors.New("empty config snapshot")
+	}
+	tlsCfg, err := a.load()
+	if err != nil {
+		return nil, fmt.Errorf("not enrolled: %w", err)
+	}
+	server := a.C.Server
+	if server == "" {
+		a.mu.Lock()
+		server = a.st.Server
+		a.mu.Unlock()
+	}
+	if server == "" {
+		return nil, errors.New("console server address is empty")
+	}
+	cc, err := grpc.NewClient(server, grpc.WithNoProxy(), grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = cc.Close() }()
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	stream, err := agentv1.NewAgentGatewayClient(cc).PushConfigSnapshot(cctx)
+	if err != nil {
+		return nil, fmt.Errorf("push config snapshot: %w", err)
+	}
+	const chunk = 256 << 10
+	for off := 0; off < len(archive); off += chunk {
+		end := off + chunk
+		if end > len(archive) {
+			end = len(archive)
+		}
+		if err := stream.Send(&agentv1.BundleChunk{
+			Data:   archive[off:end],
+			Offset: int64(off),
+			Last:   end == len(archive),
+		}); err != nil {
+			return nil, fmt.Errorf("send config snapshot chunk: %w", err)
+		}
+	}
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, fmt.Errorf("push config snapshot: %w", err)
+	}
+	return resp, nil
+}
+
 // writeAtomic 写入身份文件。enroll 通常以 root 执行，而 agent 以 syedge-agent 运行：
 // 文件属主跟随状态目录，运行中的 agent 才能读取新身份。
 func (a *Agent) writeAtomic(name string, b []byte) error {

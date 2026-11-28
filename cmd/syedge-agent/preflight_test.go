@@ -115,3 +115,70 @@ func TestExportConfigPackagesIncludesAndChecksRefs(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildConfigArchiveFiltersPrivateKeysByDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "conf.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "certs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mainPath := filepath.Join(dir, brand.ConfName())
+	if err := os.WriteFile(mainPath, []byte("http {\n  include conf.d/*.conf;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	siteConf := "server {\n  listen 443 ssl;\n  server_name demo.example.com;\n  ssl_certificate certs/demo.crt;\n  ssl_certificate_key certs/demo.key;\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "conf.d", "demo.conf"), []byte(siteConf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "certs", "demo.crt"), []byte("-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "certs", "demo.key"), []byte("-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readNames := func(archive []byte) map[string]bool {
+		gz, err := gzip.NewReader(bytes.NewReader(archive))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = gz.Close() }()
+		tr := tar.NewReader(gz)
+		m := map[string]bool{}
+		for {
+			h, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			m[h.Name] = true
+		}
+		return m
+	}
+
+	var logBuf bytes.Buffer
+	archNoKey, err := buildConfigArchive(mainPath, false, &logBuf)
+	if err != nil {
+		t.Fatalf("buildConfigArchive(includeKeys=false) failed: %v", err)
+	}
+	gotNoKey := readNames(archNoKey)
+	if gotNoKey["certs/demo.key"] {
+		t.Fatalf("private key must be filtered when includeKeys=false")
+	}
+	if !gotNoKey["conf.d/demo.conf"] || !gotNoKey["certs/demo.crt"] {
+		t.Fatalf("expected conf and cert in archive, got %v", gotNoKey)
+	}
+
+	archWithKey, err := buildConfigArchive(mainPath, true, nil)
+	if err != nil {
+		t.Fatalf("buildConfigArchive(includeKeys=true) failed: %v", err)
+	}
+	gotWithKey := readNames(archWithKey)
+	if !gotWithKey["certs/demo.key"] {
+		t.Fatalf("expected private key when includeKeys=true, got %v", gotWithKey)
+	}
+}

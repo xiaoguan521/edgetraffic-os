@@ -232,24 +232,37 @@ type ImportedSite struct {
 // applyImport 把报告中的结果写成草稿：上游、证书、站点（有需人工处理的问题时停用）、片段（待审批）。
 // 只生成草稿，之后照常预览 → 审批 → 发布。
 func (s *Server) applyImport(c *gin.Context) {
-	row, rep, ok := s.loadImport(c)
+	id, ok := parseID(c)
 	if !ok {
 		return
 	}
-	user, ip := c.GetString("user"), c.ClientIP()
-	ci := s.q().ConfigImport
-	now := time.Now()
-	res0, err := ci.WithContext(c.Request.Context()).Where(ci.ID.Eq(row.ID), ci.AppliedAt.IsNull()).UpdateSimple(ci.AppliedBy.Value(user), ci.AppliedAt.Value(now))
-	if err != nil {
-		failErr(c, err)
+	res, statusCode, code, msg := s.applyImportByID(c.Request.Context(), id, c.GetString("user"), c.ClientIP())
+	if statusCode != 0 {
+		fail(c, statusCode, code, msg)
 		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (s *Server) applyImportByID(ctx context.Context, importID uint, user, ip string) (*ApplyResult, int, string, string) {
+	ci := s.q().ConfigImport
+	row, err := ci.WithContext(ctx).Where(ci.ID.Eq(importID)).First()
+	if err != nil {
+		return nil, http.StatusNotFound, "NOT_FOUND", store.ErrNotFound.Error()
+	}
+	var rep importer.Report
+	if err := json.Unmarshal([]byte(row.Report), &rep); err != nil {
+		return nil, http.StatusInternalServerError, "INTERNAL", err.Error()
+	}
+	now := time.Now()
+	res0, err := ci.WithContext(ctx).Where(ci.ID.Eq(row.ID), ci.AppliedAt.IsNull()).UpdateSimple(ci.AppliedBy.Value(user), ci.AppliedAt.Value(now))
+	if err != nil {
+		return nil, http.StatusInternalServerError, "INTERNAL", err.Error()
 	}
 	if res0.RowsAffected != 1 {
-		fail(c, http.StatusConflict, "ALREADY_APPLIED", "该导入已应用过")
-		return
+		return nil, http.StatusConflict, "ALREADY_APPLIED", "该导入已应用过"
 	}
 	certMat := takeCerts(row.ID)
-	ctx := c.Request.Context()
 	q := s.q()
 	res := ApplyResult{Upstreams: []string{}, Certs: []string{}, Sites: []ImportedSite{}, Snippets: []uint{}, Errors: []string{}}
 
@@ -268,12 +281,13 @@ func (s *Server) applyImport(c *gin.Context) {
 		if len(certMat) > 0 {
 			importCerts.Store(row.ID, &pendingCerts{certs: certMat, expires: time.Now().Add(importCertTTL)})
 		}
-		if _, e := ci.WithContext(ctx).Where(ci.ID.Eq(row.ID)).UpdateSimple(ci.AppliedBy.Value(""), ci.AppliedAt.Null()); e != nil {
+		if _, e := ci.WithContext(ctx).Where(ci.ID.Eq(row.ID)).UpdateSimple(ci.AppliedBy.Value(""), ci.AppliedAt.Null()); e != nil && s.Log != nil {
 			s.Log.Error("import apply: could not release the claim", "import", row.ID, "err", e)
 		}
-		s.Log.Error("import apply: could not record progress", "import", row.ID, "err", err)
-		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", "无法记录应用进度，尚未创建任何草稿，请稍后重试")
-		return
+		if s.Log != nil {
+			s.Log.Error("import apply: could not record progress", "import", row.ID, "err", err)
+		}
+		return nil, http.StatusInternalServerError, "RESULT_NOT_SAVED", "无法记录应用进度，尚未创建任何草稿，请稍后重试"
 	}
 	var saveErr error
 	var unrecorded []string // 已创建但最后一次成功记录之后才建的草稿，写进错误提示，方便手工检查
@@ -286,6 +300,11 @@ func (s *Server) applyImport(c *gin.Context) {
 			saveErr = save(importApplying)
 		}
 		return saveErr == nil
+	}
+	writeAudit := func(action, objType, objID string, detail any) {
+		if s.Audit != nil {
+			_ = s.Audit.Write(auditE{Username: user, IP: ip, Action: action, ObjectType: objType, ObjectID: objID, Detail: detail})
+		}
 	}
 
 	// 上游：同名且内容相同则沿用，不同则改名
@@ -395,7 +414,7 @@ func (s *Server) applyImport(c *gin.Context) {
 		if !checkpoint() {
 			unrecorded = append(unrecorded, fmt.Sprintf("站点 %s（#%d）", name, st.ID))
 		}
-		s.audit(c, "site.create", "site", name, map[string]any{"group_id": row.GroupID, "domains": spec.Domains, "origin": "import", "import": row.ID, "enabled": enabled})
+		writeAudit("site.create", "site", name, map[string]any{"group_id": row.GroupID, "domains": spec.Domains, "origin": "import", "import": row.ID, "enabled": enabled})
 
 		submit := func(in deploy.SnippetInput) {
 			if saveErr != nil {
@@ -437,19 +456,20 @@ func (s *Server) applyImport(c *gin.Context) {
 	if saveErr == nil {
 		saveErr = save(importDone)
 	}
-	s.audit(c, "config.import_apply", "config_import", fmt.Sprint(row.ID), map[string]any{"group": row.GroupID, "report_sha256": row.ReportSHA256,
+	writeAudit("config.import_apply", "config_import", fmt.Sprint(row.ID), map[string]any{"group": row.GroupID, "report_sha256": row.ReportSHA256,
 		"upstreams": res.Upstreams, "certificates": res.Certs, "sites": len(res.Sites), "snippets": res.Snippets, "errors": len(res.Errors), "result_saved": saveErr == nil})
 	if saveErr != nil {
 		// 草稿已经建好，但进度没能完整记录：不能当成功返回。复核仍显示最后一次记录的内容；重复应用被拒绝，避免重复创建。
-		s.Log.Error("import apply: result not saved", "import", row.ID, "err", saveErr)
+		if s.Log != nil {
+			s.Log.Error("import apply: result not saved", "import", row.ID, "err", saveErr)
+		}
 		msg := fmt.Sprintf("已创建 %d 个站点草稿、%d 个上游，但无法记录应用结果；请到站点页检查，复核按最后记录的进度显示", len(res.Sites), len(res.Upstreams))
 		if len(unrecorded) > 0 {
 			msg += "。未记录进的草稿：" + strings.Join(unrecorded, "、")
 		}
-		fail(c, http.StatusInternalServerError, "RESULT_NOT_SAVED", msg)
-		return
+		return nil, http.StatusInternalServerError, "RESULT_NOT_SAVED", msg
 	}
-	c.JSON(http.StatusOK, res)
+	return &res, 0, "", ""
 }
 
 var bgCtx = context.Background()

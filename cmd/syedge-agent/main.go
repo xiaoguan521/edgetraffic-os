@@ -162,6 +162,20 @@ func main() {
 		if had {
 			log.Info("re-enrolled: previous identity replaced; a running agent picks it up on its next reconnect")
 		}
+		if o.importConfig || o.importCerts {
+			if err := pushLocalConfig(ctx, a, o.confRoot, o.importCerts, log); err != nil {
+				log.Warn("自动上报本地配置失败（节点注册已成功，不影响数据面运行；可稍后执行 push-config 重试）", "err", err)
+			}
+		}
+	case "push-config":
+		a := conn.New(cfg, log)
+		if cfg.Server == "" {
+			cfg.Server = serverFromState(o.stateDir)
+			a = conn.New(cfg, log)
+		}
+		if err := pushLocalConfig(ctx, a, o.confRoot, o.importCerts, log); err != nil {
+			fatal(log, "push-config", err)
+		}
 	case "run":
 		// agent 自升级：已安装且签名、哈希校验通过的新版本优先（只 exec 一次）
 		if err := selfupdate.MaybeExec(o.stateDir, version.Version, runtime.GOARCH, pkgsig.Keys(), o.configSpecified); err != nil {
@@ -225,8 +239,27 @@ func fatal(log *slog.Logger, what string, err error) {
 	os.Exit(1)
 }
 
+func pushLocalConfig(ctx context.Context, a *conn.Agent, confRoot string, includeCerts bool, log *slog.Logger) error {
+	cfgPath := filepath.Join(confRoot, "current", brand.ConfName())
+	archive, err := buildConfigArchive(cfgPath, includeCerts, os.Stdout)
+	if err != nil {
+		return err
+	}
+	resp, err := a.PushConfigSnapshot(ctx, archive)
+	if err != nil {
+		return err
+	}
+	log.Info("local config pushed to console",
+		"import_id", resp.ImportId, "sites", resp.Sites, "full", resp.Full, "partial", resp.Partial, "failed", resp.Failed,
+		"auto_applied", resp.AutoApplied, "applied_sites", resp.AppliedSites, "applied_upstreams", resp.AppliedUpstreams)
+	if resp.Message != "" {
+		fmt.Println(resp.Message)
+	}
+	return nil
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F | run [-c <配置文件>] | backup-config --config <主配置> --source <文件或目录> --output <备份> | version | firewall render|covers ...")
+	fmt.Fprintln(os.Stderr, "usage: "+brand.Agent()+" bootstrap | enroll -server H:P -token T -ca-fingerprint F [-replace-local-config] [-import-config] [-import-certs] | push-config [-import-certs] | run [-c <配置文件>] | preflight | export-config | backup-config | version | firewall render|covers ...")
 	os.Exit(2)
 }
 

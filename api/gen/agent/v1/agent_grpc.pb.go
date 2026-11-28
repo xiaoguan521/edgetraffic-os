@@ -23,10 +23,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentGateway_Enroll_FullMethodName       = "/edgetraffic.agent.v1.AgentGateway/Enroll"
-	AgentGateway_Connect_FullMethodName      = "/edgetraffic.agent.v1.AgentGateway/Connect"
-	AgentGateway_FetchBundle_FullMethodName  = "/edgetraffic.agent.v1.AgentGateway/FetchBundle"
-	AgentGateway_FetchPackage_FullMethodName = "/edgetraffic.agent.v1.AgentGateway/FetchPackage"
+	AgentGateway_Enroll_FullMethodName             = "/edgetraffic.agent.v1.AgentGateway/Enroll"
+	AgentGateway_Connect_FullMethodName            = "/edgetraffic.agent.v1.AgentGateway/Connect"
+	AgentGateway_FetchBundle_FullMethodName        = "/edgetraffic.agent.v1.AgentGateway/FetchBundle"
+	AgentGateway_FetchPackage_FullMethodName       = "/edgetraffic.agent.v1.AgentGateway/FetchPackage"
+	AgentGateway_PushConfigSnapshot_FullMethodName = "/edgetraffic.agent.v1.AgentGateway/PushConfigSnapshot"
 )
 
 // AgentGatewayClient is the client API for AgentGateway service.
@@ -42,6 +43,9 @@ type AgentGatewayClient interface {
 	// 升级包分片下载（规格书 12.6）：只能下载控制台版本库中已验签的包；签名随 UpgradeDataplane / UpgradeAgent 下发，
 	// 由 wrapper（数据面）或 agent（自身）在使用前校验。
 	FetchPackage(ctx context.Context, in *FetchPackageRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BundleChunk], error)
+	// 独立节点接入时由 agent 主动上报本机当前配置快照（仅限本实例 conf/current/ 内受限文件），
+	// 控制台不向 agent 下发任何读文件指令；要求 mTLS 认证。
+	PushConfigSnapshot(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[BundleChunk, ConfigSnapshotResponse], error)
 }
 
 type agentGatewayClient struct {
@@ -113,6 +117,19 @@ func (c *agentGatewayClient) FetchPackage(ctx context.Context, in *FetchPackageR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentGateway_FetchPackageClient = grpc.ServerStreamingClient[BundleChunk]
 
+func (c *agentGatewayClient) PushConfigSnapshot(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[BundleChunk, ConfigSnapshotResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentGateway_ServiceDesc.Streams[3], AgentGateway_PushConfigSnapshot_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[BundleChunk, ConfigSnapshotResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentGateway_PushConfigSnapshotClient = grpc.ClientStreamingClient[BundleChunk, ConfigSnapshotResponse]
+
 // AgentGatewayServer is the server API for AgentGateway service.
 // All implementations must embed UnimplementedAgentGatewayServer
 // for forward compatibility.
@@ -126,6 +143,9 @@ type AgentGatewayServer interface {
 	// 升级包分片下载（规格书 12.6）：只能下载控制台版本库中已验签的包；签名随 UpgradeDataplane / UpgradeAgent 下发，
 	// 由 wrapper（数据面）或 agent（自身）在使用前校验。
 	FetchPackage(*FetchPackageRequest, grpc.ServerStreamingServer[BundleChunk]) error
+	// 独立节点接入时由 agent 主动上报本机当前配置快照（仅限本实例 conf/current/ 内受限文件），
+	// 控制台不向 agent 下发任何读文件指令；要求 mTLS 认证。
+	PushConfigSnapshot(grpc.ClientStreamingServer[BundleChunk, ConfigSnapshotResponse]) error
 	mustEmbedUnimplementedAgentGatewayServer()
 }
 
@@ -147,6 +167,9 @@ func (UnimplementedAgentGatewayServer) FetchBundle(*FetchBundleRequest, grpc.Ser
 }
 func (UnimplementedAgentGatewayServer) FetchPackage(*FetchPackageRequest, grpc.ServerStreamingServer[BundleChunk]) error {
 	return status.Errorf(codes.Unimplemented, "method FetchPackage not implemented")
+}
+func (UnimplementedAgentGatewayServer) PushConfigSnapshot(grpc.ClientStreamingServer[BundleChunk, ConfigSnapshotResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method PushConfigSnapshot not implemented")
 }
 func (UnimplementedAgentGatewayServer) mustEmbedUnimplementedAgentGatewayServer() {}
 func (UnimplementedAgentGatewayServer) testEmbeddedByValue()                      {}
@@ -216,6 +239,13 @@ func _AgentGateway_FetchPackage_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentGateway_FetchPackageServer = grpc.ServerStreamingServer[BundleChunk]
 
+func _AgentGateway_PushConfigSnapshot_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentGatewayServer).PushConfigSnapshot(&grpc.GenericServerStream[BundleChunk, ConfigSnapshotResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentGateway_PushConfigSnapshotServer = grpc.ClientStreamingServer[BundleChunk, ConfigSnapshotResponse]
+
 // AgentGateway_ServiceDesc is the grpc.ServiceDesc for AgentGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -244,6 +274,11 @@ var AgentGateway_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "FetchPackage",
 			Handler:       _AgentGateway_FetchPackage_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "PushConfigSnapshot",
+			Handler:       _AgentGateway_PushConfigSnapshot_Handler,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "agent/v1/agent.proto",

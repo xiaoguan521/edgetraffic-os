@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -362,4 +363,155 @@ func exportConfig(args []string, out io.Writer) error {
 	ok = true
 	_, _ = fmt.Fprintf(out, "已导出配置包到 %s，可直接上传至控制台“配置导入”或“兼容配置”。\n", *output)
 	return nil
+}
+
+const pushMaxArchiveBytes = 19 << 20 // 留出 1 MiB 余量，严格低于控制台 20 MiB 上限
+
+func isPrivateKeyFile(rel, abs string) bool {
+	if strings.HasSuffix(strings.ToLower(rel), ".key") {
+		return true
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 4096)
+	n, _ := f.Read(buf)
+	return bytes.Contains(buf[:n], []byte("PRIVATE KEY-----"))
+}
+
+// buildConfigArchive 扫描本实例主配置目录内引用的文件并打包为内存 tar.gz，供 enroll -import-config 与 push-config 上报控制台。
+// includeKeys 为 false 时自动跳过私钥文件（*.key 或含 PRIVATE KEY PEM 块）。
+func buildConfigArchive(cfgPath string, includeKeys bool, out io.Writer) ([]byte, error) {
+	if !filepath.IsAbs(cfgPath) {
+		return nil, errors.New("主配置路径必须为绝对路径")
+	}
+	mainPath, err := filepath.EvalSymlinks(filepath.Clean(cfgPath))
+	if err != nil {
+		return nil, fmt.Errorf("无法读取主配置 %s：%w", cfgPath, err)
+	}
+	baseDir := filepath.Dir(mainPath)
+
+	files := map[string]string{}
+	skippedKeys := 0
+	scanned := map[string]bool{}
+
+	var scanConf func(absPath string)
+	scanConf = func(absPath string) {
+		if scanned[absPath] {
+			return
+		}
+		scanned[absPath] = true
+		b, rerr := os.ReadFile(absPath)
+		if rerr != nil {
+			return
+		}
+		rel, rerr := filepath.Rel(baseDir, absPath)
+		if rerr == nil && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+			slash := filepath.ToSlash(rel)
+			if !includeKeys && isPrivateKeyFile(slash, absPath) {
+				skippedKeys++
+				return
+			}
+			files[slash] = absPath
+		}
+		for _, m := range refDirectiveRe.FindAllStringSubmatch(string(b), -1) {
+			dir, arg := m[1], strings.Trim(m[2], `"'`)
+			if arg == "" || strings.Contains(arg, "$") {
+				continue
+			}
+			target := arg
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(baseDir, target)
+			}
+			matches, gerr := filepath.Glob(target)
+			if gerr != nil || len(matches) == 0 {
+				continue
+			}
+			for _, mp := range matches {
+				fi, serr := os.Lstat(mp)
+				if serr != nil || !fi.Mode().IsRegular() {
+					continue
+				}
+				if dir == "include" {
+					scanConf(mp)
+				} else {
+					r, rerr := filepath.Rel(baseDir, mp)
+					if rerr != nil || strings.HasPrefix(r, "..") || filepath.IsAbs(r) {
+						continue
+					}
+					slash := filepath.ToSlash(r)
+					if !includeKeys && isPrivateKeyFile(slash, mp) {
+						skippedKeys++
+						continue
+					}
+					files[slash] = mp
+				}
+			}
+		}
+	}
+	scanConf(mainPath)
+
+	relList := make([]string, 0, len(files))
+	var totalBytes int64
+	for rel, abs := range files {
+		fi, serr := os.Stat(abs)
+		if serr != nil {
+			return nil, serr
+		}
+		totalBytes += fi.Size()
+		relList = append(relList, rel)
+	}
+	sort.Strings(relList)
+	if len(relList) > exportMaxFiles {
+		return nil, fmt.Errorf("文件数量 %d 超过上限 %d", len(relList), exportMaxFiles)
+	}
+	if totalBytes > exportMaxBytes {
+		return nil, fmt.Errorf("配置总大小 %d 字节超过上限 %d 字节", totalBytes, exportMaxBytes)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, rel := range relList {
+		abs := files[rel]
+		fi, err := os.Stat(abs)
+		if err != nil {
+			return nil, err
+		}
+		h, err := tar.FileInfoHeader(fi, "")
+		if err != nil {
+			return nil, err
+		}
+		h.Name = rel
+		if err := tw.WriteHeader(h); err != nil {
+			return nil, err
+		}
+		src, err := os.Open(abs)
+		if err != nil {
+			return nil, err
+		}
+		_, copyErr := io.Copy(tw, src)
+		closeErr := src.Close()
+		if copyErr != nil {
+			return nil, copyErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	if int64(buf.Len()) > pushMaxArchiveBytes {
+		return nil, fmt.Errorf("压缩后配置快照（%d 字节）超过上报上限 %d 字节", buf.Len(), pushMaxArchiveBytes)
+	}
+	if out != nil && skippedKeys > 0 {
+		_, _ = fmt.Fprintf(out, "已跳过 %d 个私钥文件（如需随 mTLS 加密导入证书与私钥，请加 -import-certs）\n", skippedKeys)
+	}
+	return buf.Bytes(), nil
 }

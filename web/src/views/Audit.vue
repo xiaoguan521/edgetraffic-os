@@ -72,6 +72,8 @@ const actionName: Record<string, string> = {
   'release.rollback': '回滚',
   'release.cert_renew': '证书续期下发',
   'release.result': '发布结果',
+  'config.import_analyze': '配置导入分析',
+  'config.import_apply': '配置导入应用',
   'alert.silence': '维护静默设置',
   'alert.rule_save': '修改告警规则',
   'alert.channel_save': '保存告警通道',
